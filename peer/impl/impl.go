@@ -2,10 +2,13 @@ package impl
 
 import (
 	"errors"
+	"net"
 	"sync"
 	"time"
+
 	"go.dedis.ch/cs438/peer"
 	"go.dedis.ch/cs438/transport"
+	"golang.org/x/xerrors"
 )
 
 // NewPeer creates a new peer. You can change the content and location of this
@@ -14,11 +17,15 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 	// here you must return a struct that implements the peer.Peer functions.
 	// Therefore, you are free to rename and change it as you want.
 	node := &node{conf: conf, stopCh: make(chan struct{})}
-	node.read_write_Mutex.Lock()
+	node.ReWrMu.Lock()
 	node.routingTable = make(map[string]string)
-	node_addr := conf.Socket.GetAddress()
-	node.routingTable[node_addr] = node_addr
-	node.read_write_Mutex.Unlock()
+	if conf.Socket != nil {
+		nodeAddr := conf.Socket.GetAddress()
+		if nodeAddr != "" {
+			node.routingTable[nodeAddr] = nodeAddr
+		}
+	}
+	node.ReWrMu.Unlock()
 	return node
 }
 
@@ -27,53 +34,67 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 // - implements peer.Peer
 type node struct {
 	peer.Peer
-	conf peer.Configuration
-	stopCh chan struct{}
-	wg sync.WaitGroup
+	conf         peer.Configuration
+	stopCh       chan struct{}
+	wg           sync.WaitGroup
 	routingTable map[string]string
-	read_write_Mutex sync.RWMutex
+	ReWrMu       sync.RWMutex
 }
 
 // Start implements peer.Service
 func (n *node) Start() error {
+	if n == nil {
+		return xerrors.Errorf("nil node")
+	}
+	if n.conf.Socket == nil {
+		return xerrors.Errorf("socket not configured")
+	}
+	if n.conf.MessageRegistry == nil {
+		return xerrors.Errorf("registry not configured")
+	}
 	n.wg.Add(1)
-	go func() {
-		defer n.wg.Done()
-		for {
-			select {
-			case <-n.stopCh:
-				return
-			default:
-			}
-			pkt, err := n.conf.Socket.Recv(time.Second * 1)
-			if err != nil {
-				if errors.Is(err, transport.TimeoutError(0)) {
-					continue
-				}
-				continue
-			}
-			if pkt.Header == nil {
-				continue
-			}
-			node_addr := n.conf.Socket.GetAddress()
-			dst := pkt.Header.Destination
-			if dst == node_addr {
-				_ = n.conf.MessageRegistry.ProcessPacket(pkt)
-				continue
-			}
-
-			n.read_write_Mutex.RLock()
-			nextHop, ok := n.routingTable[dst]
-			n.read_write_Mutex.RUnlock()
-			if !ok || nextHop == "" {
-				nextHop = dst
-			}
-
-			pkt.Header.RelayedBy = node_addr
-			_ = n.conf.Socket.Send(nextHop, pkt, time.Second)
-		}
-	}()
+	go n.listenLoop()
 	return nil
+}
+
+func (n *node) listenLoop() {
+	defer n.wg.Done()
+	for {
+		select {
+		case <-n.stopCh:
+			return
+		default:
+		}
+		pkt, err := n.conf.Socket.Recv(time.Second * 1)
+		if err != nil {
+			if errors.Is(err, transport.TimeoutError(0)) {
+				continue
+			}
+			// unexpected recv error: keep loop alive
+			continue
+		}
+		if pkt.Header == nil {
+			continue
+		}
+		nodeAddr := n.conf.Socket.GetAddress()
+		dst := pkt.Header.Destination
+		if dst == nodeAddr {
+			if err := n.conf.MessageRegistry.ProcessPacket(pkt); err != nil {
+				// ignore processing errors to keep service responsive
+			}
+			continue
+		}
+
+		n.ReWrMu.RLock()
+		nextHop, ok := n.routingTable[dst]
+		n.ReWrMu.RUnlock()
+		if !ok || nextHop == "" {
+			nextHop = dst
+		}
+
+		pkt.Header.RelayedBy = nodeAddr
+		_ = n.conf.Socket.Send(nextHop, pkt, time.Second)
+	}
 }
 
 // Stop implements peer.Service
@@ -89,40 +110,50 @@ func (n *node) Stop() error {
 
 // Unicast implements peer.Messaging
 func (n *node) Unicast(dest string, msg transport.Message) error {
-	node_addr := n.conf.Socket.GetAddress()
-	if node_addr == "" {
-		return nil
+	nodeAddr := n.conf.Socket.GetAddress()
+	if nodeAddr == "" {
+		return xerrors.Errorf("node address not set")
 	}
-	n.read_write_Mutex.RLock()
-	defer n.read_write_Mutex.RUnlock()
-	header := transport.NewHeader(node_addr, node_addr, dest)
-	return n.conf.Socket.Send(dest, transport.Packet{Header: &header, Msg: &msg}, time.Second)
+	if dest == "" {
+		return xerrors.Errorf("empty destination")
+	}
+	if _, err := net.ResolveUDPAddr("udp", dest); err != nil {
+		// allow non-UDP-address identifiers too; only enforce non-empty
+	}
+	n.ReWrMu.RLock()
+	nextHop, ok := n.routingTable[dest]
+	n.ReWrMu.RUnlock()
+	if !ok || nextHop == "" {
+		return xerrors.Errorf("destination %s unknown", dest)
+	}
+	header := transport.NewHeader(nodeAddr, nodeAddr, dest)
+	return n.conf.Socket.Send(nextHop, transport.Packet{Header: &header, Msg: &msg}, time.Second)
 }
 
 // AddPeer implements peer.Messaging
 func (n *node) AddPeer(addr ...string) {
-	node_addr := n.conf.Socket.GetAddress()
-	if node_addr == "" {
+	nodeAddr := n.conf.Socket.GetAddress()
+	if nodeAddr == "" {
 		return
 	}
-	n.read_write_Mutex.Lock()
+	n.ReWrMu.Lock()
 	if n.routingTable == nil {
 		n.routingTable = make(map[string]string)
 	}
-	n.routingTable[node_addr] = node_addr
+	n.routingTable[nodeAddr] = nodeAddr
 	for _, a := range addr {
-		if a == "" || a == node_addr {
+		if a == "" || a == nodeAddr {
 			continue
 		}
 		n.routingTable[a] = a
 	}
-	n.read_write_Mutex.Unlock()
+	n.ReWrMu.Unlock()
 }
 
 // GetRoutingTable implements peer.Messaging
 func (n *node) GetRoutingTable() peer.RoutingTable {
-	n.read_write_Mutex.RLock()
-	defer n.read_write_Mutex.RUnlock()
+	n.ReWrMu.RLock()
+	defer n.ReWrMu.RUnlock()
 	copyTable := make(peer.RoutingTable, len(n.routingTable))
 	for k, v := range n.routingTable {
 		copyTable[k] = v
@@ -132,13 +163,13 @@ func (n *node) GetRoutingTable() peer.RoutingTable {
 
 // SetRoutingEntry implements peer.Messaging
 func (n *node) SetRoutingEntry(origin, relayAddr string) {
-	node_addr := n.conf.Socket.GetAddress()
-	n.read_write_Mutex.Lock()
-	defer n.read_write_Mutex.Unlock()
+	nodeAddr := n.conf.Socket.GetAddress()
+	n.ReWrMu.Lock()
+	defer n.ReWrMu.Unlock()
 	if n.routingTable == nil {
 		n.routingTable = make(map[string]string)
 	}
-	n.routingTable[node_addr] = node_addr
+	n.routingTable[nodeAddr] = nodeAddr
 
 	if origin == "" {
 		return

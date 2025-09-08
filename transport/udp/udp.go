@@ -1,6 +1,9 @@
 package udp
 
 import (
+	"errors"
+	"net"
+	"sync"
 	"time"
 
 	"go.dedis.ch/cs438/transport"
@@ -17,12 +20,29 @@ func NewUDP() transport.Transport {
 // UDP implements a transport layer using UDP
 //
 // - implements transport.Transport
-type UDP struct {
-}
+type UDP struct{}
 
 // CreateSocket implements transport.Transport
 func (n *UDP) CreateSocket(address string) (transport.ClosableSocket, error) {
-	panic("to be implemented in HW0")
+	if address == "" {
+		return nil, errors.New("empty address")
+	}
+	udpAddr, err := net.ResolveUDPAddr("udp", address)
+	if err != nil {
+		return nil, err
+	}
+
+	conn, err := net.ListenUDP("udp", udpAddr)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Socket{
+		conn: conn,
+		addr: conn.LocalAddr().String(),
+		ins:  make([]transport.Packet, 0),
+		outs: make([]transport.Packet, 0),
+	}, nil
 }
 
 // Socket implements a network socket using UDP.
@@ -30,38 +50,143 @@ func (n *UDP) CreateSocket(address string) (transport.ClosableSocket, error) {
 // - implements transport.Socket
 // - implements transport.ClosableSocket
 type Socket struct {
+	conn   *net.UDPConn
+	addr   string
+	mu     sync.Mutex
+	closed bool
+
+	insMu sync.Mutex
+	ins   []transport.Packet
+
+	outsMu sync.Mutex
+	outs   []transport.Packet
 }
 
-// Close implements transport.Socket. It returns an error if already closed.
 func (s *Socket) Close() error {
-	panic("to be implemented in HW0")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return errors.New("socket already closed")
+	}
+	s.closed = true
+	if s.conn != nil {
+		return s.conn.Close()
+	}
+	return nil
 }
 
 // Send implements transport.Socket
 func (s *Socket) Send(dest string, pkt transport.Packet, timeout time.Duration) error {
-	panic("to be implemented in HW0")
+	if s == nil || s.conn == nil {
+		return errors.New("socket not initialized")
+	}
+	if dest == "" {
+		return errors.New("empty destination")
+	}
+	if pkt.Header == nil || pkt.Msg == nil {
+		return errors.New("invalid packet: missing header or message")
+	}
+	buf, err := pkt.Marshal()
+	if err != nil {
+		return err
+	}
+
+	udpAddr, err := net.ResolveUDPAddr("udp", dest)
+	if err != nil {
+		return err
+	}
+
+	if timeout > 0 {
+		_ = s.conn.SetWriteDeadline(time.Now().Add(timeout))
+	} else {
+		_ = s.conn.SetWriteDeadline(time.Time{})
+	}
+
+	_, err = s.conn.WriteToUDP(buf, udpAddr)
+	if err != nil {
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
+			return transport.TimeoutError(timeout)
+		}
+		return err
+	}
+
+	s.outsMu.Lock()
+	s.outs = append(s.outs, pkt.Copy())
+	s.outsMu.Unlock()
+
+	return nil
 }
 
 // Recv implements transport.Socket. It blocks until a packet is received, or
 // the timeout is reached. In the case the timeout is reached, return a
 // TimeoutErr.
 func (s *Socket) Recv(timeout time.Duration) (transport.Packet, error) {
-	panic("to be implemented in HW0")
+	if s == nil || s.conn == nil {
+		return transport.Packet{}, errors.New("socket not initialized")
+	}
+	if timeout < 0 {
+		return transport.Packet{}, errors.New("negative timeout")
+	}
+	buf := make([]byte, 65000)
+
+	if timeout > 0 {
+		_ = s.conn.SetReadDeadline(time.Now().Add(timeout))
+	} else {
+		_ = s.conn.SetReadDeadline(time.Time{})
+	}
+
+	n, _, err := s.conn.ReadFromUDP(buf)
+	if err != nil {
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
+			return transport.Packet{}, transport.TimeoutError(timeout)
+		}
+		return transport.Packet{}, err
+	}
+
+	var pkt transport.Packet
+	if err := pkt.Unmarshal(buf[:n]); err != nil {
+		return transport.Packet{}, err
+	}
+	if pkt.Header == nil || pkt.Msg == nil {
+		return transport.Packet{}, errors.New("received invalid packet")
+	}
+
+	s.insMu.Lock()
+	s.ins = append(s.ins, pkt.Copy())
+	s.insMu.Unlock()
+
+	return pkt, nil
 }
 
 // GetAddress implements transport.Socket. It returns the address assigned. Can
 // be useful in the case one provided a :0 address, which makes the system use a
 // random free port.
 func (s *Socket) GetAddress() string {
-	panic("to be implemented in HW0")
+	return s.addr
 }
 
 // GetIns implements transport.Socket
 func (s *Socket) GetIns() []transport.Packet {
-	panic("to be implemented in HW0")
+	s.insMu.Lock()
+	defer s.insMu.Unlock()
+
+	res := make([]transport.Packet, len(s.ins))
+	for i, p := range s.ins {
+		res[i] = p.Copy()
+	}
+	return res
 }
 
 // GetOuts implements transport.Socket
 func (s *Socket) GetOuts() []transport.Packet {
-	panic("to be implemented in HW0")
+	s.outsMu.Lock()
+	defer s.outsMu.Unlock()
+
+	res := make([]transport.Packet, len(s.outs))
+	for i, p := range s.outs {
+		res[i] = p.Copy()
+	}
+	return res
 }
