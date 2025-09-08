@@ -5,7 +5,6 @@ import (
 	"io"
 	"strings"
 	"time"
-
 	"go.dedis.ch/cs438/transport"
 )
 
