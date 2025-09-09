@@ -2,7 +2,6 @@ package impl
 
 import (
 	"errors"
-	"net"
 	"sync"
 	"time"
 
@@ -79,9 +78,7 @@ func (n *node) listenLoop() {
 		nodeAddr := n.conf.Socket.GetAddress()
 		dst := pkt.Header.Destination
 		if dst == nodeAddr {
-			if err := n.conf.MessageRegistry.ProcessPacket(pkt); err != nil {
-				// ignore processing errors to keep service responsive
-			}
+			_ = n.conf.MessageRegistry.ProcessPacket(pkt)
 			continue
 		}
 
@@ -116,9 +113,6 @@ func (n *node) Unicast(dest string, msg transport.Message) error {
 	}
 	if dest == "" {
 		return xerrors.Errorf("empty destination")
-	}
-	if _, err := net.ResolveUDPAddr("udp", dest); err != nil {
-		// allow non-UDP-address identifiers too; only enforce non-empty
 	}
 	n.ReWrMu.RLock()
 	nextHop, ok := n.routingTable[dest]
