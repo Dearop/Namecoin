@@ -72,11 +72,18 @@ func (n *node) listenLoop() {
 			// unexpected recv error: keep loop alive
 			continue
 		}
-		if pkt.Header == nil {
+
+		if pkt.Header == nil || pkt.Msg == nil {
 			continue
 		}
 		nodeAddr := n.conf.Socket.GetAddress()
+		if nodeAddr == "" {
+			continue
+		}
 		dst := pkt.Header.Destination
+		if dst == "" {
+			continue
+		}
 		if dst == nodeAddr {
 			_ = n.conf.MessageRegistry.ProcessPacket(pkt)
 			continue
@@ -96,6 +103,9 @@ func (n *node) listenLoop() {
 
 // Stop implements peer.Service
 func (n *node) Stop() error {
+	if n == nil {
+		return nil
+	}
 	select {
 	case <-n.stopCh:
 	default:
@@ -107,6 +117,9 @@ func (n *node) Stop() error {
 
 // Unicast implements peer.Messaging
 func (n *node) Unicast(dest string, msg transport.Message) error {
+	if n == nil || n.conf.Socket == nil {
+		return xerrors.Errorf("socket not configured")
+	}
 	nodeAddr := n.conf.Socket.GetAddress()
 	if nodeAddr == "" {
 		return xerrors.Errorf("node address not set")
