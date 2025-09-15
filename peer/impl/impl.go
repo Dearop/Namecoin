@@ -2,11 +2,14 @@ package impl
 
 import (
 	"errors"
+	"log"
+	"os"
 	"sync"
 	"time"
 
 	"go.dedis.ch/cs438/peer"
 	"go.dedis.ch/cs438/transport"
+	"go.dedis.ch/cs438/types"
 	"golang.org/x/xerrors"
 )
 
@@ -29,7 +32,6 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 }
 
 // node implements a peer to build a Peerster system
-//
 // - implements peer.Peer
 type node struct {
 	peer.Peer
@@ -42,21 +44,84 @@ type node struct {
 
 // Start implements peer.Service
 func (n *node) Start() error {
-	if n == nil {
-		return xerrors.Errorf("nil node")
+	if err := n.validateNode(true); err != nil {
+		return err
 	}
-	if n.conf.Socket == nil {
-		return xerrors.Errorf("socket not configured")
+	if n.stopCh == nil {
+		n.stopCh = make(chan struct{})
 	}
-	if n.conf.MessageRegistry == nil {
-		return xerrors.Errorf("registry not configured")
+	if n.routingTable == nil {
+		n.ReWrMu.Lock()
+		if n.routingTable == nil {
+			n.routingTable = make(map[string]string)
+		}
+		n.ReWrMu.Unlock()
 	}
+	n.conf.MessageRegistry.RegisterMessageCallback(types.ChatMessage{}, n.handleChatMessage)
 	n.wg.Add(1)
 	go n.listenLoop()
 	return nil
 }
 
+func (n *node) handleChatMessage(m types.Message, pkt transport.Packet) error {
+	if err := n.validateNode(false); err != nil {
+		return err
+	}
+	chat, ok := m.(*types.ChatMessage)
+	if !ok || chat == nil {
+		return xerrors.Errorf("unexpected message type")
+	}
+	src := "unknown"
+	if pkt.Header != nil && pkt.Header.Source != "" {
+		src = pkt.Header.Source
+	}
+	if os.Getenv("GLOG") != "no" {
+		log.Printf("[chat] from: %s, msg: %s", src, chat.Message)
+	}
+	return nil
+}
+
+// ensureConfigured returns the node address if the node and its socket are properly configured.
+func (n *node) ensureConfigured() (string, error) {
+	if n == nil || n.conf.Socket == nil {
+		return "", xerrors.Errorf("socket not configured")
+	}
+	addr := n.conf.Socket.GetAddress()
+	if addr == "" {
+		return "", xerrors.Errorf("node address not set")
+	}
+	return addr, nil
+}
+
+// validateRecvPacket checks that a received packet has the required fields.
+func (n *node) validateRecvPacket(packet transport.Packet) error {
+	if packet.Header == nil {
+		return xerrors.Errorf("missing header")
+	}
+	if packet.Msg == nil {
+		return xerrors.Errorf("missing message")
+	}
+	if packet.Header.Destination == "" {
+		return xerrors.Errorf("empty destination")
+	}
+	return nil
+}
+
+// lookupNextHop returns the relay address for a given destination, if present.
+func (n *node) lookupNextHop(destination string) (string, bool) {
+	n.ReWrMu.RLock()
+	relay, ok := n.routingTable[destination]
+	n.ReWrMu.RUnlock()
+	if !ok || relay == "" {
+		return "", false
+	}
+	return relay, true
+}
+
 func (n *node) listenLoop() {
+	if err := n.validateNode(false); err != nil {
+		return
+	}
 	defer n.wg.Done()
 	for {
 		select {
@@ -69,31 +134,24 @@ func (n *node) listenLoop() {
 			if errors.Is(err, transport.TimeoutError(0)) {
 				continue
 			}
-			// unexpected recv error: keep loop alive
-			continue
 		}
 
-		if pkt.Header == nil || pkt.Msg == nil {
+		if err := n.validateRecvPacket(pkt); err != nil {
 			continue
 		}
-		nodeAddr := n.conf.Socket.GetAddress()
-		if nodeAddr == "" {
+		nodeAddr, err := n.ensureConfigured()
+		if err != nil {
 			continue
 		}
 		dst := pkt.Header.Destination
-		if dst == "" {
-			continue
-		}
 		if dst == nodeAddr {
 			_ = n.conf.MessageRegistry.ProcessPacket(pkt)
 			continue
 		}
 
-		n.ReWrMu.RLock()
-		nextHop, ok := n.routingTable[dst]
-		n.ReWrMu.RUnlock()
-		if !ok || nextHop == "" {
-			nextHop = dst
+		nextHop, ok := n.lookupNextHop(dst)
+		if !ok {
+			continue
 		}
 
 		pkt.Header.RelayedBy = nodeAddr
@@ -103,8 +161,8 @@ func (n *node) listenLoop() {
 
 // Stop implements peer.Service
 func (n *node) Stop() error {
-	if n == nil {
-		return nil
+	if err := n.validateNode(false); err != nil {
+		return err
 	}
 	select {
 	case <-n.stopCh:
@@ -117,20 +175,15 @@ func (n *node) Stop() error {
 
 // Unicast implements peer.Messaging
 func (n *node) Unicast(dest string, msg transport.Message) error {
-	if n == nil || n.conf.Socket == nil {
-		return xerrors.Errorf("socket not configured")
+	if err := n.validateNode(false); err != nil {
+		return err
 	}
 	nodeAddr := n.conf.Socket.GetAddress()
-	if nodeAddr == "" {
-		return xerrors.Errorf("node address not set")
-	}
 	if dest == "" {
 		return xerrors.Errorf("empty destination")
 	}
-	n.ReWrMu.RLock()
-	nextHop, ok := n.routingTable[dest]
-	n.ReWrMu.RUnlock()
-	if !ok || nextHop == "" {
+	nextHop, ok := n.lookupNextHop(dest)
+	if !ok {
 		return xerrors.Errorf("destination %s unknown", dest)
 	}
 	header := transport.NewHeader(nodeAddr, nodeAddr, dest)
@@ -139,6 +192,9 @@ func (n *node) Unicast(dest string, msg transport.Message) error {
 
 // AddPeer implements peer.Messaging
 func (n *node) AddPeer(addr ...string) {
+	if err := n.validateNode(false); err != nil {
+		return
+	}
 	nodeAddr := n.conf.Socket.GetAddress()
 	if nodeAddr == "" {
 		return
@@ -159,6 +215,9 @@ func (n *node) AddPeer(addr ...string) {
 
 // GetRoutingTable implements peer.Messaging
 func (n *node) GetRoutingTable() peer.RoutingTable {
+	if err := n.validateNode(false); err != nil {
+		return peer.RoutingTable{}
+	}
 	n.ReWrMu.RLock()
 	defer n.ReWrMu.RUnlock()
 	copyTable := make(peer.RoutingTable, len(n.routingTable))
@@ -170,6 +229,9 @@ func (n *node) GetRoutingTable() peer.RoutingTable {
 
 // SetRoutingEntry implements peer.Messaging
 func (n *node) SetRoutingEntry(origin, relayAddr string) {
+	if err := n.validateNode(false); err != nil {
+		return
+	}
 	nodeAddr := n.conf.Socket.GetAddress()
 	n.ReWrMu.Lock()
 	defer n.ReWrMu.Unlock()
@@ -186,4 +248,22 @@ func (n *node) SetRoutingEntry(origin, relayAddr string) {
 		return
 	}
 	n.routingTable[origin] = relayAddr
+}
+
+// validateNode checks the receiver and its critical configuration.
+// If requireRegistry is true, it also enforces a non-nil MessageRegistry.
+func (n *node) validateNode(requireRegistry bool) error {
+	if n == nil {
+		return xerrors.Errorf("nil node")
+	}
+	if n.conf.Socket == nil {
+		return xerrors.Errorf("socket not configured")
+	}
+	if n.conf.Socket.GetAddress() == "" {
+		return xerrors.Errorf("node address not set")
+	}
+	if requireRegistry && n.conf.MessageRegistry == nil {
+		return xerrors.Errorf("registry not configured")
+	}
+	return nil
 }

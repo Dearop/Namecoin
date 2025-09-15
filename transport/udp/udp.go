@@ -1,12 +1,12 @@
 package udp
 
 import (
-	"errors"
 	"net"
 	"sync"
 	"time"
 
 	"go.dedis.ch/cs438/transport"
+	"golang.org/x/xerrors"
 )
 
 // It is advised to define a constant (max) size for all relevant byte buffers, e.g:
@@ -25,7 +25,7 @@ type UDP struct{}
 // CreateSocket implements transport.Transport
 func (n *UDP) CreateSocket(address string) (transport.ClosableSocket, error) {
 	if address == "" {
-		return nil, errors.New("empty address")
+		return nil, xerrors.Errorf("empty address")
 	}
 	udpAddr, err := net.ResolveUDPAddr("udp", address)
 	if err != nil {
@@ -66,7 +66,7 @@ func (s *Socket) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return errors.New("socket already closed")
+		return xerrors.Errorf("socket already closed")
 	}
 	s.closed = true
 	if s.conn != nil {
@@ -78,13 +78,13 @@ func (s *Socket) Close() error {
 // Send implements transport.Socket
 func (s *Socket) Send(dest string, pkt transport.Packet, timeout time.Duration) error {
 	if s == nil || s.conn == nil {
-		return errors.New("socket not initialized")
+		return xerrors.Errorf("socket not initialized")
 	}
 	if dest == "" {
-		return errors.New("empty destination")
+		return xerrors.Errorf("empty destination")
 	}
-	if pkt.Header == nil || pkt.Msg == nil {
-		return errors.New("invalid packet: missing header or message")
+ 	if err := validateSendPacket(pkt); err != nil {
+		return err
 	}
 	buf, err := pkt.Marshal()
 	if err != nil {
@@ -105,7 +105,7 @@ func (s *Socket) Send(dest string, pkt transport.Packet, timeout time.Duration) 
 	_, err = s.conn.WriteToUDP(buf, udpAddr)
 	if err != nil {
 		var ne net.Error
-		if errors.As(err, &ne) && ne.Timeout() {
+		if xerrors.As(err, &ne) && ne.Timeout() {
 			return transport.TimeoutError(timeout)
 		}
 		return err
@@ -123,10 +123,10 @@ func (s *Socket) Send(dest string, pkt transport.Packet, timeout time.Duration) 
 // TimeoutErr.
 func (s *Socket) Recv(timeout time.Duration) (transport.Packet, error) {
 	if s == nil || s.conn == nil {
-		return transport.Packet{}, errors.New("socket not initialized")
+		return transport.Packet{}, xerrors.Errorf("socket not initialized")
 	}
 	if timeout < 0 {
-		return transport.Packet{}, errors.New("negative timeout")
+		return transport.Packet{}, xerrors.Errorf("negative timeout")
 	}
 	buf := make([]byte, 65000)
 
@@ -139,18 +139,21 @@ func (s *Socket) Recv(timeout time.Duration) (transport.Packet, error) {
 	n, _, err := s.conn.ReadFromUDP(buf)
 	if err != nil {
 		var ne net.Error
-		if errors.As(err, &ne) && ne.Timeout() {
+		if xerrors.As(err, &ne) && ne.Timeout() {
 			return transport.Packet{}, transport.TimeoutError(timeout)
 		}
 		return transport.Packet{}, err
+	}
+	if n == 0 {
+		return transport.Packet{}, xerrors.Errorf("empty udp datagram")
 	}
 
 	var pkt transport.Packet
 	if err := pkt.Unmarshal(buf[:n]); err != nil {
 		return transport.Packet{}, err
 	}
-	if pkt.Header == nil || pkt.Msg == nil {
-		return transport.Packet{}, errors.New("received invalid packet")
+	if err := validateRecvPacket(pkt); err != nil {
+		return transport.Packet{}, err
 	}
 
 	s.insMu.Lock()
@@ -158,6 +161,31 @@ func (s *Socket) Recv(timeout time.Duration) (transport.Packet, error) {
 	s.insMu.Unlock()
 
 	return pkt, nil
+}
+
+// validateSendPacket ensures a packet is valid to be sent.
+func validateSendPacket(pkt transport.Packet) error {
+	if pkt.Header == nil {
+		return xerrors.Errorf("invalid packet: missing header")
+	}
+	if pkt.Msg == nil {
+		return xerrors.Errorf("invalid packet: missing message")
+	}
+	if pkt.Header.Destination == "" {
+		return xerrors.Errorf("invalid packet: empty destination")
+	}
+	return nil
+}
+
+// validateRecvPacket ensures a packet received from the network is structurally valid.
+func validateRecvPacket(pkt transport.Packet) error {
+	if pkt.Header == nil {
+		return xerrors.Errorf("received packet without header")
+	}
+	if pkt.Msg == nil {
+		return xerrors.Errorf("received packet without message")
+	}
+	return nil
 }
 
 // GetAddress implements transport.Socket. It returns the address assigned. Can
