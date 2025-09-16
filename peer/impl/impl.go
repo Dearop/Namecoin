@@ -1,9 +1,9 @@
 package impl
 
 import (
-	"errors"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,7 +19,7 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 	// here you must return a struct that implements the peer.Peer functions.
 	// Therefore, you are free to rename and change it as you want.
 	node := &node{conf: conf, stopCh: make(chan struct{})}
-	node.ReWrMu.Lock()
+	node.mu.Lock()
 	node.routingTable = make(map[string]string)
 	if conf.Socket != nil {
 		nodeAddr := conf.Socket.GetAddress()
@@ -27,7 +27,7 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 			node.routingTable[nodeAddr] = nodeAddr
 		}
 	}
-	node.ReWrMu.Unlock()
+	node.mu.Unlock()
 	return node
 }
 
@@ -39,7 +39,7 @@ type node struct {
 	stopCh       chan struct{}
 	wg           sync.WaitGroup
 	routingTable map[string]string
-	ReWrMu       sync.RWMutex
+	mu           sync.RWMutex
 }
 
 // Start implements peer.Service
@@ -51,11 +51,11 @@ func (n *node) Start() error {
 		n.stopCh = make(chan struct{})
 	}
 	if n.routingTable == nil {
-		n.ReWrMu.Lock()
+		n.mu.Lock()
 		if n.routingTable == nil {
 			n.routingTable = make(map[string]string)
 		}
-		n.ReWrMu.Unlock()
+		n.mu.Unlock()
 	}
 	n.conf.MessageRegistry.RegisterMessageCallback(types.ChatMessage{}, n.handleChatMessage)
 	n.wg.Add(1)
@@ -94,34 +94,59 @@ func (n *node) ensureConfigured() (string, error) {
 }
 
 // validateRecvPacket checks that a received packet has the required fields.
-func (n *node) validateRecvPacket(packet transport.Packet) error {
-	if packet.Header == nil {
+func (n *node) validateRecvPacket(pkt transport.Packet) error {
+	if pkt.Header == nil {
 		return xerrors.Errorf("missing header")
 	}
-	if packet.Msg == nil {
+	if pkt.Msg == nil {
 		return xerrors.Errorf("missing message")
 	}
-	if packet.Header.Destination == "" {
+	if pkt.Header.Destination == "" {
 		return xerrors.Errorf("empty destination")
 	}
 	return nil
 }
 
 // lookupNextHop returns the relay address for a given destination, if present.
-func (n *node) lookupNextHop(destination string) (string, bool) {
-	n.ReWrMu.RLock()
-	relay, ok := n.routingTable[destination]
-	n.ReWrMu.RUnlock()
+func (n *node) lookupNextHop(dest string) (string, bool) {
+	n.mu.RLock()
+	relay, ok := n.routingTable[dest]
+	n.mu.RUnlock()
 	if !ok || relay == "" {
 		return "", false
 	}
 	return relay, true
 }
 
+func (n *node) processPacket(pkt transport.Packet) {
+	if err := n.validateRecvPacket(pkt); err != nil {
+		return
+	}
+	nodeAddr, err := n.ensureConfigured()
+	if err != nil {
+		return
+	}
+	dest := strings.TrimSpace(pkt.Header.Destination)
+	if dest == "" {
+		return
+	}
+	if dest == nodeAddr {
+		_ = n.conf.MessageRegistry.ProcessPacket(pkt)
+		return
+	}
+	nextHop, ok := n.lookupNextHop(dest)
+	if !ok {
+		return
+	}
+	pkt.Header.RelayedBy = nodeAddr
+	_ = n.conf.Socket.Send(nextHop, pkt, time.Second)
+}
+
 func (n *node) listenLoop() {
 	if err := n.validateNode(false); err != nil {
 		return
 	}
+	var errorCount int
 	defer n.wg.Done()
 	for {
 		select {
@@ -131,31 +156,23 @@ func (n *node) listenLoop() {
 		}
 		pkt, err := n.conf.Socket.Recv(time.Second * 1)
 		if err != nil {
-			if errors.Is(err, transport.TimeoutError(0)) {
+			if xerrors.Is(err, transport.TimeoutError(0)) {
 				continue
 			}
-		}
-
-		if err := n.validateRecvPacket(pkt); err != nil {
+			errorCount++
+			if errorCount > 10 {
+				_ = n.Stop()
+				if os.Getenv("GLOG") != "no" {
+					log.Printf("High error count, stopping node")
+				}
+				return
+			}
 			continue
 		}
-		nodeAddr, err := n.ensureConfigured()
-		if err != nil {
-			continue
+		if errorCount > 0 {
+			errorCount = 0
 		}
-		dst := pkt.Header.Destination
-		if dst == nodeAddr {
-			_ = n.conf.MessageRegistry.ProcessPacket(pkt)
-			continue
-		}
-
-		nextHop, ok := n.lookupNextHop(dst)
-		if !ok {
-			continue
-		}
-
-		pkt.Header.RelayedBy = nodeAddr
-		_ = n.conf.Socket.Send(nextHop, pkt, time.Second)
+		n.processPacket(pkt)
 	}
 }
 
@@ -179,8 +196,13 @@ func (n *node) Unicast(dest string, msg transport.Message) error {
 		return err
 	}
 	nodeAddr := n.conf.Socket.GetAddress()
+	dest = strings.TrimSpace(dest)
 	if dest == "" {
 		return xerrors.Errorf("empty destination")
+	}
+	// Basic fuzz-hardening on message: ensure type is non-empty
+	if strings.TrimSpace(msg.Type) == "" {
+		return xerrors.Errorf("invalid message: empty type")
 	}
 	nextHop, ok := n.lookupNextHop(dest)
 	if !ok {
@@ -199,18 +221,19 @@ func (n *node) AddPeer(addr ...string) {
 	if nodeAddr == "" {
 		return
 	}
-	n.ReWrMu.Lock()
+	n.mu.Lock()
 	if n.routingTable == nil {
 		n.routingTable = make(map[string]string)
 	}
 	n.routingTable[nodeAddr] = nodeAddr
-	for _, a := range addr {
-		if a == "" || a == nodeAddr {
+	for _, peerAddr := range addr {
+		peerAddr = strings.TrimSpace(peerAddr)
+		if peerAddr == "" || peerAddr == nodeAddr {
 			continue
 		}
-		n.routingTable[a] = a
+		n.routingTable[peerAddr] = peerAddr
 	}
-	n.ReWrMu.Unlock()
+	n.mu.Unlock()
 }
 
 // GetRoutingTable implements peer.Messaging
@@ -218,11 +241,11 @@ func (n *node) GetRoutingTable() peer.RoutingTable {
 	if err := n.validateNode(false); err != nil {
 		return peer.RoutingTable{}
 	}
-	n.ReWrMu.RLock()
-	defer n.ReWrMu.RUnlock()
+	n.mu.RLock()
+	defer n.mu.RUnlock()
 	copyTable := make(peer.RoutingTable, len(n.routingTable))
-	for k, v := range n.routingTable {
-		copyTable[k] = v
+	for dest, relay := range n.routingTable {
+		copyTable[dest] = relay
 	}
 	return copyTable
 }
@@ -233,13 +256,15 @@ func (n *node) SetRoutingEntry(origin, relayAddr string) {
 		return
 	}
 	nodeAddr := n.conf.Socket.GetAddress()
-	n.ReWrMu.Lock()
-	defer n.ReWrMu.Unlock()
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	if n.routingTable == nil {
 		n.routingTable = make(map[string]string)
 	}
 	n.routingTable[nodeAddr] = nodeAddr
 
+	origin = strings.TrimSpace(origin)
+	relayAddr = strings.TrimSpace(relayAddr)
 	if origin == "" {
 		return
 	}

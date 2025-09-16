@@ -54,10 +54,8 @@ type Socket struct {
 	addr   string
 	mu     sync.Mutex
 	closed bool
-
-	insMu sync.Mutex
-	ins   []transport.Packet
-
+	insMu  sync.Mutex
+	ins    []transport.Packet
 	outsMu sync.Mutex
 	outs   []transport.Packet
 }
@@ -83,7 +81,7 @@ func (s *Socket) Send(dest string, pkt transport.Packet, timeout time.Duration) 
 	if dest == "" {
 		return xerrors.Errorf("empty destination")
 	}
- 	if err := validateSendPacket(pkt); err != nil {
+	if err := validateSendPacket(pkt); err != nil {
 		return err
 	}
 	buf, err := pkt.Marshal()
