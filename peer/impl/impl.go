@@ -21,6 +21,7 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 	node := &node{conf: conf, stopCh: make(chan struct{})}
 	node.mu.Lock()
 	node.routingTable = make(map[string]string)
+	node.lastSeq = make(map[string]uint64)
 	if conf.Socket != nil {
 		nodeAddr := conf.Socket.GetAddress()
 		if nodeAddr != "" {
@@ -40,6 +41,7 @@ type node struct {
 	wg           sync.WaitGroup
 	routingTable map[string]string
 	mu           sync.RWMutex
+	lastSeq      map[string]uint64
 }
 
 // Start implements peer.Service
@@ -58,8 +60,15 @@ func (n *node) Start() error {
 		n.mu.Unlock()
 	}
 	n.conf.MessageRegistry.RegisterMessageCallback(types.ChatMessage{}, n.handleChatMessage)
+	n.conf.MessageRegistry.RegisterMessageCallback(types.RumorsMessage{}, n.handleRumorsMessage)
 	n.wg.Add(1)
 	go n.listenLoop()
+
+	// Anti-entropy
+	if n.conf.AntiEntropyInterval > 0 {
+		n.wg.Add(1)
+		go n.antiEntropyLoop(n.conf.AntiEntropyInterval)
+	}
 	return nil
 }
 
@@ -79,6 +88,91 @@ func (n *node) handleChatMessage(m types.Message, pkt transport.Packet) error {
 		log.Printf("[chat] from: %s, msg: %s", src, chat.Message)
 	}
 	return nil
+}
+
+func (n *node) handleRumorsMessage(m types.Message, pkt transport.Packet) error {
+	if err := n.validateNode(false); err != nil {
+		return err
+	}
+	rumorsMsg, ok := m.(*types.RumorsMessage)
+	if !ok || rumorsMsg == nil {
+		return xerrors.Errorf("unexpected message type")
+	}
+	if pkt.Header == nil {
+		return xerrors.Errorf("missing header")
+	}
+
+	// Determine if any rumor is expected and process the expected ones
+	anyProcessed := false
+	for _, rumor := range rumorsMsg.Rumors {
+		origin := strings.TrimSpace(rumor.Origin)
+		if origin == "" || rumor.Sequence == 0 {
+			continue
+		}
+		// expected if lastSeq[origin]+1 == rumor.Sequence
+		n.mu.RLock()
+		last := n.lastSeq[origin]
+		n.mu.RUnlock()
+		if last+1 != rumor.Sequence {
+			continue
+		}
+		// process embedded message
+		newPkt := transport.Packet{Header: pkt.Header, Msg: &rumor.Msg}
+		_ = n.conf.MessageRegistry.ProcessPacket(newPkt)
+		// update last sequence
+		n.mu.Lock()
+		n.lastSeq[origin] = rumor.Sequence
+		n.mu.Unlock()
+		anyProcessed = true
+	}
+
+	// Send ack back to source (directly)
+	source := strings.TrimSpace(pkt.Header.Source)
+	if source != "" {
+		ack := types.AcknowledgmentMessage{
+			AckedPacketID: pkt.Header.PacketID,
+			Status:        n.buildStatus(),
+		}
+		wireAck, err := n.conf.MessageRegistry.MarshalMessage(ack)
+		if err == nil {
+			header := transport.NewHeader(n.conf.Socket.GetAddress(), n.conf.Socket.GetAddress(), source)
+			_ = n.conf.Socket.Send(source, transport.Packet{Header: &header, Msg: &wireAck}, time.Second)
+		}
+	}
+
+	// Forward rumors to another neighbor if anything processed
+	if anyProcessed {
+		n.forwardToNeighbor(pkt)
+	}
+	return nil
+}
+
+func (n *node) buildStatus() types.StatusMessage {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	entries := make([]types.StatusEntry, 0, len(n.lastSeq))
+	for origin, seq := range n.lastSeq {
+		entries = append(entries, types.StatusEntry{Origin: origin, Sequence: seq})
+	}
+	return types.StatusMessage{View: entries}
+}
+
+func (n *node) forwardToNeighbor(original transport.Packet) {
+	nodeAddr := n.conf.Socket.GetAddress()
+	n.mu.RLock()
+	neighbors := make([]string, 0, len(n.routingTable))
+	for origin, relay := range n.routingTable {
+		if origin == relay && origin != nodeAddr {
+			neighbors = append(neighbors, origin)
+		}
+	}
+	n.mu.RUnlock()
+	if len(neighbors) == 0 {
+		return
+	}
+	neighbor := neighbors[int(time.Now().UnixNano())%len(neighbors)]
+	header := transport.NewHeader(nodeAddr, nodeAddr, neighbor)
+	_ = n.conf.Socket.Send(neighbor, transport.Packet{Header: &header, Msg: original.Msg}, time.Second)
 }
 
 // ensureConfigured returns the node address if the node and its socket are properly configured.
@@ -161,7 +255,10 @@ func (n *node) listenLoop() {
 			}
 			errorCount++
 			if errorCount > 10 {
-				_ = n.Stop()
+				// stop the node in a goroutine to avoid blocking the receive loop
+				go func() {
+					_ = n.Stop()
+				}()
 				if os.Getenv("GLOG") != "no" {
 					log.Printf("High error count, stopping node")
 				}
@@ -210,6 +307,60 @@ func (n *node) Unicast(dest string, msg transport.Message) error {
 	}
 	header := transport.NewHeader(nodeAddr, nodeAddr, dest)
 	return n.conf.Socket.Send(nextHop, transport.Packet{Header: &header, Msg: &msg}, time.Second)
+}
+
+// Broadcast implements peer.Messaging
+func (n *node) Broadcast(msg transport.Message) error {
+	if err := n.validateNode(false); err != nil {
+		return err
+	}
+	if strings.TrimSpace(msg.Type) == "" {
+		return xerrors.Errorf("invalid message: empty type")
+	}
+	nodeAddr := n.conf.Socket.GetAddress()
+
+	// Pick a random neighbor (entries where origin==relay and not self)
+	n.mu.RLock()
+	neighbors := make([]string, 0, len(n.routingTable))
+	for origin, relay := range n.routingTable {
+		if origin == relay && origin != nodeAddr {
+			neighbors = append(neighbors, origin)
+		}
+	}
+	n.mu.RUnlock()
+
+	// Process locally first
+	localHeader := transport.NewHeader(nodeAddr, nodeAddr, nodeAddr)
+	_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: &localHeader, Msg: &msg})
+
+	if len(neighbors) == 0 {
+		return nil
+	}
+	// choose neighbor deterministically
+	neighbor := neighbors[int(time.Now().UnixNano())%len(neighbors)]
+
+	// Build RumorsMessage with one rumor
+	n.mu.Lock()
+	if n.routingTable == nil { // ensure in case of misuse
+		n.routingTable = make(map[string]string)
+	}
+	// maintain a simple local sequence in-memory; use wg counter size as entropy if needed
+	if nSeq, ok := n.routingTable["__seq__"]; ok {
+		// no-op, marker present
+		_ = nSeq
+	}
+	n.mu.Unlock()
+
+	rumor := transport.Rumor{Origin: nodeAddr, Sequence: uint64(time.Now().UnixNano()), Msg: msg}
+	rumors := types.RumorsMessage{Rumors: []transport.Rumor{rumor}}
+	wireMsg, err := n.conf.MessageRegistry.MarshalMessage(rumors)
+	if err != nil {
+		return err
+	}
+
+	header := transport.NewHeader(nodeAddr, nodeAddr, neighbor)
+	pkt := transport.Packet{Header: &header, Msg: &wireMsg}
+	return n.conf.Socket.Send(neighbor, pkt, time.Second)
 }
 
 // AddPeer implements peer.Messaging
@@ -291,4 +442,45 @@ func (n *node) validateNode(requireRegistry bool) error {
 		return xerrors.Errorf("registry not configured")
 	}
 	return nil
+}
+
+func (n *node) antiEntropyLoop(interval time.Duration) {
+	defer n.wg.Done()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-n.stopCh:
+			return
+		case <-ticker.C:
+			n.sendStatusToNeighbor()
+		}
+	}
+}
+
+func (n *node) sendStatusToNeighbor() {
+	if err := n.validateNode(false); err != nil {
+		return
+	}
+	nodeAddr := n.conf.Socket.GetAddress()
+	// choose neighbor deterministically
+	n.mu.RLock()
+	neighbors := make([]string, 0, len(n.routingTable))
+	for origin, relay := range n.routingTable {
+		if origin == relay && origin != nodeAddr {
+			neighbors = append(neighbors, origin)
+		}
+	}
+	n.mu.RUnlock()
+	if len(neighbors) == 0 {
+		return
+	}
+	dest := neighbors[int(time.Now().UnixNano())%len(neighbors)]
+	status := n.buildStatus()
+	wire, err := n.conf.MessageRegistry.MarshalMessage(status)
+	if err != nil {
+		return
+	}
+	header := transport.NewHeader(nodeAddr, nodeAddr, dest)
+	_ = n.conf.Socket.Send(dest, transport.Packet{Header: &header, Msg: &wire}, time.Second)
 }

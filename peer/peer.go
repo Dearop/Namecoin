@@ -1,6 +1,8 @@
 package peer
 
 import (
+	"time"
+
 	"go.dedis.ch/cs438/registry"
 	"go.dedis.ch/cs438/transport"
 )
@@ -19,6 +21,7 @@ type Factory func(Configuration) Peer
 // Configuration if the struct that will contain the configuration argument when
 // creating a peer. This struct will evolve.
 type Configuration struct {
-	Socket          transport.Socket
-	MessageRegistry registry.Registry
+	Socket              transport.Socket
+	MessageRegistry     registry.Registry
+	AntiEntropyInterval time.Duration // 0 disables anti-entropy
 }

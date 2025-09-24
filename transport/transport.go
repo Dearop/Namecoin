@@ -172,6 +172,17 @@ type Message struct {
 	Payload json.RawMessage
 }
 
+// Rumor represents a single broadcast item created by a peer.
+// Origin is the creator's socket address, Sequence is the creator-local
+// monotonically increasing counter starting at 1, and Msg is the embedded
+// transport-level message to distribute.
+type Rumor struct {
+	Origin   string
+	Sequence uint64
+	Msg      Message
+}
+
+
 // Copy returns a copy of the message
 func (m Message) Copy() Message {
 	return Message{

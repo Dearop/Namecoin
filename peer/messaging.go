@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 	"time"
+
 	"go.dedis.ch/cs438/transport"
 )
 
@@ -18,6 +19,11 @@ type Messaging interface {
 	//
 	// - implemented in HW0
 	Unicast(dest string, msg transport.Message) error
+
+	// Broadcast creates a single-rumor RumorsMessage that embeds the provided
+	// transport message, sends it to a random neighbor, and processes the
+	// embedded message locally.
+	Broadcast(msg transport.Message) error
 
 	// AddPeer adds new known addresses to the node. It must update the
 	// routing table of the node. Adding ourself should have no effect.
