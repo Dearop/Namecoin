@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"strings"
 )
 
 // -----------------------------------------------------------------------------
@@ -28,29 +29,6 @@ func (c ChatMessage) HTML() string {
 }
 
 // -----------------------------------------------------------------------------
-// EmptyMessage
-
-// NewEmpty implements types.Message.
-func (e EmptyMessage) NewEmpty() Message {
-	return &EmptyMessage{}
-}
-
-// Name implements types.Message.
-func (EmptyMessage) Name() string {
-	return "empty"
-}
-
-// String implements types.Message.
-func (EmptyMessage) String() string {
-	return "<empty>"
-}
-
-// HTML implements types.Message.
-func (e EmptyMessage) HTML() string {
-	return e.String()
-}
-
-// -----------------------------------------------------------------------------
 // RumorsMessage
 
 // NewEmpty implements types.Message.
@@ -60,63 +38,128 @@ func (r RumorsMessage) NewEmpty() Message {
 
 // Name implements types.Message.
 func (RumorsMessage) Name() string {
-	return "rumors"
+	return "rumor"
 }
 
 // String implements types.Message.
 func (r RumorsMessage) String() string {
-	return fmt.Sprintf("<rumors:%d>", len(r.Rumors))
+	out := new(strings.Builder)
+	out.WriteString("rumor{")
+	for _, r := range r.Rumors {
+		fmt.Fprint(out, r.String())
+	}
+	out.WriteString("}")
+	return out.String()
 }
 
 // HTML implements types.Message.
 func (r RumorsMessage) HTML() string {
-	return r.String()
+	out := make([]string, len(r.Rumors))
+	for i, r := range r.Rumors {
+		out[i] = r.String()
+	}
+
+	return strings.Join(out, "<br/>")
+}
+
+// String implements types.Message.
+func (r Rumor) String() string {
+	return fmt.Sprintf("{%s-%d-%s}", r.Origin, r.Sequence, r.Msg.Type)
+}
+
+// -----------------------------------------------------------------------------
+// AckMessage
+
+// NewEmpty implements types.Message.
+func (AckMessage) NewEmpty() Message {
+	return &AckMessage{}
+}
+
+// Name implements types.Message
+func (a AckMessage) Name() string {
+	return "ack"
+}
+
+// String implements types.Message.
+func (a AckMessage) String() string {
+	return fmt.Sprintf("{ack for packet %s}", a.AckedPacketID)
+}
+
+// HTML implements types.Message.
+func (a AckMessage) HTML() string {
+	return fmt.Sprintf("ack for packet<br/>%s", a.AckedPacketID)
 }
 
 // -----------------------------------------------------------------------------
 // StatusMessage
 
 // NewEmpty implements types.Message.
-func (s StatusMessage) NewEmpty() Message {
+func (StatusMessage) NewEmpty() Message {
 	return &StatusMessage{}
 }
 
-// Name implements types.Message.
-func (StatusMessage) Name() string {
+// Name implements types.Message
+func (s StatusMessage) Name() string {
 	return "status"
 }
 
 // String implements types.Message.
 func (s StatusMessage) String() string {
-	return fmt.Sprintf("<status:%d>", len(s.View))
+	out := new(strings.Builder)
+
+	if len(s) > 5 {
+		fmt.Fprintf(out, "{%d elements}", len(s))
+	} else {
+		for addr, seq := range s {
+			fmt.Fprintf(out, "{%s-%d}", addr, seq)
+		}
+	}
+
+	res := out.String()
+	if res == "" {
+		res = "{}"
+	}
+
+	return res
 }
 
 // HTML implements types.Message.
 func (s StatusMessage) HTML() string {
-	return s.String()
+	out := new(strings.Builder)
+
+	for addr, seq := range s {
+		fmt.Fprintf(out, "{%s-%d}", addr, seq)
+	}
+
+	res := out.String()
+	if res == "" {
+		res = "{}"
+	}
+
+	return res
 }
 
 // -----------------------------------------------------------------------------
-// AcknowledgmentMessage
+// EmptyMessage
 
 // NewEmpty implements types.Message.
-func (a AcknowledgmentMessage) NewEmpty() Message {
-	return &AcknowledgmentMessage{}
+func (EmptyMessage) NewEmpty() Message {
+	return &EmptyMessage{}
 }
 
 // Name implements types.Message.
-func (AcknowledgmentMessage) Name() string {
-	return "ack"
+func (e EmptyMessage) Name() string {
+	return "empty"
 }
 
 // String implements types.Message.
-func (a AcknowledgmentMessage) String() string {
-	return fmt.Sprintf("<ack:%s>", a.AckedPacketID)
+func (e EmptyMessage) String() string {
+	return "{∅}"
 }
 
 // HTML implements types.Message.
-func (a AcknowledgmentMessage) HTML() string {
-	return a.String()
+func (e EmptyMessage) HTML() string {
+	return "{∅}"
 }
 
 // -----------------------------------------------------------------------------
@@ -128,16 +171,49 @@ func (p PrivateMessage) NewEmpty() Message {
 }
 
 // Name implements types.Message.
-func (PrivateMessage) Name() string {
+func (p PrivateMessage) Name() string {
 	return "private"
 }
 
 // String implements types.Message.
 func (p PrivateMessage) String() string {
-	return fmt.Sprintf("<private:%d>", len(p.Recipients))
+	return fmt.Sprintf("private message for %s", p.Recipients)
 }
 
 // HTML implements types.Message.
 func (p PrivateMessage) HTML() string {
-	return p.String()
+	return fmt.Sprintf("private message for %s", p.Recipients)
+}
+
+// -----------------------------------------------------------------------------
+// utility functions
+
+// RumorByOrigin sorts rumor by origin
+type RumorByOrigin []Rumor
+
+func (r RumorByOrigin) Len() int {
+	return len(r)
+}
+
+func (r RumorByOrigin) Swap(i, j int) {
+	r[i], r[j] = r[j], r[i]
+}
+
+func (r RumorByOrigin) Less(i, j int) bool {
+	return r[i].Origin < r[j].Origin
+}
+
+// ChatByMessage sorts chat message by their message
+type ChatByMessage []*ChatMessage
+
+func (c ChatByMessage) Len() int {
+	return len(c)
+}
+
+func (c ChatByMessage) Swap(i, j int) {
+	c[i], c[j] = c[j], c[i]
+}
+
+func (c ChatByMessage) Less(i, j int) bool {
+	return c[i].Message < c[j].Message
 }

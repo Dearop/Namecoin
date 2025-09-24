@@ -20,9 +20,20 @@ type Messaging interface {
 	// - implemented in HW0
 	Unicast(dest string, msg transport.Message) error
 
-	// Broadcast creates a single-rumor RumorsMessage that embeds the provided
-	// transport message, sends it to a random neighbor, and processes the
-	// embedded message locally.
+	// Broadcast sends a packet asynchronously to all know destinations.
+	// The node must not send the message to itself (to its socket),
+	// but still process it.
+	//
+	// - implemented in HW1
+	Broadcast(msg transport.Message) error
+
+
+
+	// Broadcast sends a packet asynchronously to all know destinations.
+	// The node must not send the message to itself (to its socket),
+	// but still process it.
+	//
+	// - implemented in HW1
 	Broadcast(msg transport.Message) error
 
 	// AddPeer adds new known addresses to the node. It must update the
