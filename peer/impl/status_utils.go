@@ -1,6 +1,7 @@
 package impl
 
 import (
+
 	"time"
 	"go.dedis.ch/cs438/transport"
 	"go.dedis.ch/cs438/types"
@@ -39,7 +40,6 @@ func (n *node) computeStatusDeltas(remote types.StatusMessage) (
 	}
 	return haveForThem, needFromThem, local
 }
-
 
 
 func (n *node) sendStatusToNeighbor() {
@@ -97,7 +97,6 @@ func (n *node) sendStatusToNeighbor() {
 	header := transport.NewHeader(nodeAddr, nodeAddr, dest)
 	_ = n.conf.Socket.Send(dest, transport.Packet{Header: &header, Msg: &wire}, time.Second)
 }
-
 
 
 func (n *node) buildStatus() types.StatusMessage {

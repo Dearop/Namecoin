@@ -106,6 +106,9 @@ func (n *node) handleChatMessage(m types.Message, pkt transport.Packet) error {
 	if !ok || chat == nil {
 		return xerrors.Errorf("unexpected message type")
 	}
+	if pkt.Header == nil || pkt.Msg == nil {
+		return xerrors.Errorf("invalid packet")
+	}
 	src := "unknown"
 	if pkt.Header != nil && pkt.Header.Source != "" {
 		src = pkt.Header.Source
@@ -172,6 +175,12 @@ func (n *node) handleRumorsMessage(m types.Message, pkt transport.Packet) error 
 
 // acceptExpectedRumors processes expected rumors and returns those that were newly accepted.
 func (n *node) acceptExpectedRumors(rumors []types.Rumor, header *transport.Header) []types.Rumor {
+	if err := n.validateNode(false); err != nil {
+		return nil
+	}
+	if header == nil {
+		return nil
+	}
 	accepted := make([]types.Rumor, 0, len(rumors))
 	for _, r := range rumors {
 		if n.processRumorIfExpected(r, header) {
@@ -186,11 +195,14 @@ func (n *node) forwardAcceptedRumorsOnce(accepted []types.Rumor, header *transpo
 	if len(accepted) == 0 || header == nil {
 		return
 	}
+	if err := n.validateNode(false); err != nil {
+		return
+	}
 	wire, err := n.conf.MessageRegistry.MarshalMessage(types.RumorsMessage{Rumors: accepted})
 	if err != nil {
 		return
 	}
-	src := header.Source
+	src := strings.TrimSpace(header.Source)
 	nodeAddr := n.conf.Socket.GetAddress()
 	n.mu.RLock()
 	neighbors := make([]string, 0, len(n.routingTable))
@@ -232,12 +244,17 @@ func (n *node) handleStatusMessage(m types.Message, pkt transport.Packet) error 
 
 // respondToStatus handles status comparison, sending missing rumors and optionally continuing mongering.
 func (n *node) respondToStatus(source, self string, remote types.StatusMessage) {
+	if err := n.validateNode(false); err != nil {
+		return
+	}
+	source = strings.TrimSpace(source)
+	self = strings.TrimSpace(self)
 	haveForThem, needFromThem, local := n.computeStatusDeltas(remote)
 	if haveForThem {
 		n.sendMissingRumorsTo(source, self, remote, local)
 	}
 	// Important: do not respond to empty anti-entropy statuses.
-	if needFromThem && source != "" && len(remote) > 0 {
+	if needFromThem && source != "" && self != "" && len(remote) > 0 {
 		wire, err := n.conf.MessageRegistry.MarshalMessage(n.buildStatus())
 		if err == nil {
 			header := transport.NewHeader(self, self, source)

@@ -3,11 +3,15 @@ package impl
 import (
 	"strings"
 	"time"
+
 	"go.dedis.ch/cs438/transport"
 	"golang.org/x/xerrors"
 )
 
 func (n *node) maybeContinueMongering(exclude string) {
+	if n == nil {
+		return
+	}
 	if n.conf.ContinueMongering <= 0 {
 		return
 	}
@@ -82,6 +86,9 @@ func (n *node) lookupNextHop(dest string) (string, bool) {
 }
 
 func (n *node) processPacket(pkt transport.Packet) {
+	if n == nil {
+		return
+	}
 	if err := n.validateRecvPacket(pkt); err != nil {
 		return
 	}

@@ -10,6 +10,11 @@ import (
 )
 
 func (n *node) sendMissingRumorsTo(source, self string, remote types.StatusMessage, local map[string]uint) {
+	if err := n.validateNode(false); err != nil {
+		return
+	}
+	source = strings.TrimSpace(source)
+	self = strings.TrimSpace(self)
 	var out []types.Rumor
 	for origin, lseq := range local {
 		rseq := remote[origin]
@@ -35,6 +40,9 @@ func (n *node) sendMissingRumorsTo(source, self string, remote types.StatusMessa
 	if err != nil {
 		return
 	}
+	if self == "" {
+		return
+	}
 	header := transport.NewHeader(self, self, source)
 	_ = n.conf.Socket.Send(source, transport.Packet{Header: &header, Msg: &wire}, time.Second)
 }
@@ -43,6 +51,9 @@ func (n *node) sendMissingRumorsTo(source, self string, remote types.StatusMessa
 // expected one from its origin. It also stores the rumor and updates routing
 // based on the relayedBy header. It returns true if the rumor was processed.
 func (n *node) processRumorIfExpected(r types.Rumor, header *transport.Header) bool {
+	if err := n.validateNode(false); err != nil {
+		return false
+	}
 	origin := strings.TrimSpace(r.Origin)
 	if origin == "" || r.Sequence == 0 || r.Msg == nil || header == nil {
 		return false

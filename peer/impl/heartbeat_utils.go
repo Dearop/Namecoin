@@ -2,10 +2,14 @@ package impl
 
 import (
 	"time"
+
 	"go.dedis.ch/cs438/types"
 )
 
 func (n *node) sendHeartbeat() {
+	if n == nil {
+		return
+	}
 	if err := n.validateNode(false); err != nil {
 		return
 	}
@@ -20,6 +24,9 @@ func (n *node) sendHeartbeat() {
 }
 
 func (n *node) heartbeatLoop(interval time.Duration) {
+	if n == nil {
+		return
+	}
 	defer n.wg.Done()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
