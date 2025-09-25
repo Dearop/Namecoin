@@ -5,7 +5,6 @@ import (
 	"io"
 	"strings"
 	"time"
-
 	"go.dedis.ch/cs438/transport"
 )
 
@@ -27,14 +26,6 @@ type Messaging interface {
 	// - implemented in HW1
 	Broadcast(msg transport.Message) error
 
-
-
-	// Broadcast sends a packet asynchronously to all know destinations.
-	// The node must not send the message to itself (to its socket),
-	// but still process it.
-	//
-	// - implemented in HW1
-	Broadcast(msg transport.Message) error
 
 	// AddPeer adds new known addresses to the node. It must update the
 	// routing table of the node. Adding ourself should have no effect.
