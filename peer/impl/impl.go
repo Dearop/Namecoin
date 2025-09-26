@@ -348,7 +348,6 @@ func (n *node) trackAck(pkt transport.Packet, dest string, rumors types.RumorsMe
 		}
 		header := transport.NewHeader(nodeAddr, nodeAddr, newDest)
 		_ = n.conf.Socket.Send(newDest, transport.Packet{Header: &header, Msg: &wire}, time.Second)
-		// re-arm waiting for new packet id is not required by spec here
 	}(pkt.Header.PacketID)
 }
 
@@ -592,5 +591,3 @@ func (n *node) antiEntropyLoop(interval time.Duration) {
 		}
 	}
 }
-
-// sendStatusToNeighbor moved to utils.go (throttled)

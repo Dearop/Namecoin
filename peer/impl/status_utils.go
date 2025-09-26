@@ -1,8 +1,8 @@
 package impl
 
 import (
-
 	"time"
+
 	"go.dedis.ch/cs438/transport"
 	"go.dedis.ch/cs438/types"
 )
@@ -40,7 +40,6 @@ func (n *node) computeStatusDeltas(remote types.StatusMessage) (
 	}
 	return haveForThem, needFromThem, local
 }
-
 
 func (n *node) sendStatusToNeighbor() {
 	if err := n.validateNode(false); err != nil {
@@ -98,7 +97,6 @@ func (n *node) sendStatusToNeighbor() {
 	_ = n.conf.Socket.Send(dest, transport.Packet{Header: &header, Msg: &wire}, time.Second)
 }
 
-
 func (n *node) buildStatus() types.StatusMessage {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
@@ -112,7 +110,45 @@ func (n *node) buildStatus() types.StatusMessage {
 	return status
 }
 
-
-
-
-
+func (n *node) maybeContinueMongering(exclude string) {
+	if n == nil {
+		return
+	}
+	if n.conf.ContinueMongering <= 0 {
+		return
+	}
+	// probabilistic trigger, but also rate-limit using AntiEntropyInterval
+	if float64(time.Now().UnixNano()%1000)/1000.0 >= n.conf.ContinueMongering {
+		return
+	}
+	if n.conf.AntiEntropyInterval > 0 {
+		n.lastStatusMu.Lock()
+		if !n.lastStatusAt.IsZero() && time.Since(n.lastStatusAt) < n.conf.AntiEntropyInterval {
+			n.lastStatusMu.Unlock()
+			return
+		}
+		n.lastStatusAt = time.Now()
+		n.lastStatusMu.Unlock()
+	}
+	// pick neighbor not equal to exclude
+	nodeAddr := n.conf.Socket.GetAddress()
+	n.mu.RLock()
+	neighbors := make([]string, 0, len(n.routingTable))
+	for origin, relay := range n.routingTable {
+		if origin == relay && origin != nodeAddr && origin != exclude {
+			neighbors = append(neighbors, origin)
+		}
+	}
+	n.mu.RUnlock()
+	if len(neighbors) == 0 {
+		return
+	}
+	dest := neighbors[int(time.Now().UnixNano())%len(neighbors)]
+	status := n.buildStatus()
+	wire, err := n.conf.MessageRegistry.MarshalMessage(status)
+	if err != nil {
+		return
+	}
+	header := transport.NewHeader(nodeAddr, nodeAddr, dest)
+	_ = n.conf.Socket.Send(dest, transport.Packet{Header: &header, Msg: &wire}, time.Second)
+}
