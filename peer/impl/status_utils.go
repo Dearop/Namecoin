@@ -110,7 +110,7 @@ func (n *node) buildStatus() types.StatusMessage {
 	return status
 }
 
-func (n *node) maybeContinueMongering(exclude string) {
+func (n *node) probabilisticallyMonger(exclude string) {
 	if n == nil {
 		return
 	}

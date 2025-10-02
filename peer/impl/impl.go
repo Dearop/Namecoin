@@ -276,7 +276,7 @@ func (n *node) respondToStatus(source, self string, remote types.StatusMessage) 
 		}
 		n.mu.RUnlock()
 		if candidates > 0 {
-			n.maybeContinueMongering(source)
+			n.probabilisticallyMonger(source)
 		}
 	}
 }
