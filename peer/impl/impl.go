@@ -13,11 +13,8 @@ import (
 	"golang.org/x/xerrors"
 )
 
-// NewPeer creates a new peer. You can change the content and location of this
-// function but you MUST NOT change its signature and package location.
+
 func NewPeer(conf peer.Configuration) peer.Peer {
-	// here you must return a struct that implements the peer.Peer functions.
-	// Therefore, you are free to rename and change it as you want.
 	node := &node{conf: conf, stopCh: make(chan struct{})}
 	node.mu.Lock()
 	node.routingTable = make(map[string]string)
