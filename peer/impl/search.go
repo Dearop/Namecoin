@@ -11,6 +11,7 @@ import (
 	"go.dedis.ch/cs438/peer"
 	"go.dedis.ch/cs438/transport"
 	"go.dedis.ch/cs438/types"
+	"golang.org/x/xerrors"
 )
 
 // listNeighbors returns direct neighbors (origin==relay and not self)
@@ -248,6 +249,7 @@ func processSearchReply(rep types.SearchReplyMessage, pattern regexp.Regexp) str
 func (n *node) waitForFullMatch(ch chan types.SearchReplyMessage, timeout time.Duration,
 	pattern regexp.Regexp) string {
 	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	for {
 		select {
 		case rep := <-ch:
@@ -307,4 +309,162 @@ func (n *node) SearchFirst(pattern regexp.Regexp, conf peer.ExpandingRing) (stri
 	return "", nil
 }
 
-// no alias needed
+// splitBudget computes per-neighbor budgets, distributing evenly with remainder.
+func splitBudget(total int, neighbors []string) []struct {
+	dest string
+	b    int
+} {
+	if total <= 0 || len(neighbors) == 0 {
+		return nil
+	}
+	k := len(neighbors)
+	if total < k {
+		k = total
+	}
+	base, rem := 0, 0
+	if k > 0 {
+		base = total / k
+		rem = total % k
+	}
+	res := make([]struct {
+		dest string
+		b    int
+	}, 0, k)
+	for i := 0; i < k; i++ {
+		b := base
+		if rem > 0 {
+			b++
+			rem--
+		}
+		if b <= 0 {
+			continue
+		}
+		res = append(res, struct {
+			dest string
+			b    int
+		}{dest: neighbors[i], b: b})
+	}
+	return res
+}
+
+// buildLocalFileInfos builds file infos for names matching pattern and having metafile.
+func (n *node) buildLocalFileInfos(pattern string) []types.FileInfo {
+	nameStore := n.conf.Storage.GetNamingStore()
+	blobStore := n.conf.Storage.GetDataBlobStore()
+	responses := make([]types.FileInfo, 0)
+
+	// compile regex pattern
+	reg, err := regexp.Compile(pattern)
+	if err != nil {
+		return responses
+	}
+
+	nameStore.ForEach(func(name string, val []byte) bool {
+		if len(val) == 0 {
+			return true
+		}
+		if !reg.MatchString(name) {
+			return true
+		}
+		mh := string(val)
+		meta := blobStore.Get(mh)
+		if meta == nil {
+			return true
+		}
+		chunkKeys := strings.Split(string(meta), peer.MetafileSep)
+		fi := types.FileInfo{Name: name, Metahash: mh}
+		fi.Chunks = make([][]byte, len(chunkKeys))
+		for i, ck := range chunkKeys {
+			ck = strings.TrimSpace(ck)
+			if ck == "" {
+				continue
+			}
+			if blobStore.Get(ck) != nil {
+				fi.Chunks[i] = []byte(ck)
+			}
+		}
+		responses = append(responses, fi)
+		return true
+	})
+	return responses
+}
+
+// forwardSearchRequest forwards search request to neighbors if budget permits
+func (n *node) forwardSearchRequest(req *types.SearchRequestMessage, pkt transport.Packet) {
+	if req.Budget <= 1 {
+		return
+	}
+	remaining := int(req.Budget) - 1
+	nodeAddr := n.conf.Socket.GetAddress()
+	from := strings.TrimSpace(pkt.Header.Source)
+	n.mu.RLock()
+	neighbors := make([]string, 0)
+	for origin, relay := range n.routingTable {
+		if origin == relay && origin != nodeAddr && origin != from {
+			neighbors = append(neighbors, origin)
+		}
+	}
+	n.mu.RUnlock()
+	if len(neighbors) == 0 {
+		return
+	}
+	rand.Shuffle(len(neighbors), func(i, j int) {
+		neighbors[i], neighbors[j] = neighbors[j], neighbors[i]
+	})
+	plan := splitBudget(remaining, neighbors)
+	for _, item := range plan {
+		if nextHop, ok := n.lookupNextHop(item.dest); ok {
+			fwd := types.SearchRequestMessage{
+				RequestID: req.RequestID,
+				Origin:    req.Origin,
+				Pattern:   req.Pattern,
+				Budget:    uint(item.b),
+			}
+			wire, err := n.conf.MessageRegistry.MarshalMessage(fwd)
+			if err == nil {
+				header := transport.NewHeader(nodeAddr, nodeAddr, item.dest)
+				_ = n.conf.Socket.Send(nextHop, transport.Packet{Header: &header, Msg: &wire}, time.Second)
+			}
+		}
+	}
+}
+
+// sendSearchReply sends search reply back to the original requester
+func (n *node) sendSearchReply(req *types.SearchRequestMessage, responses []types.FileInfo,
+	pkt transport.Packet) error {
+	reply := types.SearchReplyMessage{RequestID: req.RequestID, Responses: responses}
+	wire, err := n.conf.MessageRegistry.MarshalMessage(reply)
+	if err != nil {
+		return err
+	}
+	src := strings.TrimSpace(pkt.Header.Source)
+	if src == "" {
+		return nil
+	}
+	header := transport.NewHeader(n.conf.Socket.GetAddress(), n.conf.Socket.GetAddress(), req.Origin)
+	return n.conf.Socket.Send(src, transport.Packet{Header: &header, Msg: &wire}, time.Second)
+}
+
+// handleSearchRequest handles incoming search requests
+func (n *node) handleSearchRequest(m types.Message, pkt transport.Packet) error {
+	if err := n.validateNode(false); err != nil {
+		return err
+	}
+	req, ok := m.(*types.SearchRequestMessage)
+	if !ok || req == nil {
+		return xerrors.Errorf("unexpected message type")
+	}
+	if pkt.Header == nil {
+		return xerrors.Errorf("missing header")
+	}
+
+	// 1) Forward if budget permits
+	n.forwardSearchRequest(req, pkt)
+
+	// 2) Check local naming store and build FileInfo list
+	pattern := strings.TrimSpace(req.Pattern)
+	responses := n.buildLocalFileInfos(pattern)
+
+	// 3) Reply directly to packet's source
+	return n.sendSearchReply(req, responses, pkt)
+}
