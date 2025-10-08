@@ -233,10 +233,14 @@ func (n *node) handleSearchReply(m types.Message, pkt transport.Packet) error {
 	ch := n.pendingSearch[rep.RequestID]
 	n.searchMu.Unlock()
 	if ch != nil {
-		select {
-		case ch <- *rep:
-		default:
-		}
+		// Use a goroutine to avoid blocking the message handler
+		go func() {
+			select {
+			case ch <- *rep:
+			case <-time.After(time.Second):
+				// Timeout to prevent goroutine leak
+			}
+		}()
 	}
 	return nil
 }

@@ -114,6 +114,8 @@ func (n *node) waitCollectSearch(ch chan types.SearchReplyMessage, timeout time.
 	reg regexp.Regexp) map[string]struct{} {
 	names := make(map[string]struct{})
 	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	for {
 		select {
 		case rep := <-ch:
