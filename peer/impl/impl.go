@@ -1,18 +1,22 @@
 package impl
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
 	"log"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/rs/xid"
 	"go.dedis.ch/cs438/peer"
 	"go.dedis.ch/cs438/transport"
 	"go.dedis.ch/cs438/types"
 	"golang.org/x/xerrors"
 )
-
 
 func NewPeer(conf peer.Configuration) peer.Peer {
 	node := &node{conf: conf, stopCh: make(chan struct{})}
@@ -35,19 +39,24 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 // - implements peer.Peer
 type node struct {
 	peer.Peer
-	conf         peer.Configuration
-	stopCh       chan struct{}
-	wg           sync.WaitGroup
-	routingTable map[string]string
-	mu           sync.RWMutex
-	lastSeq      map[string]uint
-	rumors       map[string]map[uint]types.Rumor
-	pmu          sync.Mutex
-	pendingAcks  map[string]*pendingAck
-	lastStatusMu sync.Mutex
-	lastStatusAt time.Time
-	statusRateMu sync.Mutex
-	lastStatusTo map[string]time.Time
+	conf          peer.Configuration
+	stopCh        chan struct{}
+	wg            sync.WaitGroup
+	routingTable  map[string]string
+	mu            sync.RWMutex
+	lastSeq       map[string]uint
+	rumors        map[string]map[uint]types.Rumor
+	pmu           sync.Mutex
+	pendingAcks   map[string]*pendingAck
+	lastStatusMu  sync.Mutex
+	lastStatusAt  time.Time
+	statusRateMu  sync.Mutex
+	lastStatusTo  map[string]time.Time
+	catalog       map[string]map[string]struct{}
+	dataReqMu     sync.Mutex
+	pendingData   map[string]chan types.DataReplyMessage
+	searchMu      sync.Mutex
+	pendingSearch map[string]chan types.SearchReplyMessage
 }
 
 type pendingAck struct {
@@ -76,6 +85,11 @@ func (n *node) Start() error {
 	n.conf.MessageRegistry.RegisterMessageCallback(types.StatusMessage{}, n.handleStatusMessage)
 	n.conf.MessageRegistry.RegisterMessageCallback(types.AckMessage{}, n.handleAckMessage)
 	n.conf.MessageRegistry.RegisterMessageCallback(types.PrivateMessage{}, n.handlePrivateMessage)
+	// Register data sharing messages
+	n.conf.MessageRegistry.RegisterMessageCallback(types.DataRequestMessage{}, n.handleDataRequest)
+	n.conf.MessageRegistry.RegisterMessageCallback(types.DataReplyMessage{}, n.handleDataReply)
+	n.conf.MessageRegistry.RegisterMessageCallback(types.SearchReplyMessage{}, n.handleSearchReply)
+	n.conf.MessageRegistry.RegisterMessageCallback(types.SearchRequestMessage{}, n.handleSearchRequest)
 	n.wg.Add(1)
 	go n.listenLoop()
 
@@ -92,81 +106,6 @@ func (n *node) Start() error {
 		n.wg.Add(1)
 		go n.heartbeatLoop(n.conf.HeartbeatInterval)
 	}
-	return nil
-}
-
-func (n *node) handleChatMessage(m types.Message, pkt transport.Packet) error {
-	if err := n.validateNode(false); err != nil {
-		return err
-	}
-	chat, ok := m.(*types.ChatMessage)
-	if !ok || chat == nil {
-		return xerrors.Errorf("unexpected message type")
-	}
-	if pkt.Header == nil || pkt.Msg == nil {
-		return xerrors.Errorf("invalid packet")
-	}
-	src := "unknown"
-	if pkt.Header != nil && pkt.Header.Source != "" {
-		src = pkt.Header.Source
-	}
-	if os.Getenv("GLOG") != "no" {
-		log.Printf("[chat] from: %s, msg: %s", src, chat.Message)
-	}
-	return nil
-}
-
-func (n *node) handlePrivateMessage(m types.Message, pkt transport.Packet) error {
-	if err := n.validateNode(false); err != nil {
-		return err
-	}
-	pm, ok := m.(*types.PrivateMessage)
-	if !ok || pm == nil {
-		return xerrors.Errorf("unexpected message type")
-	}
-	if pkt.Header == nil || pm.Msg == nil {
-		return xerrors.Errorf("invalid private message")
-	}
-	dest := strings.TrimSpace(pkt.Header.Destination)
-	// process only if destination is in recipients set
-	if _, ok := pm.Recipients[dest]; !ok {
-		return nil
-	}
-	// Process embedded message with same header
-	_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: pkt.Header, Msg: pm.Msg})
-	return nil
-}
-
-func (n *node) handleRumorsMessage(m types.Message, pkt transport.Packet) error {
-	if err := n.validateNode(false); err != nil {
-		return err
-	}
-	rumorsMsg, ok := m.(*types.RumorsMessage)
-	if !ok || rumorsMsg == nil {
-		return xerrors.Errorf("unexpected message type")
-	}
-	if pkt.Header == nil {
-		return xerrors.Errorf("missing header")
-	}
-
-	// Process expected rumors and collect newly accepted ones
-	forwardable := n.acceptExpectedRumors(rumorsMsg.Rumors, pkt.Header)
-
-	// Send ack back to source (directly) with the receiver's current status
-	source := strings.TrimSpace(pkt.Header.Source)
-	if source != "" {
-		ack := types.AckMessage{
-			AckedPacketID: pkt.Header.PacketID,
-			Status:        n.buildStatus(),
-		}
-		wireAck, err := n.conf.MessageRegistry.MarshalMessage(ack)
-		if err == nil {
-			header := transport.NewHeader(n.conf.Socket.GetAddress(), n.conf.Socket.GetAddress(), source)
-			_ = n.conf.Socket.Send(source, transport.Packet{Header: &header, Msg: &wireAck}, time.Second)
-		}
-	}
-	// Forward only the newly accepted rumors once to a random neighbor (not the source)
-	n.forwardAcceptedRumorsOnce(forwardable, pkt.Header)
 	return nil
 }
 
@@ -217,28 +156,6 @@ func (n *node) forwardAcceptedRumorsOnce(accepted []types.Rumor, header *transpo
 	_ = n.conf.Socket.Send(dest, transport.Packet{Header: &fwdHeader, Msg: &wire}, time.Second)
 }
 
-func (n *node) handleStatusMessage(m types.Message, pkt transport.Packet) error {
-	if err := n.validateNode(false); err != nil {
-		return err
-	}
-	remote, ok := m.(types.StatusMessage)
-	if !ok {
-		p, ok2 := m.(*types.StatusMessage)
-		if !ok2 || p == nil {
-			return xerrors.Errorf("unexpected message type")
-		}
-		remote = *p
-	}
-	if pkt.Header == nil {
-		return xerrors.Errorf("missing header")
-	}
-	self := n.conf.Socket.GetAddress()
-	source := strings.TrimSpace(pkt.Header.Source)
-
-	n.respondToStatus(source, self, remote)
-	return nil
-}
-
 // respondToStatus handles status comparison, sending missing rumors and optionally continuing mongering.
 func (n *node) respondToStatus(source, self string, remote types.StatusMessage) {
 	if err := n.validateNode(false); err != nil {
@@ -276,32 +193,6 @@ func (n *node) respondToStatus(source, self string, remote types.StatusMessage) 
 			n.probabilisticallyMonger(source)
 		}
 	}
-}
-
-func (n *node) handleAckMessage(m types.Message, pkt transport.Packet) error {
-	if err := n.validateNode(false); err != nil {
-		return err
-	}
-	ack, ok := m.(*types.AckMessage)
-	if !ok || ack == nil {
-		return xerrors.Errorf("unexpected message type")
-	}
-	// Stop waiting for this ack if it's pending
-	n.pmu.Lock()
-	p, ok := n.pendingAcks[pkt.Header.PacketID]
-	if ok && p != nil && p.timer != nil {
-		p.timer.Stop()
-		delete(n.pendingAcks, pkt.Header.PacketID)
-	}
-	n.pmu.Unlock()
-
-	// Process the embedded status using the registry
-	wire, err := n.conf.MessageRegistry.MarshalMessage(ack.Status)
-	if err == nil {
-		// reuse header to process locally
-		_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: pkt.Header, Msg: &wire})
-	}
-	return nil
 }
 
 func (n *node) trackAck(pkt transport.Packet, dest string, rumors types.RumorsMessage) {
@@ -376,6 +267,10 @@ func (n *node) listenLoop() {
 				}
 				return
 			}
+			// Log errors but don't let them stop the node immediately
+			if os.Getenv("GLOG") != "no" && errorCount <= 5 {
+				log.Printf("Socket error (attempt %d): %v", errorCount, err)
+			}
 			continue
 		}
 		if errorCount > 0 {
@@ -395,7 +290,21 @@ func (n *node) Stop() error {
 	default:
 		close(n.stopCh)
 	}
-	n.wg.Wait()
+	// Wait for goroutines to finish with a timeout to avoid hanging
+	done := make(chan struct{})
+	go func() {
+		n.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		// All goroutines finished normally
+	case <-time.After(5 * time.Second):
+		// Timeout - some goroutines might still be running
+		if os.Getenv("GLOG") != "no" {
+			log.Printf("Warning: some goroutines did not finish within timeout")
+		}
+	}
 	return nil
 }
 
@@ -587,4 +496,219 @@ func (n *node) antiEntropyLoop(interval time.Duration) {
 			n.sendStatusToNeighbor()
 		}
 	}
+}
+
+// Upload implements peer.DataSharing
+func (n *node) Upload(data io.Reader) (string, error) {
+	if err := n.validateNode(false); err != nil {
+		return "", err
+	}
+	if data == nil {
+		return "", xerrors.Errorf("nil reader")
+	}
+	blobStore := n.conf.Storage.GetDataBlobStore()
+	chunkSize := n.conf.ChunkSize
+	if chunkSize == 0 {
+		chunkSize = 8192
+	}
+
+	// Limit: files up to 2 MiB
+	const maxSize = 2 * 1024 * 1024
+	var total int
+
+	buf := make([]byte, chunkSize)
+	chunkHashes := make([]string, 0, 16)
+
+	for {
+		nr, err := io.ReadFull(data, buf)
+		if err == io.EOF && nr == 0 {
+			break
+		}
+		if err != nil && err != io.ErrUnexpectedEOF {
+			return "", xerrors.Errorf("read error: %v", err)
+		}
+		chunk := append([]byte(nil), buf[:nr]...)
+		total += nr
+		if total > maxSize {
+			return "", xerrors.Errorf("data too large: exceeds 2 MiB")
+		}
+		sum := sha256.Sum256(chunk)
+		hexKey := hex.EncodeToString(sum[:])
+		blobStore.Set(hexKey, chunk)
+		chunkHashes = append(chunkHashes, hexKey)
+		if err == io.ErrUnexpectedEOF {
+			// processed last partial chunk
+			break
+		}
+	}
+
+	if len(chunkHashes) == 0 {
+		return "", xerrors.Errorf("empty data")
+	}
+
+	// Build metafile: hex hashes separated by peer.MetafileSep
+	var mf bytes.Buffer
+	for i, h := range chunkHashes {
+		if i > 0 {
+			mf.WriteString(peer.MetafileSep)
+		}
+		mf.WriteString(h)
+	}
+	metafile := mf.Bytes()
+
+	// Ensure metafile fits in one chunk
+	if len(metafile) > int(chunkSize) {
+		return "", xerrors.Errorf("metafile too large for one chunk")
+	}
+
+	ms := sha256.Sum256(metafile)
+	metahash := hex.EncodeToString(ms[:])
+
+	// Store metafile under its metahash
+	blobStore.Set(metahash, metafile)
+
+	return metahash, nil
+}
+
+// Download implements peer.DataSharing
+func (n *node) Download(metahash string) ([]byte, error) {
+	if err := n.validateNode(false); err != nil {
+		return nil, err
+	}
+	mh := strings.TrimSpace(metahash)
+	if mh == "" {
+		return nil, xerrors.Errorf("empty metahash")
+	}
+	blob := n.conf.Storage.GetDataBlobStore()
+
+	// Step 1: get metafile value (list of chunk keys)
+	metafile := blob.Get(mh)
+	if metafile == nil {
+		// fetch remotely using catalog
+		val, err := n.fetchRemote(mh)
+		if err != nil {
+			return nil, err
+		}
+		metafile = val
+		blob.Set(mh, metafile)
+	}
+
+	// Parse metafile into chunk keys
+	lines := strings.Split(string(metafile), peer.MetafileSep)
+	if len(lines) == 0 {
+		return nil, xerrors.Errorf("invalid metafile")
+	}
+
+	// Step 2: sequentially fetch chunks
+	var out bytes.Buffer
+	for _, key := range lines {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return nil, xerrors.Errorf("invalid chunk key in metafile")
+		}
+		data := blob.Get(key)
+		if data == nil {
+			val, err := n.fetchRemote(key)
+			if err != nil {
+				return nil, err
+			}
+			// verify integrity
+			sum := sha256.Sum256(val)
+			if hex.EncodeToString(sum[:]) != key {
+				// wrong data: drop and update catalog
+				n.removeFromCatalog(key)
+				return nil, xerrors.Errorf("tampered chunk")
+			}
+			blob.Set(key, val)
+			data = val
+		}
+		out.Write(data)
+	}
+	return out.Bytes(), nil
+}
+
+func (n *node) fetchRemote(key string) ([]byte, error) {
+	// pick random peer from catalog for key, ensure routable
+	dest, ok := n.pickPeerForKey(key)
+	if !ok {
+		return nil, xerrors.Errorf("no catalog entry for %s", key)
+	}
+	nextHop, ok := n.lookupNextHop(dest)
+	if !ok {
+		return nil, xerrors.Errorf("no route to %s", dest)
+	}
+
+	// create pending channel
+	reqID := xid.New().String()
+	ch := make(chan types.DataReplyMessage, 1)
+	n.dataReqMu.Lock()
+	if n.pendingData == nil {
+		n.pendingData = make(map[string]chan types.DataReplyMessage)
+	}
+	n.pendingData[reqID] = ch
+	n.dataReqMu.Unlock()
+	defer func() {
+		n.dataReqMu.Lock()
+		delete(n.pendingData, reqID)
+		n.dataReqMu.Unlock()
+	}()
+
+	// send request with backoff
+	back := n.conf.BackoffDataRequest
+	if back.Initial <= 0 {
+		back.Initial = time.Second * 2
+	}
+	if back.Factor == 0 {
+		back.Factor = 2
+	}
+	if back.Retry == 0 {
+		back.Retry = 5
+	}
+
+	req := types.DataRequestMessage{RequestID: reqID, Key: key}
+	wire, err := n.conf.MessageRegistry.MarshalMessage(req)
+	if err != nil {
+		return nil, err
+	}
+	header := transport.NewHeader(n.conf.Socket.GetAddress(), n.conf.Socket.GetAddress(), dest)
+
+	wait := back.Initial
+	for i := uint(0); i < back.Retry; i++ {
+		_ = n.conf.Socket.Send(nextHop, transport.Packet{Header: &header, Msg: &wire}, time.Second)
+		select {
+		case rep := <-ch:
+			if rep.Key != key || rep.RequestID != reqID {
+				continue
+			}
+			if rep.Value == nil {
+				// remove bogus catalog entry
+				n.removeFromCatalog(key)
+				return nil, xerrors.Errorf("empty reply")
+			}
+			return rep.Value, nil
+		case <-time.After(wait):
+			wait *= time.Duration(back.Factor)
+		}
+	}
+	return nil, xerrors.Errorf("timeout fetching %s", key)
+}
+
+func (n *node) pickPeerForKey(key string) (string, bool) {
+	n.mu.RLock()
+	peers := n.catalog[key]
+	n.mu.RUnlock()
+	if len(peers) == 0 {
+		return "", false
+	}
+	// deterministic pick - get first peer
+	for p := range peers {
+		return p, true
+	}
+	return "", false
+}
+
+func (n *node) removeFromCatalog(key string) {
+	n.mu.Lock()
+	delete(n.catalog, key)
+	n.mu.Unlock()
 }
