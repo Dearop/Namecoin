@@ -34,24 +34,25 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 // - implements peer.Peer
 type node struct {
 	peer.Peer
-	conf          peer.Configuration
-	stopCh        chan struct{}
-	wg            sync.WaitGroup
-	routingTable  map[string]string
-	mu            sync.RWMutex
-	lastSeq       map[string]uint
-	rumors        map[string]map[uint]types.Rumor
-	pmu           sync.Mutex
-	pendingAcks   map[string]*pendingAck
-	lastStatusMu  sync.Mutex
-	lastStatusAt  time.Time
-	statusRateMu  sync.Mutex
-	lastStatusTo  map[string]time.Time
-	catalog       map[string]map[string]struct{}
-	dataReqMu     sync.Mutex
-	pendingData   map[string]chan types.DataReplyMessage
-	searchMu      sync.Mutex
-	pendingSearch map[string]chan types.SearchReplyMessage
+	conf             peer.Configuration
+	stopCh           chan struct{}
+	wg               sync.WaitGroup
+	routingTable     map[string]string
+	mu               sync.RWMutex
+	lastSeq          map[string]uint
+	rumors           map[string]map[uint]types.Rumor
+	pmu              sync.Mutex
+	pendingAcks      map[string]*pendingAck
+	lastStatusMu     sync.Mutex
+	lastStatusAt     time.Time
+	statusRateMu     sync.Mutex
+	lastStatusTo     map[string]time.Time
+	catalog          map[string]map[string]struct{}
+	dataReqMu        sync.Mutex
+	pendingData      map[string]chan types.DataReplyMessage
+	processedDataReq sync.Map // map[string]bool - tracks processed request IDs
+	searchMu         sync.Mutex
+	pendingSearch    map[string]chan types.SearchReplyMessage
 }
 
 type pendingAck struct {

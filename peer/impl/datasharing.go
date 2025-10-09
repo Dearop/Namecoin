@@ -253,6 +253,20 @@ func (n *node) handleDataRequest(m types.Message, pkt transport.Packet) error {
 		return xerrors.Errorf("missing header")
 	}
 
+	// Deduplicate requests: check if we've already processed this request ID
+	if _, exists := n.processedDataReq.LoadOrStore(req.RequestID, true); exists {
+		// Already processed this request, silently ignore
+		return nil
+	}
+
+	// Check if we can route back to the source
+	dest := strings.TrimSpace(pkt.Header.Source)
+	nextHop, ok := n.lookupNextHop(dest)
+	if !ok {
+		// Can't route back to source, silently drop
+		return nil
+	}
+
 	// get data from local storage
 	blobStore := n.conf.Storage.GetDataBlobStore()
 	data := blobStore.Get(req.Key)
@@ -267,8 +281,8 @@ func (n *node) handleDataRequest(m types.Message, pkt transport.Packet) error {
 	if err != nil {
 		return err
 	}
-	header := transport.NewHeader(n.conf.Socket.GetAddress(), n.conf.Socket.GetAddress(), pkt.Header.Source)
-	return n.conf.Socket.Send(pkt.Header.Source, transport.Packet{Header: &header, Msg: &wire}, time.Second)
+	header := transport.NewHeader(n.conf.Socket.GetAddress(), n.conf.Socket.GetAddress(), dest)
+	return n.conf.Socket.Send(nextHop, transport.Packet{Header: &header, Msg: &wire}, time.Second)
 }
 
 // handleDataReply handles incoming data replies
@@ -285,14 +299,11 @@ func (n *node) handleDataReply(m types.Message, pkt transport.Packet) error {
 	ch := n.pendingData[rep.RequestID]
 	n.dataReqMu.Unlock()
 	if ch != nil {
-		// Use a goroutine to avoid blocking the message handler
-		go func() {
-			select {
-			case ch <- *rep:
-			case <-time.After(time.Second):
-				// Timeout to prevent goroutine leak
-			}
-		}()
+		// Non-blocking send to drop duplicates (channel has buffer of 1)
+		select {
+		case ch <- *rep:
+		default:
+		}
 	}
 	return nil
 }
