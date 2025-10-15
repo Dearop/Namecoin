@@ -14,7 +14,9 @@ import (
 // generate a graphical representation with `dot -Tpdf graph.dot -o graph.pdf`
 func GenerateItemsGraphviz(out io.Writer, withSend, withRcv bool, traffics ...*Traffic) {
 
-	sort.Sort(trafficSlice(traffics))
+	sort.Slice(traffics, func(i, j int) bool {
+		return traffics[i].getFirstCounter() < traffics[j].getFirstCounter()
+	})
 
 	fmt.Fprintf(out, "digraph network_activity {\n")
 	fmt.Fprintf(out, "labelloc=\"t\";")

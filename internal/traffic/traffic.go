@@ -18,7 +18,7 @@ var (
 	sendCounter   = &atomicCounter{}
 	recvCounter   = &atomicCounter{}
 
-	traffics = trafficSlice{}
+	traffics = &trafficSlice{}
 )
 
 const (
@@ -33,7 +33,7 @@ func SaveGraph(path string, withSend, withRcv bool) error {
 		return xerrors.Errorf("file: %v", err)
 	}
 
-	GenerateItemsGraphviz(f, withSend, withRcv, traffics...)
+	GenerateItemsGraphviz(f, withSend, withRcv, traffics.GetAll()...)
 	return nil
 }
 
@@ -43,7 +43,7 @@ func NewTraffic() *Traffic {
 		items: make([]item, 0),
 	}
 
-	traffics = append(traffics, t)
+	traffics.Add(t)
 
 	return t
 }
@@ -111,16 +111,21 @@ func (c *atomicCounter) IncrementAndGet() int {
 	return c.c
 }
 
-type trafficSlice []*Traffic
-
-func (tt trafficSlice) Len() int {
-	return len(tt)
+type trafficSlice struct {
+	sync.Mutex
+	items []*Traffic
 }
 
-func (tt trafficSlice) Less(i, j int) bool {
-	return tt[i].getFirstCounter() < tt[j].getFirstCounter()
+func (ts *trafficSlice) Add(t *Traffic) {
+	ts.Lock()
+	defer ts.Unlock()
+	ts.items = append(ts.items, t)
 }
 
-func (tt trafficSlice) Swap(i, j int) {
-	tt[i], tt[j] = tt[j], tt[i]
+func (ts *trafficSlice) GetAll() []*Traffic {
+	ts.Lock()
+	defer ts.Unlock()
+	snapshot := make([]*Traffic, len(ts.items))
+	copy(snapshot, ts.items)
+	return snapshot
 }

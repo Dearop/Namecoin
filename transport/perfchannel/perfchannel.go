@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.dedis.ch/cs438/internal/traffic"
 	"go.dedis.ch/cs438/transport"
 	"golang.org/x/xerrors"
 )
@@ -22,7 +21,6 @@ var counter uint32 // initialized by default to 0
 func NewTransport() transport.Transport {
 	return &PerfTransport{
 		incomings: make(map[string]chan transport.Packet),
-		traffic:   traffic.NewTraffic(),
 	}
 }
 
@@ -33,7 +31,6 @@ func NewTransport() transport.Transport {
 type PerfTransport struct {
 	sync.RWMutex
 	incomings map[string]chan transport.Packet
-	traffic   *traffic.Traffic
 }
 
 // CreateSocket implements transport.Transport
