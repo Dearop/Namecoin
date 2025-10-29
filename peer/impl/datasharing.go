@@ -213,18 +213,27 @@ func (n *node) fetchRemote(key string) ([]byte, error) {
 
 // pickPeerForKey selects a random peer from the catalog for the given key
 func (n *node) pickPeerForKey(key string) (string, bool) {
+	if key == "" {
+		return "", false
+	}
+
 	n.mu.RLock()
 	peers, exists := n.catalog[key]
-	if !exists || len(peers) == 0 {
+	if !exists || len(peers) == 0 || peers == nil {
 		n.mu.RUnlock()
 		return "", false
 	}
-	// Create a copy of the map to avoid race conditions during iteration
 	peersCopy := make(map[string]struct{})
 	for peer := range peers {
-		peersCopy[peer] = struct{}{}
+		if peer != "" {
+			peersCopy[peer] = struct{}{}
+		}
 	}
 	n.mu.RUnlock()
+
+	if len(peersCopy) == 0 {
+		return "", false
+	}
 
 	// pick random peer from the copy
 	for peer := range peersCopy {
@@ -235,8 +244,14 @@ func (n *node) pickPeerForKey(key string) (string, bool) {
 
 // removeFromCatalog removes a key from the catalog
 func (n *node) removeFromCatalog(key string) {
+	if key == "" {
+		return
+	}
+
 	n.mu.Lock()
-	delete(n.catalog, key)
+	if n.catalog != nil {
+		delete(n.catalog, key)
+	}
 	n.mu.Unlock()
 }
 

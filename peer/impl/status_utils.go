@@ -12,15 +12,24 @@ func (n *node) computeStatusDeltas(remote types.StatusMessage) (
 	needFromThem bool,
 	local map[string]uint,
 ) {
+	if remote == nil {
+		remote = make(types.StatusMessage)
+	}
+
 	// snapshot local
 	n.mu.RLock()
 	local = make(map[string]uint, len(n.lastSeq))
 	for k, v := range n.lastSeq {
-		local[k] = v
+		if k != "" {
+			local[k] = v
+		}
 	}
 	n.mu.RUnlock()
 	// do comparisons
 	for origin, lseq := range local {
+		if origin == "" {
+			continue
+		}
 		rseq, ok := remote[origin]
 		if !ok {
 			if lseq > 0 {
@@ -33,6 +42,9 @@ func (n *node) computeStatusDeltas(remote types.StatusMessage) (
 		}
 	}
 	for origin, rseq := range remote {
+		if origin == "" {
+			continue
+		}
 		lseq := local[origin]
 		if rseq > lseq {
 			needFromThem = true
@@ -102,8 +114,7 @@ func (n *node) buildStatus() types.StatusMessage {
 	defer n.mu.RUnlock()
 	status := make(types.StatusMessage, len(n.lastSeq))
 	for origin, seq := range n.lastSeq {
-		// Only include origins we have actually seen (seq > 0)
-		if seq > 0 {
+		if origin != "" && seq > 0 {
 			status[origin] = seq
 		}
 	}
@@ -114,9 +125,18 @@ func (n *node) probabilisticallyMonger(exclude string) {
 	if n == nil {
 		return
 	}
+
+	if err := n.validateNode(false); err != nil {
+		return
+	}
+
 	if n.conf.ContinueMongering <= 0 {
 		return
 	}
+	if n.conf.ContinueMongering > 1.0 {
+		return
+	}
+
 	// probabilistic trigger, but also rate-limit using AntiEntropyInterval
 	if float64(time.Now().UnixNano()%1000)/1000.0 >= n.conf.ContinueMongering {
 		return
@@ -135,7 +155,7 @@ func (n *node) probabilisticallyMonger(exclude string) {
 	n.mu.RLock()
 	neighbors := make([]string, 0, len(n.routingTable))
 	for origin, relay := range n.routingTable {
-		if origin == relay && origin != nodeAddr && origin != exclude {
+		if origin != "" && relay != "" && origin == relay && origin != nodeAddr && origin != exclude {
 			neighbors = append(neighbors, origin)
 		}
 	}

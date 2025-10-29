@@ -18,8 +18,6 @@ func (n *node) sendHeartbeat() {
 	if err != nil {
 		return
 	}
-	// Broadcast expects a transport.Message; we already have transport.Message in data
-	// data is a transport.Message produced by MarshalMessage
 	_ = n.Broadcast(data)
 }
 

@@ -13,10 +13,21 @@ func (n *node) sendMissingRumorsTo(source, self string, remote types.StatusMessa
 	if err := n.validateNode(false); err != nil {
 		return
 	}
+	if remote == nil || local == nil {
+		return
+	}
+
 	source = strings.TrimSpace(source)
 	self = strings.TrimSpace(self)
+	if source == "" || self == "" {
+		return
+	}
+
 	var out []types.Rumor
 	for origin, lseq := range local {
+		if origin == "" {
+			continue
+		}
 		rseq := remote[origin]
 		if lseq <= rseq {
 			continue
@@ -26,7 +37,9 @@ func (n *node) sendMissingRumorsTo(source, self string, remote types.StatusMessa
 		for seq := rseq + 1; seq <= lseq; seq++ {
 			if byOrigin := n.rumors[origin]; byOrigin != nil {
 				if rm, ok := byOrigin[seq]; ok {
-					out = append(out, rm)
+					if rm.Origin != "" && rm.Sequence > 0 && rm.Msg != nil {
+						out = append(out, rm)
+					}
 				}
 			}
 		}
@@ -54,10 +67,18 @@ func (n *node) processRumorIfExpected(r types.Rumor, header *transport.Header) b
 	if err := n.validateNode(false); err != nil {
 		return false
 	}
-	origin := strings.TrimSpace(r.Origin)
-	if origin == "" || r.Sequence == 0 || r.Msg == nil || header == nil {
+	if header == nil {
 		return false
 	}
+
+	origin := strings.TrimSpace(r.Origin)
+	if origin == "" || r.Sequence == 0 || r.Msg == nil {
+		return false
+	}
+	if r.Msg.Type == "" {
+		return false
+	}
+
 	n.mu.RLock()
 	last := n.lastSeq[origin]
 	n.mu.RUnlock()
