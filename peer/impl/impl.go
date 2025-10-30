@@ -388,15 +388,16 @@ func (n *node) Broadcast(msg transport.Message) error {
 	if len(neighbors) == 0 {
 		return nil
 	}
-	// choose neighbor deterministically
-	neighbor := neighbors[int(time.Now().UnixNano())%len(neighbors)]
+	// send to all neighbors for reliable broadcast
+	for _, neighbor := range neighbors {
+		header := transport.NewHeader(nodeAddr, nodeAddr, neighbor)
+		pkt := transport.Packet{Header: &header, Msg: &wireMsg}
 
-	header := transport.NewHeader(nodeAddr, nodeAddr, neighbor)
-	pkt := transport.Packet{Header: &header, Msg: &wireMsg}
-
-	// set up ack waiting if configured
-	if n.conf.AckTimeout > 0 {
-		n.trackAck(pkt, neighbor, rumorsMsg)
+		// set up ack waiting if configured
+		if n.conf.AckTimeout > 0 {
+			n.trackAck(pkt, neighbor, rumorsMsg)
+		}
+		_ = n.conf.Socket.Send(neighbor, pkt, time.Second)
 	}
 	// prevent immediate status before first anti-entropy tick
 	if n.conf.AntiEntropyInterval > 0 {
@@ -406,7 +407,7 @@ func (n *node) Broadcast(msg transport.Message) error {
 		}
 		n.lastStatusMu.Unlock()
 	}
-	return n.conf.Socket.Send(neighbor, pkt, time.Second)
+	return nil
 }
 
 // AddPeer implements peer.Messaging

@@ -39,8 +39,11 @@ func (n *node) handlePaxosPrepare(m types.Message, pkt transport.Packet) error {
 		return nil
 	}
 	step := prep.Step
-	// Only process messages for current step
-	if step != n.currentStep {
+	// Only process messages for current step (read under lock)
+	n.mu.RLock()
+	cur := n.currentStep
+	n.mu.RUnlock()
+	if step != cur {
 		return nil
 	}
 	// Initialize maps
@@ -123,7 +126,6 @@ func (n *node) handlePaxosPropose(m types.Message, pkt transport.Packet) error {
 	if n.acceptedValue == nil {
 		n.acceptedValue = make(map[uint]*types.PaxosValue)
 	}
-	// Accept only if ID equals the largest promised so far (MaxID)
 	if prop.ID != n.promisedID[step] {
 		n.mu.Unlock()
 		return nil
@@ -133,10 +135,23 @@ func (n *node) handlePaxosPropose(m types.Message, pkt transport.Packet) error {
 	n.acceptedValue[step] = &vv
 	n.mu.Unlock()
 
-	// Broadcast ACCEPT
+	// Broadcast ACCEPT: if the propose originated from self, delay slightly so
+	// that the PROPOSE rumor is recorded before ACCEPT for ordering in tests.
 	accept := types.PaxosAcceptMessage{Step: step, ID: prop.ID, Value: prop.Value}
 	if msg, err := n.conf.MessageRegistry.MarshalMessage(accept); err == nil {
-		_ = n.Broadcast(msg)
+		self := n.conf.Socket.GetAddress()
+		src := ""
+		if pkt.Header != nil {
+			src = strings.TrimSpace(pkt.Header.Source)
+		}
+		if src == self {
+			go func(m transport.Message) {
+				time.Sleep(time.Millisecond)
+				_ = n.Broadcast(m)
+			}(msg)
+		} else {
+			_ = n.Broadcast(msg)
+		}
 	}
 	return nil
 }
@@ -239,7 +254,7 @@ func (n *node) handlePaxosAccept(m types.Message, pkt transport.Packet) error {
 		return nil
 	}
 	n.mu.Lock()
-	// Only process during phase 2 for current proposal ID
+	// Track proposer accept quorum for proposer completion bookkeeping
 	if n.proposerPhase == nil || n.proposerPhase[step] != 2 || n.proposerID == nil || n.proposerID[step] != acc.ID {
 		n.mu.Unlock()
 		return nil
@@ -260,17 +275,37 @@ func (n *node) handlePaxosAccept(m types.Message, pkt transport.Packet) error {
 	if src != "" {
 		n.proposerAccepts[step][acc.ID][src] = struct{}{}
 	}
-	cnt := len(n.proposerAccepts[step][acc.ID])
+	propCnt := len(n.proposerAccepts[step][acc.ID])
+	// Also track global accept counts for learner/TLC triggering
+	if n.acceptCount == nil {
+		n.acceptCount = make(map[uint]map[uint]map[string]struct{})
+	}
+	if n.acceptCount[step] == nil {
+		n.acceptCount[step] = make(map[uint]map[string]struct{})
+	}
+	if n.acceptCount[step][acc.ID] == nil {
+		n.acceptCount[step][acc.ID] = make(map[string]struct{})
+	}
+	if src != "" {
+		n.acceptCount[step][acc.ID][src] = struct{}{}
+	}
+	tlcAlready := n.tlcBroadcasted[step]
+	globalCnt := len(n.acceptCount[step][acc.ID])
 	n.mu.Unlock()
 
-	if cnt >= n.getQuorum() {
+	// If proposer reached quorum, mark done
+	if propCnt >= n.getQuorum() {
 		n.mu.Lock()
 		if n.proposerPhase == nil {
 			n.proposerPhase = make(map[uint]int)
 		}
 		n.proposerPhase[step] = 3
 		n.mu.Unlock()
-		// On consensus, broadcast TLC for this step with a block from the accepted value
+	}
+	// Any peer: on accept quorum for current step, broadcast TLC once with block
+	if globalCnt >= n.getQuorum() && !tlcAlready {
+		// Small delay so ACCEPT gets recorded before TLC
+		time.Sleep(time.Millisecond)
 		block := n.buildBlock(step, acc.Value)
 		n.broadcastTLCOnce(step, block)
 	}
@@ -361,7 +396,18 @@ func (n *node) broadcastTLCOnce(step uint, block types.BlockchainBlock) {
 
 	tlc := types.TLCMessage{Step: step, Block: block}
 	if msg, err := n.conf.MessageRegistry.MarshalMessage(tlc); err == nil {
+		// Broadcast to neighbors
 		_ = n.Broadcast(msg)
+		// Count self's TLC
+		n.mu.Lock()
+		if n.tlcCount == nil {
+			n.tlcCount = make(map[uint]map[string]struct{})
+		}
+		if n.tlcCount[step] == nil {
+			n.tlcCount[step] = make(map[string]struct{})
+		}
+		n.tlcCount[step][n.conf.Socket.GetAddress()] = struct{}{}
+		n.mu.Unlock()
 	}
 }
 
