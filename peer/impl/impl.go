@@ -53,6 +53,27 @@ type node struct {
 	processedDataReq sync.Map // map[string]bool - tracks processed request IDs
 	searchMu         sync.Mutex
 	pendingSearch    map[string]chan types.SearchReplyMessage
+	currentStep      uint
+	// Acceptor state per step
+	promisedID    map[uint]uint
+	acceptedID    map[uint]uint
+	acceptedValue map[uint]*types.PaxosValue
+	// Proposer state per step
+	proposerPromises          map[uint]map[uint]map[string]struct{}
+	proposerValue             map[uint]types.PaxosValue
+	proposerHighestAcceptedID map[uint]uint
+	proposerPhase             map[uint]int // 0 none, 1 phase1, 2 phase2, 3 done
+	proposerID                map[uint]uint
+	proposerAccepts           map[uint]map[uint]map[string]struct{}
+	proposerRetryOn           map[uint]bool
+	// Learner/TLC aggregation
+	acceptCount    map[uint]map[uint]map[string]struct{}
+	tlcCount       map[uint]map[string]struct{}
+	tlcBlock       map[uint]types.BlockchainBlock
+	tlcBroadcasted map[uint]bool
+	// Step completion waiters
+	stepWaitMu  sync.Mutex
+	stepWaiters map[uint][]chan struct{}
 }
 
 type pendingAck struct {
@@ -86,6 +107,12 @@ func (n *node) Start() error {
 	n.conf.MessageRegistry.RegisterMessageCallback(types.DataReplyMessage{}, n.handleDataReply)
 	n.conf.MessageRegistry.RegisterMessageCallback(types.SearchReplyMessage{}, n.handleSearchReply)
 	n.conf.MessageRegistry.RegisterMessageCallback(types.SearchRequestMessage{}, n.handleSearchRequest)
+	// Register consensus messages (HW3)
+	n.conf.MessageRegistry.RegisterMessageCallback(types.PaxosPrepareMessage{}, n.handlePaxosPrepare)
+	n.conf.MessageRegistry.RegisterMessageCallback(types.PaxosPromiseMessage{}, n.handlePaxosPromise)
+	n.conf.MessageRegistry.RegisterMessageCallback(types.PaxosProposeMessage{}, n.handlePaxosPropose)
+	n.conf.MessageRegistry.RegisterMessageCallback(types.PaxosAcceptMessage{}, n.handlePaxosAccept)
+	n.conf.MessageRegistry.RegisterMessageCallback(types.TLCMessage{}, n.handleTLC)
 	n.wg.Add(1)
 	go n.listenLoop()
 

@@ -2,8 +2,10 @@ package impl
 
 import (
 	"strings"
+	"time"
 
 	"go.dedis.ch/cs438/peer"
+	"go.dedis.ch/cs438/types"
 	"golang.org/x/xerrors"
 )
 
@@ -17,8 +19,126 @@ func (n *node) Tag(name string, mh string) error {
 	if name == "" || mh == "" {
 		return xerrors.Errorf("invalid name or metahash")
 	}
-	store := n.conf.Storage.GetNamingStore()
-	store.Set(name, []byte(mh))
+	// If consensus disabled or single peer, tag directly without network
+	if n.conf.TotalPeers <= 1 {
+		store := n.conf.Storage.GetNamingStore()
+		store.Set(name, []byte(mh))
+		return nil
+	}
+	// If name already exists locally, reject (uniqueness)
+	if v := n.conf.Storage.GetNamingStore().Get(name); len(v) > 0 {
+		return xerrors.Errorf("name already taken")
+	}
+
+	// Proposer: start at current step with configured PaxosID
+	step := n.currentStep
+	propID := n.conf.PaxosID
+	self := n.conf.Socket.GetAddress()
+
+	// Record value to propose
+	n.mu.Lock()
+	if n.proposerValue == nil {
+		n.proposerValue = make(map[uint]types.PaxosValue)
+	}
+	n.proposerValue[step] = types.PaxosValue{Filename: name, Metahash: mh}
+	n.mu.Unlock()
+
+	// initialize proposer state
+	n.mu.Lock()
+	if n.proposerPhase == nil {
+		n.proposerPhase = make(map[uint]int)
+	}
+	if n.proposerID == nil {
+		n.proposerID = make(map[uint]uint)
+	}
+	if n.proposerPromises == nil {
+		n.proposerPromises = make(map[uint]map[uint]map[string]struct{})
+	}
+	if n.proposerAccepts == nil {
+		n.proposerAccepts = make(map[uint]map[uint]map[string]struct{})
+	}
+	if n.proposerHighestAcceptedID == nil {
+		n.proposerHighestAcceptedID = make(map[uint]uint)
+	}
+	if n.proposerValue == nil {
+		n.proposerValue = make(map[uint]types.PaxosValue)
+	}
+	n.proposerPhase[step] = 1
+	n.proposerID[step] = propID
+	n.proposerPromises[step] = make(map[uint]map[string]struct{})
+	n.proposerAccepts[step] = make(map[uint]map[string]struct{})
+	n.mu.Unlock()
+
+	// define a function to send one prepare round and self-promise
+	sendRound := func() {
+		n.mu.Lock()
+		id := n.proposerID[step]
+		n.mu.Unlock()
+		prepare := types.PaxosPrepareMessage{Step: step, ID: id, Source: self}
+		if msg, err := n.conf.MessageRegistry.MarshalMessage(prepare); err == nil {
+			_ = n.Broadcast(msg)
+		}
+	}
+
+	// Initial round
+	sendRound()
+
+	// Periodic retries until consensus/TLC (handled later)
+	retry := n.conf.PaxosProposerRetry
+	if retry <= 0 {
+		retry = time.Second * 5
+	}
+	go func() {
+		ticker := time.NewTicker(retry)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-n.stopCh:
+				return
+			case <-ticker.C:
+				n.mu.Lock()
+				phase := n.proposerPhase[step]
+				id := n.proposerID[step]
+				promises := len(n.proposerPromises[step][id])
+				accepts := len(n.proposerAccepts[step][id])
+				n.mu.Unlock()
+				q := n.getQuorum()
+				if phase == 3 { // done
+					return
+				}
+				if phase == 1 && promises < q {
+					// bump ID and retry phase 1
+					n.mu.Lock()
+					n.proposerID[step] = id + n.conf.TotalPeers
+					n.proposerPromises[step] = make(map[uint]map[string]struct{})
+					n.mu.Unlock()
+					sendRound()
+					continue
+				}
+				if phase == 2 && accepts < q {
+					// back to phase 1 with higher ID
+					n.mu.Lock()
+					n.proposerPhase[step] = 1
+					n.proposerID[step] = id + n.conf.TotalPeers
+					n.proposerPromises[step] = make(map[uint]map[string]struct{})
+					n.proposerAccepts[step] = make(map[uint]map[string]struct{})
+					n.mu.Unlock()
+					sendRound()
+				}
+			}
+		}
+	}()
+
+	// Wait until TLC commit completes this step
+	n.stepWaitMu.Lock()
+	if n.stepWaiters == nil {
+		n.stepWaiters = make(map[uint][]chan struct{})
+	}
+	ch := make(chan struct{})
+	n.stepWaiters[step] = append(n.stepWaiters[step], ch)
+	n.stepWaitMu.Unlock()
+
+	<-ch
 	return nil
 }
 
