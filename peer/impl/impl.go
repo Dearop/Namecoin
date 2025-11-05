@@ -65,7 +65,6 @@ type node struct {
 	proposerPhase             map[uint]int // 0 none, 1 phase1, 2 phase2, 3 done
 	proposerID                map[uint]uint
 	proposerAccepts           map[uint]map[uint]map[string]struct{}
-	proposerRetryOn           map[uint]bool
 	// Learner/TLC aggregation
 	acceptCount    map[uint]map[uint]map[string]struct{}
 	tlcCount       map[uint]map[string]struct{}
@@ -107,7 +106,7 @@ func (n *node) Start() error {
 	n.conf.MessageRegistry.RegisterMessageCallback(types.DataReplyMessage{}, n.handleDataReply)
 	n.conf.MessageRegistry.RegisterMessageCallback(types.SearchReplyMessage{}, n.handleSearchReply)
 	n.conf.MessageRegistry.RegisterMessageCallback(types.SearchRequestMessage{}, n.handleSearchRequest)
-	// Register consensus messages (HW3)
+	// Register consensus messages
 	n.conf.MessageRegistry.RegisterMessageCallback(types.PaxosPrepareMessage{}, n.handlePaxosPrepare)
 	n.conf.MessageRegistry.RegisterMessageCallback(types.PaxosPromiseMessage{}, n.handlePaxosPromise)
 	n.conf.MessageRegistry.RegisterMessageCallback(types.PaxosProposeMessage{}, n.handlePaxosPropose)
@@ -357,10 +356,6 @@ func (n *node) Broadcast(msg transport.Message) error {
 	}
 	n.mu.RUnlock()
 
-	// Process locally first
-	localHeader := transport.NewHeader(nodeAddr, nodeAddr, nodeAddr)
-	_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: &localHeader, Msg: &msg})
-
 	// Update our own sequence and build rumor
 	n.mu.Lock()
 	seq := n.lastSeq[nodeAddr] + 1
@@ -379,26 +374,43 @@ func (n *node) Broadcast(msg transport.Message) error {
 
 	// store the rumor so anti-entropy/catch-up can resend it later
 	n.mu.Lock()
-	if n.rumors[nodeAddr] == nil {
-		n.rumors[nodeAddr] = make(map[uint]types.Rumor)
-	}
 	n.rumors[nodeAddr][seq] = rumor
 	n.mu.Unlock()
 
-	if len(neighbors) == 0 {
-		return nil
+	// Check if this is a Paxos/TLC message that needs reliable broadcast to all neighbors
+	isPaxosMessage := false
+	switch msg.Type {
+	case "paxosprepare", "paxospromise", "paxospropose", "paxosaccept", "tlc", "private":
+		isPaxosMessage = true
 	}
-	// send to all neighbors for reliable broadcast
-	for _, neighbor := range neighbors {
-		header := transport.NewHeader(nodeAddr, nodeAddr, neighbor)
-		pkt := transport.Packet{Header: &header, Msg: &wireMsg}
 
-		// set up ack waiting if configured
-		if n.conf.AckTimeout > 0 {
-			n.trackAck(pkt, neighbor, rumorsMsg)
+	// Process locally first (always, even if no neighbors)
+	var targets []string
+	if len(neighbors) > 0 {
+		if isPaxosMessage {
+			// Send to all neighbors for reliable delivery
+			targets = neighbors
+		} else {
+			// Send to one random neighbor for regular rumor mongering
+			targets = []string{neighbors[int(time.Now().UnixNano())%len(neighbors)]}
 		}
-		_ = n.conf.Socket.Send(neighbor, pkt, time.Second)
+		for _, neighbor := range targets {
+			header := transport.NewHeader(nodeAddr, nodeAddr, neighbor)
+			pkt := transport.Packet{Header: &header, Msg: &wireMsg}
+
+			// set up ack waiting if configured
+			if n.conf.AckTimeout > 0 {
+				n.trackAck(pkt, neighbor, rumorsMsg)
+			}
+			_ = n.conf.Socket.Send(neighbor, pkt, time.Second)
+		}
 	}
+
+	// Process the embedded message locally after sending to neighbors. The rumor
+	// is already stored above for anti-entropy purposes.
+	localHeader := transport.NewHeader(nodeAddr, nodeAddr, nodeAddr)
+	_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: &localHeader, Msg: &msg})
+
 	// prevent immediate status before first anti-entropy tick
 	if n.conf.AntiEntropyInterval > 0 {
 		n.lastStatusMu.Lock()

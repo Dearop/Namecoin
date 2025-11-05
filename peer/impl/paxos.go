@@ -1,15 +1,16 @@
 package impl
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"strconv"
-	"strings"
-	"time"
+    "crypto/sha256"
+    "encoding/hex"
+    "log"
+    "strconv"
+    "strings"
+    "time"
 
-	"go.dedis.ch/cs438/storage"
-	"go.dedis.ch/cs438/transport"
-	"go.dedis.ch/cs438/types"
+    "go.dedis.ch/cs438/storage"
+    "go.dedis.ch/cs438/transport"
+    "go.dedis.ch/cs438/types"
 )
 
 // getQuorum returns quorum size based on configuration TotalPeers and optional PaxosThreshold
@@ -39,7 +40,6 @@ func (n *node) handlePaxosPrepare(m types.Message, pkt transport.Packet) error {
 		return nil
 	}
 	step := prep.Step
-	// Only process messages for current step (read under lock)
 	n.mu.RLock()
 	cur := n.currentStep
 	n.mu.RUnlock()
@@ -58,7 +58,12 @@ func (n *node) handlePaxosPrepare(m types.Message, pkt transport.Packet) error {
 		n.acceptedValue = make(map[uint]*types.PaxosValue)
 	}
 	// Promise only if ID is higher than any promised so far
-	if prep.ID <= n.promisedID[step] {
+	prevPromise := n.promisedID[step]
+	if step >= 4 {
+		log.Printf("[DEBUG] prepare node=%s step=%d id=%d from=%s promised=%d",
+			n.conf.Socket.GetAddress(), step, prep.ID, strings.TrimSpace(prep.Source), prevPromise)
+	}
+	if prep.ID <= prevPromise {
 		n.mu.Unlock()
 		return nil
 	}
@@ -71,6 +76,10 @@ func (n *node) handlePaxosPrepare(m types.Message, pkt transport.Packet) error {
 		accVal = &vv
 	}
 	n.mu.Unlock()
+	if step >= 4 {
+		log.Printf("[DEBUG] prepare node=%s step=%d accepted id=%d newPromise=%d",
+			n.conf.Socket.GetAddress(), step, prep.ID, prep.ID)
+	}
 
 	// Reply with a PROMISE via private broadcast to proposer source
 	promise := types.PaxosPromiseMessage{Step: step, ID: prep.ID, AcceptedID: accID, AcceptedValue: accVal}
@@ -85,13 +94,16 @@ func (n *node) handlePaxosPrepare(m types.Message, pkt transport.Packet) error {
 	}
 	priv := types.PrivateMessage{Recipients: recipients, Msg: &wirePromise}
 	if tmsg, err := n.conf.MessageRegistry.MarshalMessage(priv); err == nil {
-		// Avoid making the private rumor take sequence 1 when prepare originates locally.
-		// If the destination is self, delay slightly so the outer prepare Broadcast can complete.
+		// If the destination is self, process Promise directly first to count it immediately,
+		// then broadcast synchronously so the rumor ordering matches expectations.
 		if dest == n.conf.Socket.GetAddress() {
-			go func(m transport.Message) {
-				time.Sleep(time.Millisecond)
-				_ = n.Broadcast(m)
-			}(tmsg)
+			// Process Promise directly to ensure it's counted immediately
+			// The source should be self (the acceptor that is sending the Promise)
+			selfAddr := n.conf.Socket.GetAddress()
+			localHeader := transport.NewHeader(selfAddr, selfAddr, selfAddr)
+			_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: &localHeader, Msg: &wirePromise})
+			// Broadcast immediately so the promise rumor is sequenced before later phases.
+			_ = n.Broadcast(tmsg)
 		} else {
 			_ = n.Broadcast(tmsg)
 		}
@@ -113,7 +125,10 @@ func (n *node) handlePaxosPropose(m types.Message, pkt transport.Packet) error {
 		return nil
 	}
 	step := prop.Step
-	if step != n.currentStep {
+	n.mu.RLock()
+	cur := n.currentStep
+	n.mu.RUnlock()
+	if step != cur {
 		return nil
 	}
 	n.mu.Lock()
@@ -170,7 +185,10 @@ func (n *node) handlePaxosPromise(m types.Message, pkt transport.Packet) error {
 		return nil
 	}
 	step := prm.Step
-	if step != n.currentStep {
+	n.mu.RLock()
+	cur := n.currentStep
+	n.mu.RUnlock()
+	if step != cur {
 		return nil
 	}
 	src := ""
@@ -207,10 +225,18 @@ func (n *node) handlePaxosPromise(m types.Message, pkt transport.Packet) error {
 		n.proposerValue[step] = *prm.AcceptedValue
 	}
 	cnt := len(n.proposerPromises[step][prm.ID])
+	phase := 0
+	if n.proposerPhase != nil {
+		phase = n.proposerPhase[step]
+	}
 	// Snapshot selected value (adopted or initially set)
 	value := n.proposerValue[step]
 	n.mu.Unlock()
 
+	if step >= 4 {
+		log.Printf("[DEBUG] promise node=%s step=%d id=%d cnt=%d quorum=%d src=%s phase=%d",
+			n.conf.Socket.GetAddress(), step, prm.ID, cnt, n.getQuorum(), src, phase)
+	}
 	if cnt >= n.getQuorum() {
 		// Move to phase 2 and broadcast PROPOSE
 		propose := types.PaxosProposeMessage{Step: step, ID: prm.ID, Value: value}
@@ -250,33 +276,35 @@ func (n *node) handlePaxosAccept(m types.Message, pkt transport.Packet) error {
 		return nil
 	}
 	step := acc.Step
-	if step != n.currentStep {
+	n.mu.RLock()
+	cur := n.currentStep
+	n.mu.RUnlock()
+	if step != cur {
 		return nil
-	}
-	n.mu.Lock()
-	// Track proposer accept quorum for proposer completion bookkeeping
-	if n.proposerPhase == nil || n.proposerPhase[step] != 2 || n.proposerID == nil || n.proposerID[step] != acc.ID {
-		n.mu.Unlock()
-		return nil
-	}
-	if n.proposerAccepts == nil {
-		n.proposerAccepts = make(map[uint]map[uint]map[string]struct{})
-	}
-	if n.proposerAccepts[step] == nil {
-		n.proposerAccepts[step] = make(map[uint]map[string]struct{})
-	}
-	if n.proposerAccepts[step][acc.ID] == nil {
-		n.proposerAccepts[step][acc.ID] = make(map[string]struct{})
 	}
 	src := ""
 	if pkt.Header != nil {
 		src = strings.TrimSpace(pkt.Header.Source)
 	}
-	if src != "" {
-		n.proposerAccepts[step][acc.ID][src] = struct{}{}
+	n.mu.Lock()
+	// Track proposer accept quorum for proposer completion bookkeeping (only if we're the proposer)
+	propCnt := 0
+	if n.proposerPhase != nil && n.proposerPhase[step] == 2 && n.proposerID != nil && n.proposerID[step] == acc.ID {
+		if n.proposerAccepts == nil {
+			n.proposerAccepts = make(map[uint]map[uint]map[string]struct{})
+		}
+		if n.proposerAccepts[step] == nil {
+			n.proposerAccepts[step] = make(map[uint]map[string]struct{})
+		}
+		if n.proposerAccepts[step][acc.ID] == nil {
+			n.proposerAccepts[step][acc.ID] = make(map[string]struct{})
+		}
+		if src != "" {
+			n.proposerAccepts[step][acc.ID][src] = struct{}{}
+		}
+		propCnt = len(n.proposerAccepts[step][acc.ID])
 	}
-	propCnt := len(n.proposerAccepts[step][acc.ID])
-	// Also track global accept counts for learner/TLC triggering
+	// Track global accept counts for learner/TLC triggering (ALL nodes should do this)
 	if n.acceptCount == nil {
 		n.acceptCount = make(map[uint]map[uint]map[string]struct{})
 	}
@@ -293,6 +321,10 @@ func (n *node) handlePaxosAccept(m types.Message, pkt transport.Packet) error {
 	globalCnt := len(n.acceptCount[step][acc.ID])
 	n.mu.Unlock()
 
+	if step >= 4 {
+		log.Printf("[DEBUG] accept node=%s step=%d id=%d src=%s cnt=%d quorum=%d tlcBroadcasted=%v",
+			n.conf.Socket.GetAddress(), step, acc.ID, src, globalCnt, n.getQuorum(), tlcAlready)
+	}
 	// If proposer reached quorum, mark done
 	if propCnt >= n.getQuorum() {
 		n.mu.Lock()
@@ -303,11 +335,14 @@ func (n *node) handlePaxosAccept(m types.Message, pkt transport.Packet) error {
 		n.mu.Unlock()
 	}
 	// Any peer: on accept quorum for current step, broadcast TLC once with block
+	// Delay TLC broadcast slightly to ensure Accept message is sent first
 	if globalCnt >= n.getQuorum() && !tlcAlready {
-		// Small delay so ACCEPT gets recorded before TLC
-		time.Sleep(time.Millisecond)
 		block := n.buildBlock(step, acc.Value)
-		n.broadcastTLCOnce(step, block)
+		// Use goroutine to ensure Accept broadcast completes before TLC broadcast
+		go func() {
+			time.Sleep(time.Millisecond)
+			n.broadcastTLCOnce(step, block)
+		}()
 	}
 	return nil
 }
@@ -326,9 +361,19 @@ func (n *node) handleTLC(m types.Message, pkt transport.Packet) error {
 		return nil
 	}
 	step := tlc.Step
+	n.mu.RLock()
+	cur := n.currentStep
+	n.mu.RUnlock()
+	if step < cur {
+		return nil // ignore past steps
+	}
 	src := ""
 	if pkt.Header != nil {
 		src = strings.TrimSpace(pkt.Header.Source)
+	}
+	// If source is empty (shouldn't happen, but handle it), use our own address
+	if src == "" {
+		src = n.conf.Socket.GetAddress()
 	}
 	n.mu.Lock()
 	if n.tlcCount == nil {
@@ -340,22 +385,32 @@ func (n *node) handleTLC(m types.Message, pkt transport.Packet) error {
 	if n.tlcCount[step] == nil {
 		n.tlcCount[step] = make(map[string]struct{})
 	}
-	if src != "" {
-		n.tlcCount[step][src] = struct{}{}
-	}
+	// Count this TLC message (using map to avoid duplicates from same source)
+	n.tlcCount[step][src] = struct{}{}
 	// store latest block for this step (they should be the same)
 	n.tlcBlock[step] = tlc.Block
 	cnt := len(n.tlcCount[step])
 	already := n.tlcBroadcasted[step]
 	n.mu.Unlock()
 
+	if step >= 4 {
+		log.Printf("[DEBUG] handleTLC node=%s step=%d src=%s cnt=%d quorum=%d already=%v cur=%d",
+			n.conf.Socket.GetAddress(), step, src, cnt, n.getQuorum(), already, cur)
+	}
+	// Always store TLC messages for future steps (step > cur) - they will be processed sequentially
+	// when we catch up in commitStepAndAdvance. This ensures we can catch up even if messages arrive out of order.
 	if cnt >= n.getQuorum() {
 		// If quorum on current step, commit and maybe broadcast TLC once
-		if step == n.currentStep {
+		if step == cur {
 			if !already {
+				// We haven't broadcast yet, so broadcast first
+				// broadcastTLCOnce will process locally and handleTLC will be called again,
+				// which will see already=true and commit. So we don't need to commit here.
 				n.broadcastTLCOnce(step, tlc.Block)
+			} else {
+				// Already broadcast by us or someone else, just commit
+				n.commitStepAndAdvance(step, tlc.Block)
 			}
-			n.commitStepAndAdvance(step, tlc.Block)
 		}
 		// If future step, we will commit when we catch up (in commitStepAndAdvance loop)
 	}
@@ -394,87 +449,94 @@ func (n *node) broadcastTLCOnce(step uint, block types.BlockchainBlock) {
 	n.tlcBroadcasted[step] = true
 	n.mu.Unlock()
 
+	if step >= 4 {
+		log.Printf("[DEBUG] broadcastTLC node=%s step=%d", n.conf.Socket.GetAddress(), step)
+	}
 	tlc := types.TLCMessage{Step: step, Block: block}
 	if msg, err := n.conf.MessageRegistry.MarshalMessage(tlc); err == nil {
-		// Broadcast to neighbors
+		// Broadcast to neighbors (will also process locally via handleTLC)
 		_ = n.Broadcast(msg)
-		// Count self's TLC
-		n.mu.Lock()
-		if n.tlcCount == nil {
-			n.tlcCount = make(map[uint]map[string]struct{})
-		}
-		if n.tlcCount[step] == nil {
-			n.tlcCount[step] = make(map[string]struct{})
-		}
-		n.tlcCount[step][n.conf.Socket.GetAddress()] = struct{}{}
-		n.mu.Unlock()
+		// handleTLC will process the local broadcast, count it, check for quorum, and commit if needed
 	}
 }
 
 func (n *node) commitStepAndAdvance(step uint, block types.BlockchainBlock) {
-	// Store block and update name store
-	store := n.conf.Storage.GetBlockchainStore()
-	if buf, err := block.Marshal(); err == nil {
-		store.Set(hex.EncodeToString(block.Hash), buf)
-		store.Set(storage.LastBlockKey, block.Hash)
-	}
-	// Naming store update
-	nameStore := n.conf.Storage.GetNamingStore()
-	if strings.TrimSpace(block.Value.Filename) != "" && strings.TrimSpace(block.Value.Metahash) != "" {
-		nameStore.Set(block.Value.Filename, []byte(block.Value.Metahash))
-	}
+	// Advance and try to catch up future steps with cached TLC quorum
+	// We commit steps sequentially, starting with the given step
+	for {
+		// Verify we're committing the correct step
+		n.mu.Lock()
+		if step != n.currentStep {
+			// If step is in the past, we've already moved beyond it
+			// If step is in the future, we can't commit it yet
+			n.mu.Unlock()
+			break
+		}
+		n.mu.Unlock()
+
+		// Store block and update name store for current step
+		store := n.conf.Storage.GetBlockchainStore()
+		if buf, err := block.Marshal(); err == nil {
+			store.Set(hex.EncodeToString(block.Hash), buf)
+			store.Set(storage.LastBlockKey, block.Hash)
+		}
+		// Naming store update
+		nameStore := n.conf.Storage.GetNamingStore()
+		if strings.TrimSpace(block.Value.Filename) != "" && strings.TrimSpace(block.Value.Metahash) != "" {
+			nameStore.Set(block.Value.Filename, []byte(block.Value.Metahash))
+		}
 
 	// Complete waiters for this step
 	n.stepWaitMu.Lock()
 	if lst := n.stepWaiters[step]; len(lst) > 0 {
+		log.Printf("[DEBUG] commit node=%s step=%d closing %d waiters", n.conf.Socket.GetAddress(), step, len(lst))
 		for _, ch := range lst {
 			close(ch)
 		}
 		delete(n.stepWaiters, step)
+	} else {
+		log.Printf("[DEBUG] commit node=%s step=%d no waiters", n.conf.Socket.GetAddress(), step)
 	}
 	n.stepWaitMu.Unlock()
 
-	// Advance and try to catch up future steps with cached TLC quorum
-	for {
-		n.mu.Lock()
-		if step != n.currentStep {
-			// ensure we're only advancing from currentStep
-			n.mu.Unlock()
-		} else {
-			n.currentStep++
-			n.mu.Unlock()
-		}
-		next := step + 1
-		n.mu.Lock()
-		cnt := len(n.tlcCount[next])
-		blk, ok := n.tlcBlock[next]
-		already := n.tlcBroadcasted[next]
+	// Mark proposer phase as completed so retry loops can stop
+	n.mu.Lock()
+	if n.proposerPhase != nil {
+		n.proposerPhase[step] = 3
+	}
+	if n.proposerPromises != nil {
+		delete(n.proposerPromises, step)
+	}
+	if n.proposerAccepts != nil {
+		delete(n.proposerAccepts, step)
+	}
+	if n.proposerID != nil {
+		delete(n.proposerID, step)
+	}
+	if n.proposerHighestAcceptedID != nil {
+		delete(n.proposerHighestAcceptedID, step)
+	}
+	if n.proposerValue != nil {
+		delete(n.proposerValue, step)
+	}
+	n.mu.Unlock()
+
+	// Advance currentStep and check if we can commit the next step
+	n.mu.Lock()
+	n.currentStep++
+	nextStep := n.currentStep
+		cnt := len(n.tlcCount[nextStep])
+		blk, ok := n.tlcBlock[nextStep]
+		already := n.tlcBroadcasted[nextStep]
 		n.mu.Unlock()
+
 		if cnt >= n.getQuorum() && ok {
 			if !already {
-				n.broadcastTLCOnce(next, blk)
+				n.broadcastTLCOnce(nextStep, blk)
 			}
-			// commit next and continue loop
-			step = next
+			// commit next in next iteration
+			step = nextStep
 			block = blk
-			// loop iteration will commit storage
-			store := n.conf.Storage.GetBlockchainStore()
-			if buf, err := block.Marshal(); err == nil {
-				store.Set(hex.EncodeToString(block.Hash), buf)
-				store.Set(storage.LastBlockKey, block.Hash)
-			}
-			nameStore := n.conf.Storage.GetNamingStore()
-			if strings.TrimSpace(block.Value.Filename) != "" && strings.TrimSpace(block.Value.Metahash) != "" {
-				nameStore.Set(block.Value.Filename, []byte(block.Value.Metahash))
-			}
-			n.stepWaitMu.Lock()
-			if lst := n.stepWaiters[step]; len(lst) > 0 {
-				for _, ch := range lst {
-					close(ch)
-				}
-				delete(n.stepWaiters, step)
-			}
-			n.stepWaitMu.Unlock()
 			continue
 		}
 		break

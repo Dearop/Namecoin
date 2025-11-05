@@ -86,8 +86,15 @@ func (n *node) processRumorIfExpected(r types.Rumor, header *transport.Header) b
 		return false
 	}
 
-	// process embedded message locally using provided header
-	_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: header, Msg: r.Msg})
+	// process embedded message locally using a header whose source reflects the rumor origin
+	msgHeader := *header
+	if origin != "" {
+		msgHeader.Source = origin
+	}
+	if strings.TrimSpace(msgHeader.Destination) == "" {
+		msgHeader.Destination = n.conf.Socket.GetAddress()
+	}
+	_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: &msgHeader, Msg: r.Msg})
 
 	// update last sequence, store rumor, and maybe routing
 	n.mu.Lock()
