@@ -1,16 +1,16 @@
 package impl
 
 import (
-    "crypto/sha256"
-    "encoding/hex"
-    "log"
-    "strconv"
-    "strings"
-    "time"
+	"crypto/sha256"
+	"encoding/hex"
+	"log"
+	"strconv"
+	"strings"
+	"time"
 
-    "go.dedis.ch/cs438/storage"
-    "go.dedis.ch/cs438/transport"
-    "go.dedis.ch/cs438/types"
+	"go.dedis.ch/cs438/storage"
+	"go.dedis.ch/cs438/transport"
+	"go.dedis.ch/cs438/types"
 )
 
 // getQuorum returns quorum size based on configuration TotalPeers and optional PaxosThreshold
@@ -94,6 +94,9 @@ func (n *node) handlePaxosPrepare(m types.Message, pkt transport.Packet) error {
 	}
 	priv := types.PrivateMessage{Recipients: recipients, Msg: &wirePromise}
 	if tmsg, err := n.conf.MessageRegistry.MarshalMessage(priv); err == nil {
+		if dest != "" && dest != n.conf.Socket.GetAddress() && n.conf.TotalPeers > 1 {
+			_ = n.Unicast(dest, tmsg)
+		}
 		// If the destination is self, process Promise directly first to count it immediately,
 		// then broadcast synchronously so the rumor ordering matches expectations.
 		if dest == n.conf.Socket.GetAddress() {
@@ -105,6 +108,12 @@ func (n *node) handlePaxosPrepare(m types.Message, pkt transport.Packet) error {
 			// Broadcast immediately so the promise rumor is sequenced before later phases.
 			_ = n.Broadcast(tmsg)
 		} else {
+			// Optimistically deliver to proposer (without generating extra network traffic)
+			if dest != "" {
+				selfAddr := n.conf.Socket.GetAddress()
+				header := transport.NewHeader(selfAddr, selfAddr, dest)
+				_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: &header, Msg: &wirePromise})
+			}
 			_ = n.Broadcast(tmsg)
 		}
 	}
@@ -198,6 +207,21 @@ func (n *node) handlePaxosPromise(m types.Message, pkt transport.Packet) error {
 	n.mu.Lock()
 	// Only process during phase 1 and for current proposal ID
 	if n.proposerPhase == nil || n.proposerPhase[step] != 1 || n.proposerID == nil || n.proposerID[step] != prm.ID {
+		if step >= 4 {
+			log.Printf("[DEBUG] promise ignored node=%s step=%d id=%d src=%s phase=%v proposerID=%v",
+				n.conf.Socket.GetAddress(), step, prm.ID, src, func() interface{} {
+					if n.proposerPhase == nil {
+						return nil
+					}
+					return n.proposerPhase[step]
+				}(),
+				func() interface{} {
+					if n.proposerID == nil {
+						return nil
+					}
+					return n.proposerID[step]
+				}())
+		}
 		n.mu.Unlock()
 		return nil
 	}
@@ -403,10 +427,11 @@ func (n *node) handleTLC(m types.Message, pkt transport.Packet) error {
 		// If quorum on current step, commit and maybe broadcast TLC once
 		if step == cur {
 			if !already {
-				// We haven't broadcast yet, so broadcast first
-				// broadcastTLCOnce will process locally and handleTLC will be called again,
-				// which will see already=true and commit. So we don't need to commit here.
+				// We haven't broadcast yet, so broadcast first and commit immediately.
+				// commitStepAndAdvance is idempotent if invoked again when the locally
+				// processed broadcast re-enters handleTLC.
 				n.broadcastTLCOnce(step, tlc.Block)
+				n.commitStepAndAdvance(step, tlc.Block)
 			} else {
 				// Already broadcast by us or someone else, just commit
 				n.commitStepAndAdvance(step, tlc.Block)
@@ -486,45 +511,45 @@ func (n *node) commitStepAndAdvance(step uint, block types.BlockchainBlock) {
 			nameStore.Set(block.Value.Filename, []byte(block.Value.Metahash))
 		}
 
-	// Complete waiters for this step
-	n.stepWaitMu.Lock()
-	if lst := n.stepWaiters[step]; len(lst) > 0 {
-		log.Printf("[DEBUG] commit node=%s step=%d closing %d waiters", n.conf.Socket.GetAddress(), step, len(lst))
-		for _, ch := range lst {
-			close(ch)
+		// Complete waiters for this step
+		n.stepWaitMu.Lock()
+		if lst := n.stepWaiters[step]; len(lst) > 0 {
+			log.Printf("[DEBUG] commit node=%s step=%d closing %d waiters", n.conf.Socket.GetAddress(), step, len(lst))
+			for _, ch := range lst {
+				close(ch)
+			}
+			delete(n.stepWaiters, step)
+		} else {
+			log.Printf("[DEBUG] commit node=%s step=%d no waiters", n.conf.Socket.GetAddress(), step)
 		}
-		delete(n.stepWaiters, step)
-	} else {
-		log.Printf("[DEBUG] commit node=%s step=%d no waiters", n.conf.Socket.GetAddress(), step)
-	}
-	n.stepWaitMu.Unlock()
+		n.stepWaitMu.Unlock()
 
-	// Mark proposer phase as completed so retry loops can stop
-	n.mu.Lock()
-	if n.proposerPhase != nil {
-		n.proposerPhase[step] = 3
-	}
-	if n.proposerPromises != nil {
-		delete(n.proposerPromises, step)
-	}
-	if n.proposerAccepts != nil {
-		delete(n.proposerAccepts, step)
-	}
-	if n.proposerID != nil {
-		delete(n.proposerID, step)
-	}
-	if n.proposerHighestAcceptedID != nil {
-		delete(n.proposerHighestAcceptedID, step)
-	}
-	if n.proposerValue != nil {
-		delete(n.proposerValue, step)
-	}
-	n.mu.Unlock()
+		// Mark proposer phase as completed so retry loops can stop
+		n.mu.Lock()
+		if n.proposerPhase != nil {
+			n.proposerPhase[step] = 3
+		}
+		if n.proposerPromises != nil {
+			delete(n.proposerPromises, step)
+		}
+		if n.proposerAccepts != nil {
+			delete(n.proposerAccepts, step)
+		}
+		if n.proposerID != nil {
+			delete(n.proposerID, step)
+		}
+		if n.proposerHighestAcceptedID != nil {
+			delete(n.proposerHighestAcceptedID, step)
+		}
+		if n.proposerValue != nil {
+			delete(n.proposerValue, step)
+		}
+		n.mu.Unlock()
 
-	// Advance currentStep and check if we can commit the next step
-	n.mu.Lock()
-	n.currentStep++
-	nextStep := n.currentStep
+		// Advance currentStep and check if we can commit the next step
+		n.mu.Lock()
+		n.currentStep++
+		nextStep := n.currentStep
 		cnt := len(n.tlcCount[nextStep])
 		blk, ok := n.tlcBlock[nextStep]
 		already := n.tlcBroadcasted[nextStep]

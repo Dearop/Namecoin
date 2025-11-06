@@ -1,10 +1,10 @@
 package impl
 
 import (
-    "log"
-    "math/rand"
-    "strings"
-    "time"
+	"log"
+	"math/rand"
+	"strings"
+	"time"
 
 	"go.dedis.ch/cs438/peer"
 	"go.dedis.ch/cs438/types"
@@ -84,17 +84,47 @@ func (n *node) Tag(name string, mh string) error {
 		}
 	}
 
-    // Initial round with staggering to reduce contention
-    if n.conf.TotalPeers > 1 {
-        total := int(n.conf.TotalPeers)
-        leader := int(step%uint(total)) + 1
-        offset := (int(n.conf.PaxosID) - leader + total) % total
-        baseDelay := 40 * time.Millisecond
-        jitter := time.Duration(rand.Intn(20)) * time.Millisecond
-        time.Sleep(time.Duration(offset)*baseDelay + jitter)
-    }
-    // Initial round
-    sendRound()
+	// Initial round with staggering to reduce contention
+	if n.conf.TotalPeers > 1 {
+		total := int(n.conf.TotalPeers)
+		leader := int(step%uint(total)) + 1
+		offset := (int(n.conf.PaxosID) - leader + total) % total
+		baseDelay := 40 * time.Millisecond
+		jitter := time.Duration(rand.Intn(20)) * time.Millisecond
+		time.Sleep(time.Duration(offset)*baseDelay + jitter)
+	}
+	// Initial round
+	sendRound()
+
+	totalPeers := n.conf.TotalPeers
+	if totalPeers == 0 {
+		totalPeers = 1
+	}
+	slot := n.conf.PaxosID % totalPeers
+	if slot == 0 {
+		slot = totalPeers
+	}
+	nextProposalID := func(current, minimum uint) uint {
+		target := current + uint(totalPeers)
+		if target < minimum {
+			target = minimum
+		}
+		rem := target % uint(totalPeers)
+		if rem == 0 {
+			rem = uint(totalPeers)
+		}
+		if rem != uint(slot) {
+			if rem < uint(slot) {
+				target += uint(slot) - rem
+			} else {
+				target += uint(totalPeers) - rem + uint(slot)
+			}
+		}
+		if target <= current {
+			target += uint(totalPeers)
+		}
+		return target
+	}
 
 	// Periodic retries until consensus/TLC (handled later)
 	retry := n.conf.PaxosProposerRetry
@@ -114,52 +144,60 @@ func (n *node) Tag(name string, mh string) error {
 				id := n.proposerID[step]
 				promises := len(n.proposerPromises[step][id])
 				accepts := len(n.proposerAccepts[step][id])
+				currentPromised := uint(0)
+				if n.promisedID != nil {
+					currentPromised = n.promisedID[step]
+				}
 				n.mu.Unlock()
+				leaderID := uint(0)
+				if currentPromised > 0 && n.conf.TotalPeers > 0 {
+					rem := currentPromised % totalPeers
+					if rem == 0 {
+						rem = totalPeers
+					}
+					leaderID = rem
+				}
 				q := n.getQuorum()
 				if phase == 3 { // done
 					return
 				}
-			if phase == 1 && promises < q {
-				// bump ID and retry phase 1
-				n.mu.Lock()
-				base := id
-				if n.promisedID != nil && n.promisedID[step] > base {
-					base = n.promisedID[step]
+				if phase < 3 && leaderID != 0 && leaderID != slot {
+					// Another proposer currently holds the highest promise number; back off this retry
+					continue
 				}
-				candidate := base + n.conf.TotalPeers
-				ts := uint(time.Now().UnixNano())
-				if ts > candidate {
-					candidate = ts
+				if phase == 1 && promises < q {
+					// bump ID and retry phase 1
+					n.mu.Lock()
+					base := id
+					if n.promisedID != nil && n.promisedID[step] > base {
+						base = n.promisedID[step]
+					}
+					nextID := nextProposalID(id, base)
+					log.Printf("[DEBUG] proposer %s step=%d bump phase=1 from=%d base=%d new=%d promises=%d",
+						n.conf.Socket.GetAddress(), step, id, base, nextID, promises)
+					n.proposerID[step] = nextID
+					n.proposerPromises[step] = make(map[uint]map[string]struct{})
+					n.mu.Unlock()
+					sendRound()
+					continue
 				}
-				log.Printf("[DEBUG] proposer %s step=%d bump phase=1 from=%d base=%d new=%d promises=%d",
-					n.conf.Socket.GetAddress(), step, id, base, candidate, promises)
-				n.proposerID[step] = candidate
-				n.proposerPromises[step] = make(map[uint]map[string]struct{})
-				n.mu.Unlock()
-				sendRound()
-				continue
-			}
-			if phase == 2 && accepts < q {
-				// back to phase 1 with higher ID
-				n.mu.Lock()
-				n.proposerPhase[step] = 1
-				base := id
-				if n.promisedID != nil && n.promisedID[step] > base {
-					base = n.promisedID[step]
+				if phase == 2 && accepts < q {
+					// back to phase 1 with higher ID
+					n.mu.Lock()
+					base := id
+					if n.promisedID != nil && n.promisedID[step] > base {
+						base = n.promisedID[step]
+					}
+					nextID := nextProposalID(id, base)
+					log.Printf("[DEBUG] proposer %s step=%d bump phase=2 from=%d base=%d new=%d accepts=%d",
+						n.conf.Socket.GetAddress(), step, id, base, nextID, accepts)
+					n.proposerPhase[step] = 1
+					n.proposerID[step] = nextID
+					n.proposerPromises[step] = make(map[uint]map[string]struct{})
+					n.proposerAccepts[step] = make(map[uint]map[string]struct{})
+					n.mu.Unlock()
+					sendRound()
 				}
-				candidate := base + n.conf.TotalPeers
-				ts := uint(time.Now().UnixNano())
-				if ts > candidate {
-					candidate = ts
-				}
-				log.Printf("[DEBUG] proposer %s step=%d bump phase=2 from=%d base=%d new=%d accepts=%d",
-					n.conf.Socket.GetAddress(), step, id, base, candidate, accepts)
-				n.proposerID[step] = candidate
-				n.proposerPromises[step] = make(map[uint]map[string]struct{})
-				n.proposerAccepts[step] = make(map[uint]map[string]struct{})
-				n.mu.Unlock()
-				sendRound()
-			}
 			}
 		}
 	}()
@@ -169,6 +207,13 @@ func (n *node) Tag(name string, mh string) error {
 	if n.stepWaiters == nil {
 		n.stepWaiters = make(map[uint][]chan struct{})
 	}
+	n.mu.RLock()
+	if n.currentStep > step {
+		n.mu.RUnlock()
+		n.stepWaitMu.Unlock()
+		return nil
+	}
+	n.mu.RUnlock()
 	ch := make(chan struct{})
 	n.stepWaiters[step] = append(n.stepWaiters[step], ch)
 	n.stepWaitMu.Unlock()
