@@ -1,10 +1,10 @@
 package impl
 
 import (
-    "log"
-    "os"
-    "strings"
-    "time"
+	"log"
+	"os"
+	"strings"
+	"time"
 
 	"go.dedis.ch/cs438/transport"
 	"go.dedis.ch/cs438/types"
@@ -82,7 +82,9 @@ func (n *node) handlePrivateMessage(m types.Message, pkt transport.Packet) error
 		return nil
 	}
 	if strings.HasPrefix(pm.Msg.Type, "paxos") || pm.Msg.Type == "paxospromise" {
-		log.Printf("[DEBUG] private deliver node=%s dest=%s src=%s type=%s", n.conf.Socket.GetAddress(), dest, strings.TrimSpace(pkt.Header.Source), pm.Msg.Type)
+		if os.Getenv("GLOG") != "no" {
+			log.Printf("[DEBUG] private deliver node=%s dest=%s src=%s type=%s", n.conf.Socket.GetAddress(), dest, strings.TrimSpace(pkt.Header.Source), pm.Msg.Type)
+		}
 	}
 	// Process embedded message with same header
 	_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: pkt.Header, Msg: pm.Msg})

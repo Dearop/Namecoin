@@ -349,8 +349,14 @@ func (n *node) Broadcast(msg transport.Message) error {
 	// Pick a random neighbor (entries where origin==relay and not self)
 	n.mu.RLock()
 	neighbors := make([]string, 0, len(n.routingTable))
+	relaySet := make(map[string]struct{}, len(n.routingTable))
 	for origin, relay := range n.routingTable {
-		if origin == relay && origin != nodeAddr {
+		relay = strings.TrimSpace(relay)
+		if relay == "" || relay == nodeAddr {
+			continue
+		}
+		relaySet[relay] = struct{}{}
+		if origin == relay {
 			neighbors = append(neighbors, origin)
 		}
 	}
@@ -386,24 +392,40 @@ func (n *node) Broadcast(msg transport.Message) error {
 
 	// Process locally first (always, even if no neighbors)
 	var targets []string
-	if len(neighbors) > 0 {
-		if isPaxosMessage {
-			// Send to all neighbors for reliable delivery
-			targets = neighbors
-		} else {
-			// Send to one random neighbor for regular rumor mongering
-			targets = []string{neighbors[int(time.Now().UnixNano())%len(neighbors)]}
-		}
-		for _, neighbor := range targets {
-			header := transport.NewHeader(nodeAddr, nodeAddr, neighbor)
-			pkt := transport.Packet{Header: &header, Msg: &wireMsg}
-
-			// set up ack waiting if configured
-			if n.conf.AckTimeout > 0 {
-				n.trackAck(pkt, neighbor, rumorsMsg)
+	if isPaxosMessage {
+		// Deliver Paxos/TLC messages to every known next hop (reliable flood)
+		if len(relaySet) == 0 && len(neighbors) > 0 {
+			// Fallback: if we somehow lost relay info, at least push to direct peers
+			for _, neighbor := range neighbors {
+				relaySet[neighbor] = struct{}{}
 			}
-			_ = n.conf.Socket.Send(neighbor, pkt, time.Second)
 		}
+		if len(relaySet) > 0 {
+			targets = make([]string, 0, len(relaySet))
+			for relay := range relaySet {
+				targets = append(targets, relay)
+			}
+		}
+	} else if len(neighbors) > 0 {
+		// Traditional rumor mongering: pick a random direct neighbor
+		targets = []string{neighbors[int(time.Now().UnixNano())%len(neighbors)]}
+	} else if len(relaySet) > 0 {
+		// If we have no direct neighbor entries, fall back to any known relay
+		targets = make([]string, 0, len(relaySet))
+		for relay := range relaySet {
+			targets = append(targets, relay)
+			break
+		}
+	}
+	for _, neighbor := range targets {
+		header := transport.NewHeader(nodeAddr, nodeAddr, neighbor)
+		pkt := transport.Packet{Header: &header, Msg: &wireMsg}
+
+		// set up ack waiting if configured
+		if n.conf.AckTimeout > 0 {
+			n.trackAck(pkt, neighbor, rumorsMsg)
+		}
+		_ = n.conf.Socket.Send(neighbor, pkt, time.Second)
 	}
 
 	// Process the embedded message locally after sending to neighbors. The rumor

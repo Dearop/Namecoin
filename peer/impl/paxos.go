@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -59,7 +60,7 @@ func (n *node) handlePaxosPrepare(m types.Message, pkt transport.Packet) error {
 	}
 	// Promise only if ID is higher than any promised so far
 	prevPromise := n.promisedID[step]
-	if step >= 4 {
+	if step >= 4 && os.Getenv("GLOG") != "no" {
 		log.Printf("[DEBUG] prepare node=%s step=%d id=%d from=%s promised=%d",
 			n.conf.Socket.GetAddress(), step, prep.ID, strings.TrimSpace(prep.Source), prevPromise)
 	}
@@ -76,7 +77,7 @@ func (n *node) handlePaxosPrepare(m types.Message, pkt transport.Packet) error {
 		accVal = &vv
 	}
 	n.mu.Unlock()
-	if step >= 4 {
+	if step >= 4 && os.Getenv("GLOG") != "no" {
 		log.Printf("[DEBUG] prepare node=%s step=%d accepted id=%d newPromise=%d",
 			n.conf.Socket.GetAddress(), step, prep.ID, prep.ID)
 	}
@@ -207,7 +208,7 @@ func (n *node) handlePaxosPromise(m types.Message, pkt transport.Packet) error {
 	n.mu.Lock()
 	// Only process during phase 1 and for current proposal ID
 	if n.proposerPhase == nil || n.proposerPhase[step] != 1 || n.proposerID == nil || n.proposerID[step] != prm.ID {
-		if step >= 4 {
+		if step >= 4 && os.Getenv("GLOG") != "no" {
 			log.Printf("[DEBUG] promise ignored node=%s step=%d id=%d src=%s phase=%v proposerID=%v",
 				n.conf.Socket.GetAddress(), step, prm.ID, src, func() interface{} {
 					if n.proposerPhase == nil {
@@ -257,7 +258,7 @@ func (n *node) handlePaxosPromise(m types.Message, pkt transport.Packet) error {
 	value := n.proposerValue[step]
 	n.mu.Unlock()
 
-	if step >= 4 {
+	if step >= 4 && os.Getenv("GLOG") != "no" {
 		log.Printf("[DEBUG] promise node=%s step=%d id=%d cnt=%d quorum=%d src=%s phase=%d",
 			n.conf.Socket.GetAddress(), step, prm.ID, cnt, n.getQuorum(), src, phase)
 	}
@@ -345,7 +346,7 @@ func (n *node) handlePaxosAccept(m types.Message, pkt transport.Packet) error {
 	globalCnt := len(n.acceptCount[step][acc.ID])
 	n.mu.Unlock()
 
-	if step >= 4 {
+	if step >= 4 && os.Getenv("GLOG") != "no" {
 		log.Printf("[DEBUG] accept node=%s step=%d id=%d src=%s cnt=%d quorum=%d tlcBroadcasted=%v",
 			n.conf.Socket.GetAddress(), step, acc.ID, src, globalCnt, n.getQuorum(), tlcAlready)
 	}
@@ -417,7 +418,7 @@ func (n *node) handleTLC(m types.Message, pkt transport.Packet) error {
 	already := n.tlcBroadcasted[step]
 	n.mu.Unlock()
 
-	if step >= 4 {
+	if step >= 4 && os.Getenv("GLOG") != "no" {
 		log.Printf("[DEBUG] handleTLC node=%s step=%d src=%s cnt=%d quorum=%d already=%v cur=%d",
 			n.conf.Socket.GetAddress(), step, src, cnt, n.getQuorum(), already, cur)
 	}
@@ -474,7 +475,7 @@ func (n *node) broadcastTLCOnce(step uint, block types.BlockchainBlock) {
 	n.tlcBroadcasted[step] = true
 	n.mu.Unlock()
 
-	if step >= 4 {
+	if step >= 4 && os.Getenv("GLOG") != "no" {
 		log.Printf("[DEBUG] broadcastTLC node=%s step=%d", n.conf.Socket.GetAddress(), step)
 	}
 	tlc := types.TLCMessage{Step: step, Block: block}
@@ -514,13 +515,17 @@ func (n *node) commitStepAndAdvance(step uint, block types.BlockchainBlock) {
 		// Complete waiters for this step
 		n.stepWaitMu.Lock()
 		if lst := n.stepWaiters[step]; len(lst) > 0 {
-			log.Printf("[DEBUG] commit node=%s step=%d closing %d waiters", n.conf.Socket.GetAddress(), step, len(lst))
+			if os.Getenv("GLOG") != "no" {
+				log.Printf("[DEBUG] commit node=%s step=%d closing %d waiters", n.conf.Socket.GetAddress(), step, len(lst))
+			}
 			for _, ch := range lst {
 				close(ch)
 			}
 			delete(n.stepWaiters, step)
 		} else {
-			log.Printf("[DEBUG] commit node=%s step=%d no waiters", n.conf.Socket.GetAddress(), step)
+			if os.Getenv("GLOG") != "no" {
+				log.Printf("[DEBUG] commit node=%s step=%d no waiters", n.conf.Socket.GetAddress(), step)
+			}
 		}
 		n.stepWaitMu.Unlock()
 
