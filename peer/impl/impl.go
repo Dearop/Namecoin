@@ -336,20 +336,11 @@ func (n *node) Unicast(dest string, msg transport.Message) error {
 	return n.conf.Socket.Send(nextHop, transport.Packet{Header: &header, Msg: &msg}, time.Second)
 }
 
-// Broadcast implements peer.Messaging
-func (n *node) Broadcast(msg transport.Message) error {
-	if err := n.validateNode(false); err != nil {
-		return err
-	}
-	if strings.TrimSpace(msg.Type) == "" {
-		return xerrors.Errorf("invalid message: empty type")
-	}
-	nodeAddr := n.conf.Socket.GetAddress()
-
-	// Pick a random neighbor (entries where origin==relay and not self)
+// getNeighborsAndRelays extracts neighbors and relay set from routing table
+func (n *node) getNeighborsAndRelays(nodeAddr string) (neighbors []string, relaySet map[string]struct{}) {
 	n.mu.RLock()
-	neighbors := make([]string, 0, len(n.routingTable))
-	relaySet := make(map[string]struct{}, len(n.routingTable))
+	neighbors = make([]string, 0, len(n.routingTable))
+	relaySet = make(map[string]struct{}, len(n.routingTable))
 	for origin, relay := range n.routingTable {
 		relay = strings.TrimSpace(relay)
 		if relay == "" || relay == nodeAddr {
@@ -361,8 +352,12 @@ func (n *node) Broadcast(msg transport.Message) error {
 		}
 	}
 	n.mu.RUnlock()
+	return neighbors, relaySet
+}
 
-	// Update our own sequence and build rumor
+// buildRumorMessage creates and stores a rumor message
+func (n *node) buildRumorMessage(nodeAddr string, msg transport.Message) (
+	transport.Message, types.RumorsMessage, error) {
 	n.mu.Lock()
 	seq := n.lastSeq[nodeAddr] + 1
 	n.lastSeq[nodeAddr] = seq
@@ -375,7 +370,7 @@ func (n *node) Broadcast(msg transport.Message) error {
 	rumorsMsg := types.RumorsMessage{Rumors: []types.Rumor{rumor}}
 	wireMsg, err := n.conf.MessageRegistry.MarshalMessage(rumorsMsg)
 	if err != nil {
-		return err
+		return transport.Message{}, types.RumorsMessage{}, err
 	}
 
 	// store the rumor so anti-entropy/catch-up can resend it later
@@ -383,16 +378,22 @@ func (n *node) Broadcast(msg transport.Message) error {
 	n.rumors[nodeAddr][seq] = rumor
 	n.mu.Unlock()
 
-	// Check if this is a Paxos/TLC message that needs reliable broadcast to all neighbors
-	isPaxosMessage := false
-	switch msg.Type {
-	case "paxosprepare", "paxospromise", "paxospropose", "paxosaccept", "tlc", "private":
-		isPaxosMessage = true
-	}
+	return wireMsg, rumorsMsg, nil
+}
 
-	// Process locally first (always, even if no neighbors)
+// isPaxosMessage checks if a message type is a Paxos/TLC message
+func isPaxosMessage(msgType string) bool {
+	switch msgType {
+	case "paxosprepare", "paxospromise", "paxospropose", "paxosaccept", "tlc", "private":
+		return true
+	}
+	return false
+}
+
+// determineBroadcastTargets determines which neighbors to send to
+func (n *node) determineBroadcastTargets(isPaxos bool, neighbors []string, relaySet map[string]struct{}) []string {
 	var targets []string
-	if isPaxosMessage {
+	if isPaxos {
 		// Deliver Paxos/TLC messages to every known next hop (reliable flood)
 		if len(relaySet) == 0 && len(neighbors) > 0 {
 			// Fallback: if we somehow lost relay info, at least push to direct peers
@@ -417,6 +418,12 @@ func (n *node) Broadcast(msg transport.Message) error {
 			break
 		}
 	}
+	return targets
+}
+
+// sendToTargets sends the wire message to all targets
+func (n *node) sendToTargets(nodeAddr string, wireMsg transport.Message,
+	targets []string, rumorsMsg types.RumorsMessage) {
 	for _, neighbor := range targets {
 		header := transport.NewHeader(nodeAddr, nodeAddr, neighbor)
 		pkt := transport.Packet{Header: &header, Msg: &wireMsg}
@@ -427,6 +434,27 @@ func (n *node) Broadcast(msg transport.Message) error {
 		}
 		_ = n.conf.Socket.Send(neighbor, pkt, time.Second)
 	}
+}
+
+// Broadcast implements peer.Messaging
+func (n *node) Broadcast(msg transport.Message) error {
+	if err := n.validateNode(false); err != nil {
+		return err
+	}
+	if strings.TrimSpace(msg.Type) == "" {
+		return xerrors.Errorf("invalid message: empty type")
+	}
+	nodeAddr := n.conf.Socket.GetAddress()
+
+	neighbors, relaySet := n.getNeighborsAndRelays(nodeAddr)
+	wireMsg, rumorsMsg, err := n.buildRumorMessage(nodeAddr, msg)
+	if err != nil {
+		return err
+	}
+
+	isPaxos := isPaxosMessage(msg.Type)
+	targets := n.determineBroadcastTargets(isPaxos, neighbors, relaySet)
+	n.sendToTargets(nodeAddr, wireMsg, targets, rumorsMsg)
 
 	// Process the embedded message locally after sending to neighbors. The rumor
 	// is already stored above for anti-entropy purposes.

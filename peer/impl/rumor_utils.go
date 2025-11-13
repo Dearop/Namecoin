@@ -9,20 +9,8 @@ import (
 	"go.dedis.ch/cs438/types"
 )
 
-func (n *node) sendMissingRumorsTo(source, self string, remote types.StatusMessage, local map[string]uint) {
-	if err := n.validateNode(false); err != nil {
-		return
-	}
-	if remote == nil || local == nil {
-		return
-	}
-
-	source = strings.TrimSpace(source)
-	self = strings.TrimSpace(self)
-	if source == "" || self == "" {
-		return
-	}
-
+// collectMissingRumors collects rumors that are missing from remote
+func (n *node) collectMissingRumors(remote types.StatusMessage, local map[string]uint) []types.Rumor {
 	var out []types.Rumor
 	for origin, lseq := range local {
 		if origin == "" {
@@ -45,19 +33,39 @@ func (n *node) sendMissingRumorsTo(source, self string, remote types.StatusMessa
 		}
 		n.mu.RUnlock()
 	}
-	if len(out) == 0 || source == "" {
+	return out
+}
+
+// sendRumorsMessage sends a rumors message to a destination
+func (n *node) sendRumorsMessage(rumors []types.Rumor, source, self string) {
+	if len(rumors) == 0 || source == "" || self == "" {
 		return
 	}
-	sort.Sort(types.RumorByOrigin(out))
-	wire, err := n.conf.MessageRegistry.MarshalMessage(types.RumorsMessage{Rumors: out})
+	sort.Sort(types.RumorByOrigin(rumors))
+	wire, err := n.conf.MessageRegistry.MarshalMessage(types.RumorsMessage{Rumors: rumors})
 	if err != nil {
-		return
-	}
-	if self == "" {
 		return
 	}
 	header := transport.NewHeader(self, self, source)
 	_ = n.conf.Socket.Send(source, transport.Packet{Header: &header, Msg: &wire}, time.Second)
+}
+
+func (n *node) sendMissingRumorsTo(source, self string, remote types.StatusMessage, local map[string]uint) {
+	if err := n.validateNode(false); err != nil {
+		return
+	}
+	if remote == nil || local == nil {
+		return
+	}
+
+	source = strings.TrimSpace(source)
+	self = strings.TrimSpace(self)
+	if source == "" || self == "" {
+		return
+	}
+
+	rumors := n.collectMissingRumors(remote, local)
+	n.sendRumorsMessage(rumors, source, self)
 }
 
 // processRumorIfExpected validates and processes a single rumor if it is the next

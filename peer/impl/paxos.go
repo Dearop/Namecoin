@@ -86,7 +86,7 @@ func (n *node) handlePaxosPrepare(m types.Message, pkt transport.Packet) error {
 	promise := types.PaxosPromiseMessage{Step: step, ID: prep.ID, AcceptedID: accID, AcceptedValue: accVal}
 	wirePromise, err := n.conf.MessageRegistry.MarshalMessage(promise)
 	if err != nil {
-		return nil
+		return err
 	}
 	recipients := map[string]struct{}{}
 	dest := strings.TrimSpace(prep.Source)
@@ -94,30 +94,11 @@ func (n *node) handlePaxosPrepare(m types.Message, pkt transport.Packet) error {
 		recipients[dest] = struct{}{}
 	}
 	priv := types.PrivateMessage{Recipients: recipients, Msg: &wirePromise}
-	if tmsg, err := n.conf.MessageRegistry.MarshalMessage(priv); err == nil {
-		if dest != "" && dest != n.conf.Socket.GetAddress() && n.conf.TotalPeers > 1 {
-			_ = n.Unicast(dest, tmsg)
-		}
-		// If the destination is self, process Promise directly first to count it immediately,
-		// then broadcast synchronously so the rumor ordering matches expectations.
-		if dest == n.conf.Socket.GetAddress() {
-			// Process Promise directly to ensure it's counted immediately
-			// The source should be self (the acceptor that is sending the Promise)
-			selfAddr := n.conf.Socket.GetAddress()
-			localHeader := transport.NewHeader(selfAddr, selfAddr, selfAddr)
-			_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: &localHeader, Msg: &wirePromise})
-			// Broadcast immediately so the promise rumor is sequenced before later phases.
-			_ = n.Broadcast(tmsg)
-		} else {
-			// Optimistically deliver to proposer (without generating extra network traffic)
-			if dest != "" {
-				selfAddr := n.conf.Socket.GetAddress()
-				header := transport.NewHeader(selfAddr, selfAddr, dest)
-				_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: &header, Msg: &wirePromise})
-			}
-			_ = n.Broadcast(tmsg)
-		}
+	tmsg, err := n.conf.MessageRegistry.MarshalMessage(priv)
+	if err != nil {
+		return err
 	}
+	n.sendPromiseMessage(dest, wirePromise, tmsg)
 	return nil
 }
 
@@ -207,22 +188,8 @@ func (n *node) handlePaxosPromise(m types.Message, pkt transport.Packet) error {
 	}
 	n.mu.Lock()
 	// Only process during phase 1 and for current proposal ID
-	if n.proposerPhase == nil || n.proposerPhase[step] != 1 || n.proposerID == nil || n.proposerID[step] != prm.ID {
-		if step >= 4 && os.Getenv("GLOG") != "no" {
-			log.Printf("[DEBUG] promise ignored node=%s step=%d id=%d src=%s phase=%v proposerID=%v",
-				n.conf.Socket.GetAddress(), step, prm.ID, src, func() interface{} {
-					if n.proposerPhase == nil {
-						return nil
-					}
-					return n.proposerPhase[step]
-				}(),
-				func() interface{} {
-					if n.proposerID == nil {
-						return nil
-					}
-					return n.proposerID[step]
-				}())
-		}
+	if !n.shouldProcessPromise(step, prm.ID) {
+		n.logIgnoredPromise(step, prm.ID, src)
 		n.mu.Unlock()
 		return nil
 	}
@@ -263,26 +230,7 @@ func (n *node) handlePaxosPromise(m types.Message, pkt transport.Packet) error {
 			n.conf.Socket.GetAddress(), step, prm.ID, cnt, n.getQuorum(), src, phase)
 	}
 	if cnt >= n.getQuorum() {
-		// Move to phase 2 and broadcast PROPOSE
-		propose := types.PaxosProposeMessage{Step: step, ID: prm.ID, Value: value}
-		if msg, err := n.conf.MessageRegistry.MarshalMessage(propose); err == nil {
-			_ = n.Broadcast(msg)
-		}
-		n.mu.Lock()
-		if n.proposerPhase == nil {
-			n.proposerPhase = make(map[uint]int)
-		}
-		n.proposerPhase[step] = 2
-		if n.proposerAccepts == nil {
-			n.proposerAccepts = make(map[uint]map[uint]map[string]struct{})
-		}
-		if n.proposerAccepts[step] == nil {
-			n.proposerAccepts[step] = make(map[uint]map[string]struct{})
-		}
-		if n.proposerAccepts[step][prm.ID] == nil {
-			n.proposerAccepts[step][prm.ID] = make(map[string]struct{})
-		}
-		n.mu.Unlock()
+		n.broadcastProposeAndAdvancePhase(step, prm.ID, value)
 	}
 	return nil
 }
@@ -311,40 +259,7 @@ func (n *node) handlePaxosAccept(m types.Message, pkt transport.Packet) error {
 	if pkt.Header != nil {
 		src = strings.TrimSpace(pkt.Header.Source)
 	}
-	n.mu.Lock()
-	// Track proposer accept quorum for proposer completion bookkeeping (only if we're the proposer)
-	propCnt := 0
-	if n.proposerPhase != nil && n.proposerPhase[step] == 2 && n.proposerID != nil && n.proposerID[step] == acc.ID {
-		if n.proposerAccepts == nil {
-			n.proposerAccepts = make(map[uint]map[uint]map[string]struct{})
-		}
-		if n.proposerAccepts[step] == nil {
-			n.proposerAccepts[step] = make(map[uint]map[string]struct{})
-		}
-		if n.proposerAccepts[step][acc.ID] == nil {
-			n.proposerAccepts[step][acc.ID] = make(map[string]struct{})
-		}
-		if src != "" {
-			n.proposerAccepts[step][acc.ID][src] = struct{}{}
-		}
-		propCnt = len(n.proposerAccepts[step][acc.ID])
-	}
-	// Track global accept counts for learner/TLC triggering (ALL nodes should do this)
-	if n.acceptCount == nil {
-		n.acceptCount = make(map[uint]map[uint]map[string]struct{})
-	}
-	if n.acceptCount[step] == nil {
-		n.acceptCount[step] = make(map[uint]map[string]struct{})
-	}
-	if n.acceptCount[step][acc.ID] == nil {
-		n.acceptCount[step][acc.ID] = make(map[string]struct{})
-	}
-	if src != "" {
-		n.acceptCount[step][acc.ID][src] = struct{}{}
-	}
-	tlcAlready := n.tlcBroadcasted[step]
-	globalCnt := len(n.acceptCount[step][acc.ID])
-	n.mu.Unlock()
+	propCnt, globalCnt, tlcAlready := n.trackAcceptCounts(step, acc.ID, src)
 
 	if step >= 4 && os.Getenv("GLOG") != "no" {
 		log.Printf("[DEBUG] accept node=%s step=%d id=%d src=%s cnt=%d quorum=%d tlcBroadcasted=%v",
@@ -486,6 +401,180 @@ func (n *node) broadcastTLCOnce(step uint, block types.BlockchainBlock) {
 	}
 }
 
+// trackAcceptCounts tracks both proposer and global accept counts
+func (n *node) trackAcceptCounts(step uint, id uint, src string) (propCnt int, globalCnt int, tlcAlready bool) {
+	n.mu.Lock()
+	// Track proposer accept quorum for proposer completion bookkeeping (only if we're the proposer)
+	if n.proposerPhase != nil && n.proposerPhase[step] == 2 && n.proposerID != nil && n.proposerID[step] == id {
+		if n.proposerAccepts == nil {
+			n.proposerAccepts = make(map[uint]map[uint]map[string]struct{})
+		}
+		if n.proposerAccepts[step] == nil {
+			n.proposerAccepts[step] = make(map[uint]map[string]struct{})
+		}
+		if n.proposerAccepts[step][id] == nil {
+			n.proposerAccepts[step][id] = make(map[string]struct{})
+		}
+		if src != "" {
+			n.proposerAccepts[step][id][src] = struct{}{}
+		}
+		propCnt = len(n.proposerAccepts[step][id])
+	}
+	// Track global accept counts for learner/TLC triggering (ALL nodes should do this)
+	if n.acceptCount == nil {
+		n.acceptCount = make(map[uint]map[uint]map[string]struct{})
+	}
+	if n.acceptCount[step] == nil {
+		n.acceptCount[step] = make(map[uint]map[string]struct{})
+	}
+	if n.acceptCount[step][id] == nil {
+		n.acceptCount[step][id] = make(map[string]struct{})
+	}
+	if src != "" {
+		n.acceptCount[step][id][src] = struct{}{}
+	}
+	tlcAlready = n.tlcBroadcasted[step]
+	globalCnt = len(n.acceptCount[step][id])
+	n.mu.Unlock()
+	return propCnt, globalCnt, tlcAlready
+}
+
+// shouldProcessPromise checks if a Promise should be processed
+func (n *node) shouldProcessPromise(step uint, promiseID uint) bool {
+	return n.proposerPhase != nil && n.proposerPhase[step] == 1 &&
+		n.proposerID != nil && n.proposerID[step] == promiseID
+}
+
+// logIgnoredPromise logs when a Promise is ignored
+func (n *node) logIgnoredPromise(step uint, promiseID uint, src string) {
+	if step < 4 || os.Getenv("GLOG") == "no" {
+		return
+	}
+	phase := func() interface{} {
+		if n.proposerPhase == nil {
+			return nil
+		}
+		return n.proposerPhase[step]
+	}()
+	proposerID := func() interface{} {
+		if n.proposerID == nil {
+			return nil
+		}
+		return n.proposerID[step]
+	}()
+	log.Printf("[DEBUG] promise ignored node=%s step=%d id=%d src=%s phase=%v proposerID=%v",
+		n.conf.Socket.GetAddress(), step, promiseID, src, phase, proposerID)
+}
+
+// broadcastProposeAndAdvancePhase broadcasts a Propose message and advances to phase 2
+func (n *node) broadcastProposeAndAdvancePhase(step uint, id uint, value types.PaxosValue) {
+	// Move to phase 2 and broadcast PROPOSE
+	propose := types.PaxosProposeMessage{Step: step, ID: id, Value: value}
+	if msg, err := n.conf.MessageRegistry.MarshalMessage(propose); err == nil {
+		_ = n.Broadcast(msg)
+	}
+	n.mu.Lock()
+	if n.proposerPhase == nil {
+		n.proposerPhase = make(map[uint]int)
+	}
+	n.proposerPhase[step] = 2
+	if n.proposerAccepts == nil {
+		n.proposerAccepts = make(map[uint]map[uint]map[string]struct{})
+	}
+	if n.proposerAccepts[step] == nil {
+		n.proposerAccepts[step] = make(map[uint]map[string]struct{})
+	}
+	if n.proposerAccepts[step][id] == nil {
+		n.proposerAccepts[step][id] = make(map[string]struct{})
+	}
+	n.mu.Unlock()
+}
+
+// sendPromiseMessage sends a Promise message to the destination
+func (n *node) sendPromiseMessage(dest string, wirePromise transport.Message, tmsg transport.Message) {
+	if dest != "" && dest != n.conf.Socket.GetAddress() && n.conf.TotalPeers > 1 {
+		_ = n.Unicast(dest, tmsg)
+	}
+	// If the destination is self, process Promise directly first to count it immediately,
+	// then broadcast synchronously so the rumor ordering matches expectations.
+	if dest == n.conf.Socket.GetAddress() {
+		// Process Promise directly to ensure it's counted immediately
+		// The source should be self (the acceptor that is sending the Promise)
+		selfAddr := n.conf.Socket.GetAddress()
+		localHeader := transport.NewHeader(selfAddr, selfAddr, selfAddr)
+		_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: &localHeader, Msg: &wirePromise})
+		// Broadcast immediately so the promise rumor is sequenced before later phases.
+		_ = n.Broadcast(tmsg)
+		return
+	}
+	// Optimistically deliver to proposer (without generating extra network traffic)
+	if dest != "" {
+		selfAddr := n.conf.Socket.GetAddress()
+		header := transport.NewHeader(selfAddr, selfAddr, dest)
+		_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: &header, Msg: &wirePromise})
+	}
+	_ = n.Broadcast(tmsg)
+}
+
+// commitBlock stores a block and updates naming store
+func (n *node) commitBlock(block types.BlockchainBlock) {
+	store := n.conf.Storage.GetBlockchainStore()
+	if buf, err := block.Marshal(); err == nil {
+		store.Set(hex.EncodeToString(block.Hash), buf)
+		store.Set(storage.LastBlockKey, block.Hash)
+	}
+	// Naming store update
+	nameStore := n.conf.Storage.GetNamingStore()
+	if strings.TrimSpace(block.Value.Filename) != "" && strings.TrimSpace(block.Value.Metahash) != "" {
+		nameStore.Set(block.Value.Filename, []byte(block.Value.Metahash))
+	}
+}
+
+// completeStepWaiters closes all waiters for a step
+func (n *node) completeStepWaiters(step uint) {
+	n.stepWaitMu.Lock()
+	if lst := n.stepWaiters[step]; len(lst) > 0 {
+		if os.Getenv("GLOG") != "no" {
+			log.Printf("[DEBUG] commit node=%s step=%d closing %d waiters",
+				n.conf.Socket.GetAddress(), step, len(lst))
+		}
+		for _, ch := range lst {
+			close(ch)
+		}
+		delete(n.stepWaiters, step)
+	} else {
+		if os.Getenv("GLOG") != "no" {
+			log.Printf("[DEBUG] commit node=%s step=%d no waiters",
+				n.conf.Socket.GetAddress(), step)
+		}
+	}
+	n.stepWaitMu.Unlock()
+}
+
+// cleanupProposerState cleans up proposer state for a completed step
+func (n *node) cleanupProposerState(step uint) {
+	n.mu.Lock()
+	if n.proposerPhase != nil {
+		n.proposerPhase[step] = 3
+	}
+	if n.proposerPromises != nil {
+		delete(n.proposerPromises, step)
+	}
+	if n.proposerAccepts != nil {
+		delete(n.proposerAccepts, step)
+	}
+	if n.proposerID != nil {
+		delete(n.proposerID, step)
+	}
+	if n.proposerHighestAcceptedID != nil {
+		delete(n.proposerHighestAcceptedID, step)
+	}
+	if n.proposerValue != nil {
+		delete(n.proposerValue, step)
+	}
+	n.mu.Unlock()
+}
+
 func (n *node) commitStepAndAdvance(step uint, block types.BlockchainBlock) {
 	// Advance and try to catch up future steps with cached TLC quorum
 	// We commit steps sequentially, starting with the given step
@@ -501,55 +590,13 @@ func (n *node) commitStepAndAdvance(step uint, block types.BlockchainBlock) {
 		n.mu.Unlock()
 
 		// Store block and update name store for current step
-		store := n.conf.Storage.GetBlockchainStore()
-		if buf, err := block.Marshal(); err == nil {
-			store.Set(hex.EncodeToString(block.Hash), buf)
-			store.Set(storage.LastBlockKey, block.Hash)
-		}
-		// Naming store update
-		nameStore := n.conf.Storage.GetNamingStore()
-		if strings.TrimSpace(block.Value.Filename) != "" && strings.TrimSpace(block.Value.Metahash) != "" {
-			nameStore.Set(block.Value.Filename, []byte(block.Value.Metahash))
-		}
+		n.commitBlock(block)
 
 		// Complete waiters for this step
-		n.stepWaitMu.Lock()
-		if lst := n.stepWaiters[step]; len(lst) > 0 {
-			if os.Getenv("GLOG") != "no" {
-				log.Printf("[DEBUG] commit node=%s step=%d closing %d waiters", n.conf.Socket.GetAddress(), step, len(lst))
-			}
-			for _, ch := range lst {
-				close(ch)
-			}
-			delete(n.stepWaiters, step)
-		} else {
-			if os.Getenv("GLOG") != "no" {
-				log.Printf("[DEBUG] commit node=%s step=%d no waiters", n.conf.Socket.GetAddress(), step)
-			}
-		}
-		n.stepWaitMu.Unlock()
+		n.completeStepWaiters(step)
 
 		// Mark proposer phase as completed so retry loops can stop
-		n.mu.Lock()
-		if n.proposerPhase != nil {
-			n.proposerPhase[step] = 3
-		}
-		if n.proposerPromises != nil {
-			delete(n.proposerPromises, step)
-		}
-		if n.proposerAccepts != nil {
-			delete(n.proposerAccepts, step)
-		}
-		if n.proposerID != nil {
-			delete(n.proposerID, step)
-		}
-		if n.proposerHighestAcceptedID != nil {
-			delete(n.proposerHighestAcceptedID, step)
-		}
-		if n.proposerValue != nil {
-			delete(n.proposerValue, step)
-		}
-		n.mu.Unlock()
+		n.cleanupProposerState(step)
 
 		// Advance currentStep and check if we can commit the next step
 		n.mu.Lock()
