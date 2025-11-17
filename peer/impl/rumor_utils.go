@@ -11,6 +11,12 @@ import (
 
 // collectMissingRumors collects rumors that are missing from remote
 func (n *node) collectMissingRumors(remote types.StatusMessage, local map[string]uint) []types.Rumor {
+	if err := n.validateNode(false); err != nil {
+		return nil
+	}
+	if remote == nil || local == nil {
+		return nil
+	}
 	var out []types.Rumor
 	for origin, lseq := range local {
 		if origin == "" {
@@ -38,6 +44,12 @@ func (n *node) collectMissingRumors(remote types.StatusMessage, local map[string
 
 // sendRumorsMessage sends a rumors message to a destination
 func (n *node) sendRumorsMessage(rumors []types.Rumor, source, self string) {
+	if err := n.validateNode(false); err != nil {
+		return
+	}
+	if len(rumors) == 0 {
+		return
+	}
 	if len(rumors) == 0 || source == "" || self == "" {
 		return
 	}

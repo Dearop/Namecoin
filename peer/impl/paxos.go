@@ -16,6 +16,9 @@ import (
 
 // getQuorum returns quorum size based on configuration TotalPeers and optional PaxosThreshold
 func (n *node) getQuorum() int {
+	if err := n.validateNode(false); err != nil {
+		return 1
+	}
 	total := n.conf.TotalPeers
 	if total == 0 {
 		total = 1
@@ -360,6 +363,12 @@ func (n *node) handleTLC(m types.Message, pkt transport.Packet) error {
 
 // buildBlock constructs a block for given step from value and previous last hash
 func (n *node) buildBlock(step uint, value types.PaxosValue) types.BlockchainBlock {
+	if err := n.validateNode(false); err != nil {
+		return types.BlockchainBlock{}
+	}
+	if strings.TrimSpace(value.Filename) == "" || strings.TrimSpace(value.Metahash) == "" {
+		return types.BlockchainBlock{}
+	}
 	prev := n.conf.Storage.GetBlockchainStore().Get(storage.LastBlockKey)
 	block := types.BlockchainBlock{Index: step, Value: value}
 	if len(prev) == 32 {
@@ -382,6 +391,9 @@ func (n *node) buildBlock(step uint, value types.PaxosValue) types.BlockchainBlo
 // is true, the TLC handler is invoked directly before broadcasting so the local
 // node processes the message without re-serializing it.
 func (n *node) broadcastTLCOnce(step uint, block types.BlockchainBlock, processLocal bool) {
+	if err := n.validateNode(true); err != nil {
+		return
+	}
 	n.mu.Lock()
 	if n.tlcBroadcasted == nil {
 		n.tlcBroadcasted = make(map[uint]bool)
@@ -411,6 +423,9 @@ func (n *node) broadcastTLCOnce(step uint, block types.BlockchainBlock, processL
 
 // trackAcceptCounts tracks both proposer and global accept counts
 func (n *node) trackAcceptCounts(step uint, id uint, src string) (propCnt int, globalCnt int, tlcAlready bool) {
+	if err := n.validateNode(false); err != nil {
+		return 0, 0, false
+	}
 	n.mu.Lock()
 	// Track proposer accept quorum for proposer completion bookkeeping (only if we're the proposer)
 	if n.proposerPhase != nil && n.proposerPhase[step] == 2 && n.proposerID != nil && n.proposerID[step] == id {
@@ -449,12 +464,18 @@ func (n *node) trackAcceptCounts(step uint, id uint, src string) (propCnt int, g
 
 // shouldProcessPromise checks if a Promise should be processed
 func (n *node) shouldProcessPromise(step uint, promiseID uint) bool {
+	if err := n.validateNode(false); err != nil {
+		return false
+	}
 	return n.proposerPhase != nil && n.proposerPhase[step] == 1 &&
 		n.proposerID != nil && n.proposerID[step] == promiseID
 }
 
 // logIgnoredPromise logs when a Promise is ignored
 func (n *node) logIgnoredPromise(step uint, promiseID uint, src string) {
+	if err := n.validateNode(false); err != nil {
+		return
+	}
 	if step < 4 || os.Getenv("GLOG") == "no" {
 		return
 	}
@@ -476,6 +497,9 @@ func (n *node) logIgnoredPromise(step uint, promiseID uint, src string) {
 
 // broadcastProposeAndAdvancePhase broadcasts a Propose message and advances to phase 2
 func (n *node) broadcastProposeAndAdvancePhase(step uint, id uint, value types.PaxosValue) {
+	if err := n.validateNode(true); err != nil {
+		return
+	}
 	// Move to phase 2 and broadcast PROPOSE
 	propose := types.PaxosProposeMessage{Step: step, ID: id, Value: value}
 	if msg, err := n.conf.MessageRegistry.MarshalMessage(propose); err == nil {
@@ -500,6 +524,9 @@ func (n *node) broadcastProposeAndAdvancePhase(step uint, id uint, value types.P
 
 // sendPromiseMessage sends a Promise message to the destination
 func (n *node) sendPromiseMessage(dest string, wirePromise transport.Message, tmsg transport.Message) {
+	if err := n.validateNode(true); err != nil {
+		return
+	}
 	if dest != "" && dest != n.conf.Socket.GetAddress() && n.conf.TotalPeers > 1 {
 		_ = n.Unicast(dest, tmsg)
 	}
@@ -526,6 +553,9 @@ func (n *node) sendPromiseMessage(dest string, wirePromise transport.Message, tm
 
 // commitBlock stores a block and updates naming store
 func (n *node) commitBlock(block types.BlockchainBlock) {
+	if err := n.validateNode(false); err != nil {
+		return
+	}
 	store := n.conf.Storage.GetBlockchainStore()
 	if buf, err := block.Marshal(); err == nil {
 		store.Set(hex.EncodeToString(block.Hash), buf)
@@ -540,6 +570,9 @@ func (n *node) commitBlock(block types.BlockchainBlock) {
 
 // completeStepWaiters closes all waiters for a step
 func (n *node) completeStepWaiters(step uint) {
+	if err := n.validateNode(false); err != nil {
+		return
+	}
 	n.stepWaitMu.Lock()
 	if lst := n.stepWaiters[step]; len(lst) > 0 {
 		if os.Getenv("GLOG") != "no" {
@@ -561,6 +594,9 @@ func (n *node) completeStepWaiters(step uint) {
 
 // cleanupProposerState cleans up proposer state for a completed step
 func (n *node) cleanupProposerState(step uint) {
+	if err := n.validateNode(false); err != nil {
+		return
+	}
 	n.mu.Lock()
 	if n.proposerPhase != nil {
 		n.proposerPhase[step] = 3
@@ -584,6 +620,9 @@ func (n *node) cleanupProposerState(step uint) {
 }
 
 func (n *node) commitStepAndAdvance(step uint, block types.BlockchainBlock) {
+	if err := n.validateNode(false); err != nil {
+		return
+	}
 	// Advance and try to catch up future steps with cached TLC quorum
 	// We commit steps sequentially, starting with the given step
 	for {
@@ -633,6 +672,9 @@ func (n *node) commitStepAndAdvance(step uint, block types.BlockchainBlock) {
 
 // cleanupTLCState removes TLC/accept bookkeeping for a completed step.
 func (n *node) cleanupTLCState(step uint) {
+	if err := n.validateNode(false); err != nil {
+		return
+	}
 	n.mu.Lock()
 	if n.tlcCount != nil {
 		delete(n.tlcCount, step)

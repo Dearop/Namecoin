@@ -218,6 +218,16 @@ func (n *node) respondToStatus(source, self string, remote types.StatusMessage) 
 }
 
 func (n *node) trackAck(pkt transport.Packet, dest string, rumors types.RumorsMessage) {
+	if err := n.validateNode(false); err != nil {
+		return
+	}
+	if pkt.Header == nil || strings.TrimSpace(pkt.Header.PacketID) == "" {
+		return
+	}
+	dest = strings.TrimSpace(dest)
+	if dest == "" {
+		return
+	}
 	timeout := n.conf.AckTimeout
 	if timeout <= 0 {
 		return
@@ -257,7 +267,11 @@ func (n *node) trackAck(pkt transport.Packet, dest string, rumors types.RumorsMe
 			return
 		}
 		header := transport.NewHeader(nodeAddr, nodeAddr, newDest)
-		_ = n.conf.Socket.Send(newDest, transport.Packet{Header: &header, Msg: &wire}, time.Second)
+		newPkt := transport.Packet{Header: &header, Msg: &wire}
+		_ = n.conf.Socket.Send(newDest, newPkt, time.Second)
+		// Re-arm tracking for the newly selected destination so retries continue
+		// until some peer acknowledges the rumor.
+		n.trackAck(newPkt, newDest, rumors)
 	}(pkt.Header.PacketID)
 }
 
@@ -338,6 +352,13 @@ func (n *node) Unicast(dest string, msg transport.Message) error {
 
 // getNeighborsAndRelays extracts neighbors and relay set from routing table
 func (n *node) getNeighborsAndRelays(nodeAddr string) (neighbors []string, relaySet map[string]struct{}) {
+	if err := n.validateNode(false); err != nil {
+		return nil, nil
+	}
+	nodeAddr = strings.TrimSpace(nodeAddr)
+	if nodeAddr == "" {
+		return nil, nil
+	}
 	n.mu.RLock()
 	neighbors = make([]string, 0, len(n.routingTable))
 	relaySet = make(map[string]struct{}, len(n.routingTable))
@@ -358,6 +379,16 @@ func (n *node) getNeighborsAndRelays(nodeAddr string) (neighbors []string, relay
 // buildRumorMessage creates and stores a rumor message
 func (n *node) buildRumorMessage(nodeAddr string, msg transport.Message) (
 	transport.Message, types.RumorsMessage, error) {
+	if err := n.validateNode(true); err != nil {
+		return transport.Message{}, types.RumorsMessage{}, err
+	}
+	nodeAddr = strings.TrimSpace(nodeAddr)
+	if nodeAddr == "" {
+		return transport.Message{}, types.RumorsMessage{}, xerrors.Errorf("invalid origin")
+	}
+	if strings.TrimSpace(msg.Type) == "" {
+		return transport.Message{}, types.RumorsMessage{}, xerrors.Errorf("invalid message: empty type")
+	}
 	n.mu.Lock()
 	seq := n.lastSeq[nodeAddr] + 1
 	n.lastSeq[nodeAddr] = seq
@@ -424,6 +455,16 @@ func (n *node) determineBroadcastTargets(isPaxos bool, neighbors []string, relay
 // sendToTargets sends the wire message to all targets
 func (n *node) sendToTargets(nodeAddr string, wireMsg transport.Message,
 	targets []string, trackAck bool, rumorsMsg types.RumorsMessage) {
+	if err := n.validateNode(false); err != nil {
+		return
+	}
+	nodeAddr = strings.TrimSpace(nodeAddr)
+	if nodeAddr == "" || len(targets) == 0 {
+		return
+	}
+	if strings.TrimSpace(wireMsg.Type) == "" {
+		return
+	}
 	for _, neighbor := range targets {
 		header := transport.NewHeader(nodeAddr, nodeAddr, neighbor)
 		pkt := transport.Packet{Header: &header, Msg: &wireMsg}
