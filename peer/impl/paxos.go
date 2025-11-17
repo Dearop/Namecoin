@@ -598,6 +598,9 @@ func (n *node) commitStepAndAdvance(step uint, block types.BlockchainBlock) {
 		// Mark proposer phase as completed so retry loops can stop
 		n.cleanupProposerState(step)
 
+		// Drop consensus/TLC bookkeeping for this step to free memory
+		n.cleanupTLCState(step)
+
 		// Advance currentStep and check if we can commit the next step
 		n.mu.Lock()
 		n.currentStep++
@@ -618,4 +621,22 @@ func (n *node) commitStepAndAdvance(step uint, block types.BlockchainBlock) {
 		}
 		break
 	}
+}
+
+// cleanupTLCState removes TLC/accept bookkeeping for a completed step.
+func (n *node) cleanupTLCState(step uint) {
+	n.mu.Lock()
+	if n.tlcCount != nil {
+		delete(n.tlcCount, step)
+	}
+	if n.tlcBlock != nil {
+		delete(n.tlcBlock, step)
+	}
+	if n.tlcBroadcasted != nil {
+		delete(n.tlcBroadcasted, step)
+	}
+	if n.acceptCount != nil {
+		delete(n.acceptCount, step)
+	}
+	n.mu.Unlock()
 }

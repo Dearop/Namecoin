@@ -83,9 +83,9 @@ func (n *node) handlePrivateMessage(m types.Message, pkt transport.Packet) error
 	}
 	if strings.HasPrefix(pm.Msg.Type, "paxos") || pm.Msg.Type == "paxospromise" {
 		if os.Getenv("GLOG") != "no" {
-			log.Printf("[DEBUG] private deliver node=%s dest=%s src=%s type=%s",
-				n.conf.Socket.GetAddress(), dest,
-				strings.TrimSpace(pkt.Header.Source), pm.Msg.Type)
+			nodeAddr := n.conf.Socket.GetAddress()
+			src := strings.TrimSpace(pkt.Header.Source)
+			log.Printf("[DEBUG] private deliver node=%s dest=%s src=%s type=%s", nodeAddr, dest, src, pm.Msg.Type)
 		}
 	}
 	// Process embedded message with same header

@@ -26,8 +26,17 @@ func (n *node) validateRecvPacket(pkt transport.Packet) error {
 	if pkt.Msg == nil {
 		return xerrors.Errorf("missing message")
 	}
-	if strings.TrimSpace(pkt.Header.Destination) == "" {
+	// Optimize: check length first, only trim if needed
+	dest := pkt.Header.Destination
+	if len(dest) == 0 {
 		return xerrors.Errorf("empty destination")
+	}
+	// Only trim if we detect whitespace
+	if dest[0] == ' ' || dest[len(dest)-1] == ' ' {
+		dest = strings.TrimSpace(dest)
+		if dest == "" {
+			return xerrors.Errorf("empty destination")
+		}
 	}
 	return nil
 }
@@ -43,7 +52,11 @@ func (n *node) processPacket(pkt transport.Packet) {
 	if err != nil {
 		return
 	}
-	dest := strings.TrimSpace(pkt.Header.Destination)
+	// Optimize: only trim if needed
+	dest := pkt.Header.Destination
+	if len(dest) > 0 && (dest[0] == ' ' || dest[len(dest)-1] == ' ') {
+		dest = strings.TrimSpace(dest)
+	}
 	if dest == "" {
 		return
 	}
