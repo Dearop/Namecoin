@@ -281,7 +281,7 @@ func (n *node) handlePaxosAccept(m types.Message, pkt transport.Packet) error {
 		// Use goroutine to ensure Accept broadcast completes before TLC broadcast
 		go func() {
 			time.Sleep(time.Millisecond)
-			n.broadcastTLCOnce(step, block)
+			n.broadcastTLCOnce(step, block, true)
 		}()
 	}
 	return nil
@@ -346,7 +346,7 @@ func (n *node) handleTLC(m types.Message, pkt transport.Packet) error {
 				// We haven't broadcast yet, so broadcast first and commit immediately.
 				// commitStepAndAdvance is idempotent if invoked again when the locally
 				// processed broadcast re-enters handleTLC.
-				n.broadcastTLCOnce(step, tlc.Block)
+				n.broadcastTLCOnce(step, tlc.Block, false)
 				n.commitStepAndAdvance(step, tlc.Block)
 			} else {
 				// Already broadcast by us or someone else, just commit
@@ -378,7 +378,10 @@ func (n *node) buildBlock(step uint, value types.PaxosValue) types.BlockchainBlo
 	return block
 }
 
-func (n *node) broadcastTLCOnce(step uint, block types.BlockchainBlock) {
+// broadcastTLCOnce sends a TLC message exactly once per step. When processLocal
+// is true, the TLC handler is invoked directly before broadcasting so the local
+// node processes the message without re-serializing it.
+func (n *node) broadcastTLCOnce(step uint, block types.BlockchainBlock, processLocal bool) {
 	n.mu.Lock()
 	if n.tlcBroadcasted == nil {
 		n.tlcBroadcasted = make(map[uint]bool)
@@ -393,11 +396,16 @@ func (n *node) broadcastTLCOnce(step uint, block types.BlockchainBlock) {
 	if step >= 4 && os.Getenv("GLOG") != "no" {
 		log.Printf("[DEBUG] broadcastTLC node=%s step=%d", n.conf.Socket.GetAddress(), step)
 	}
+	nodeAddr := n.conf.Socket.GetAddress()
 	tlc := types.TLCMessage{Step: step, Block: block}
+	if processLocal {
+		header := transport.NewHeader(nodeAddr, nodeAddr, nodeAddr)
+		// Directly invoke the TLC handler to avoid re-marshal/unmarshal overhead.
+		_ = n.handleTLC(&tlc, transport.Packet{Header: &header})
+	}
 	if msg, err := n.conf.MessageRegistry.MarshalMessage(tlc); err == nil {
 		// Broadcast to neighbors (will also process locally via handleTLC)
-		_ = n.Broadcast(msg)
-		// handleTLC will process the local broadcast, count it, check for quorum, and commit if needed
+		_ = n.broadcastWithOptions(msg, true)
 	}
 }
 
@@ -612,7 +620,7 @@ func (n *node) commitStepAndAdvance(step uint, block types.BlockchainBlock) {
 
 		if cnt >= n.getQuorum() && ok {
 			if !already {
-				n.broadcastTLCOnce(nextStep, blk)
+				n.broadcastTLCOnce(nextStep, blk, false)
 			}
 			// commit next in next iteration
 			step = nextStep

@@ -423,13 +423,13 @@ func (n *node) determineBroadcastTargets(isPaxos bool, neighbors []string, relay
 
 // sendToTargets sends the wire message to all targets
 func (n *node) sendToTargets(nodeAddr string, wireMsg transport.Message,
-	targets []string, rumorsMsg types.RumorsMessage) {
+	targets []string, trackAck bool, rumorsMsg types.RumorsMessage) {
 	for _, neighbor := range targets {
 		header := transport.NewHeader(nodeAddr, nodeAddr, neighbor)
 		pkt := transport.Packet{Header: &header, Msg: &wireMsg}
 
 		// set up ack waiting if configured
-		if n.conf.AckTimeout > 0 {
+		if trackAck && n.conf.AckTimeout > 0 {
 			n.trackAck(pkt, neighbor, rumorsMsg)
 		}
 		_ = n.conf.Socket.Send(neighbor, pkt, time.Second)
@@ -438,6 +438,12 @@ func (n *node) sendToTargets(nodeAddr string, wireMsg transport.Message,
 
 // Broadcast implements peer.Messaging
 func (n *node) Broadcast(msg transport.Message) error {
+	return n.broadcastWithOptions(msg, false)
+}
+
+// broadcastWithOptions centralizes the broadcast logic and optionally skips
+// local processing (used for internal Paxos/TLC retransmissions).
+func (n *node) broadcastWithOptions(msg transport.Message, skipLocalProcessing bool) error {
 	if err := n.validateNode(false); err != nil {
 		return err
 	}
@@ -454,12 +460,14 @@ func (n *node) Broadcast(msg transport.Message) error {
 
 	isPaxos := isPaxosMessage(msg.Type)
 	targets := n.determineBroadcastTargets(isPaxos, neighbors, relaySet)
-	n.sendToTargets(nodeAddr, wireMsg, targets, rumorsMsg)
+	n.sendToTargets(nodeAddr, wireMsg, targets, !isPaxos, rumorsMsg)
 
 	// Process the embedded message locally after sending to neighbors. The rumor
 	// is already stored above for anti-entropy purposes.
-	localHeader := transport.NewHeader(nodeAddr, nodeAddr, nodeAddr)
-	_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: &localHeader, Msg: &msg})
+	if !skipLocalProcessing {
+		localHeader := transport.NewHeader(nodeAddr, nodeAddr, nodeAddr)
+		_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: &localHeader, Msg: &msg})
+	}
 
 	// prevent immediate status before first anti-entropy tick
 	if n.conf.AntiEntropyInterval > 0 {
