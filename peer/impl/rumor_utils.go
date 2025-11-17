@@ -19,25 +19,39 @@ func (n *node) collectMissingRumors(remote types.StatusMessage, local map[string
 	}
 	var out []types.Rumor
 	for origin, lseq := range local {
-		if origin == "" {
+		missing := n.collectMissingForOrigin(origin, lseq, remote[origin])
+		if len(missing) > 0 {
+			out = append(out, missing...)
+		}
+	}
+	return out
+}
+
+func (n *node) collectMissingForOrigin(origin string, localSeq uint, remoteSeq uint) []types.Rumor {
+	origin = strings.TrimSpace(origin)
+	if origin == "" || localSeq <= remoteSeq {
+		return nil
+	}
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	byOrigin := n.rumors[origin]
+	if byOrigin == nil {
+		return nil
+	}
+	expected := int(localSeq - remoteSeq)
+	if expected < 0 {
+		expected = 0
+	}
+	out := make([]types.Rumor, 0, expected)
+	for seq := remoteSeq + 1; seq <= localSeq; seq++ {
+		rm, ok := byOrigin[seq]
+		if !ok {
 			continue
 		}
-		rseq := remote[origin]
-		if lseq <= rseq {
+		if rm.Origin == "" || rm.Sequence == 0 || rm.Msg == nil {
 			continue
 		}
-		// collect rumors (rseq+1 .. lseq)
-		n.mu.RLock()
-		for seq := rseq + 1; seq <= lseq; seq++ {
-			if byOrigin := n.rumors[origin]; byOrigin != nil {
-				if rm, ok := byOrigin[seq]; ok {
-					if rm.Origin != "" && rm.Sequence > 0 && rm.Msg != nil {
-						out = append(out, rm)
-					}
-				}
-			}
-		}
-		n.mu.RUnlock()
+		out = append(out, rm)
 	}
 	return out
 }
