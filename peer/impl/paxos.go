@@ -654,14 +654,12 @@ func (n *node) commitStepAndAdvance(step uint, block types.BlockchainBlock) {
 		nextStep := n.currentStep
 		cnt := len(n.tlcCount[nextStep])
 		blk, ok := n.tlcBlock[nextStep]
-		already := n.tlcBroadcasted[nextStep]
 		n.mu.Unlock()
 
 		if cnt >= n.getQuorum() && ok {
-			if !already {
-				n.broadcastTLCOnce(nextStep, blk, false)
-			}
-			// commit next in next iteration
+			// For catchup steps (nextStep > initial step), we only commit based on
+			// existing TLC messages and do NOT broadcast again. This matches the
+			// requirement that peers skip TLC broadcasts during catchup.
 			step = nextStep
 			block = blk
 			continue
