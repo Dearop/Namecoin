@@ -119,6 +119,10 @@ func (n *node) handleAckMessage(m types.Message, pkt transport.Packet) error {
 	if err := n.validateNode(false); err != nil {
 		return err
 	}
+	if pkt.Header == nil {
+		// Ignore malformed packets without a header to avoid panics under fuzzing.
+		return nil
+	}
 	ack, ok := m.(*types.AckMessage)
 	if !ok || ack == nil {
 		return xerrors.Errorf("unexpected message type")
@@ -134,7 +138,7 @@ func (n *node) handleAckMessage(m types.Message, pkt transport.Packet) error {
 
 	// Process the embedded status using the registry
 	wire, err := n.conf.MessageRegistry.MarshalMessage(ack.Status)
-	if err == nil {
+	if err == nil && pkt.Header != nil {
 		// reuse header to process locally
 		_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: pkt.Header, Msg: &wire})
 	}
@@ -144,6 +148,10 @@ func (n *node) handleAckMessage(m types.Message, pkt transport.Packet) error {
 func (n *node) handleSearchReply(m types.Message, pkt transport.Packet) error {
 	if err := n.validateNode(false); err != nil {
 		return err
+	}
+	if pkt.Header == nil {
+		// Ignore malformed packets without a header to avoid panics under fuzzing.
+		return nil
 	}
 	rep, ok := m.(*types.SearchReplyMessage)
 	if !ok || rep == nil {
