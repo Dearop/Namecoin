@@ -11,6 +11,8 @@ import (
 	"golang.org/x/xerrors"
 )
 
+// handleChatMessage processes incoming chat messages and logs them.
+// It validates the message type and packet before processing.
 func (n *node) handleChatMessage(m types.Message, pkt transport.Packet) error {
 	if err := n.validateNode(false); err != nil {
 		return err
@@ -32,6 +34,8 @@ func (n *node) handleChatMessage(m types.Message, pkt transport.Packet) error {
 	return nil
 }
 
+// handleRumorsMessage processes incoming rumors messages and handles gossip propagation.
+// It accepts expected rumors, sends an ack back, and forwards newly accepted rumors once.
 func (n *node) handleRumorsMessage(m types.Message, pkt transport.Packet) error {
 	if err := n.validateNode(false); err != nil {
 		return err
@@ -65,6 +69,8 @@ func (n *node) handleRumorsMessage(m types.Message, pkt transport.Packet) error 
 	return nil
 }
 
+// handlePrivateMessage processes private messages intended for this node.
+// It checks if the destination is in the recipients set and processes the embedded message.
 func (n *node) handlePrivateMessage(m types.Message, pkt transport.Packet) error {
 	if err := n.validateNode(false); err != nil {
 		return err
@@ -93,6 +99,8 @@ func (n *node) handlePrivateMessage(m types.Message, pkt transport.Packet) error
 	return nil
 }
 
+// handleStatusMessage processes incoming status messages for anti-entropy.
+// It compares local and remote status and responds accordingly.
 func (n *node) handleStatusMessage(m types.Message, pkt transport.Packet) error {
 	if err := n.validateNode(false); err != nil {
 		return err
@@ -115,6 +123,8 @@ func (n *node) handleStatusMessage(m types.Message, pkt transport.Packet) error 
 	return nil
 }
 
+// handleAckMessage processes acknowledgment messages for rumor delivery.
+// It stops waiting for the ack and processes the embedded status message.
 func (n *node) handleAckMessage(m types.Message, pkt transport.Packet) error {
 	if err := n.validateNode(false); err != nil {
 		return err
@@ -145,6 +155,8 @@ func (n *node) handleAckMessage(m types.Message, pkt transport.Packet) error {
 	return nil
 }
 
+// handleSearchReply processes search reply messages from other peers.
+// It updates the naming store and catalog, then notifies waiting search operations.
 func (n *node) handleSearchReply(m types.Message, pkt transport.Packet) error {
 	if err := n.validateNode(false); err != nil {
 		return err

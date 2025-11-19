@@ -9,7 +9,8 @@ import (
 	"go.dedis.ch/cs438/types"
 )
 
-// collectMissingRumors collects rumors that are missing from remote
+// collectMissingRumors collects rumors that are missing from remote.
+// It compares local and remote status to identify rumors that need to be sent.
 func (n *node) collectMissingRumors(remote types.StatusMessage, local map[string]uint) []types.Rumor {
 	if err := n.validateNode(false); err != nil {
 		return nil
@@ -27,6 +28,8 @@ func (n *node) collectMissingRumors(remote types.StatusMessage, local map[string
 	return out
 }
 
+// collectMissingForOrigin collects missing rumors for a specific origin.
+// Returns rumors with sequence numbers between remoteSeq+1 and localSeq.
 func (n *node) collectMissingForOrigin(origin string, localSeq uint, remoteSeq uint) []types.Rumor {
 	origin = strings.TrimSpace(origin)
 	if origin == "" || localSeq <= remoteSeq {
@@ -56,7 +59,8 @@ func (n *node) collectMissingForOrigin(origin string, localSeq uint, remoteSeq u
 	return out
 }
 
-// sendRumorsMessage sends a rumors message to a destination
+// sendRumorsMessage sends a rumors message to a destination.
+// It sorts rumors by origin before sending to ensure consistent ordering.
 func (n *node) sendRumorsMessage(rumors []types.Rumor, source, self string) {
 	if err := n.validateNode(false); err != nil {
 		return
@@ -76,6 +80,8 @@ func (n *node) sendRumorsMessage(rumors []types.Rumor, source, self string) {
 	_ = n.conf.Socket.Send(source, transport.Packet{Header: &header, Msg: &wire}, time.Second)
 }
 
+// sendMissingRumorsTo sends missing rumors to a source peer.
+// It collects missing rumors and sends them in a rumors message.
 func (n *node) sendMissingRumorsTo(source, self string, remote types.StatusMessage, local map[string]uint) {
 	if err := n.validateNode(false); err != nil {
 		return
@@ -94,9 +100,8 @@ func (n *node) sendMissingRumorsTo(source, self string, remote types.StatusMessa
 	n.sendRumorsMessage(rumors, source, self)
 }
 
-// processRumorIfExpected validates and processes a single rumor if it is the next
-// expected one from its origin. It also stores the rumor and updates routing
-// based on the relayedBy header. It returns true if the rumor was processed.
+// processRumorIfExpected validates and processes a single rumor if it is the next expected one.
+// It stores the rumor, updates routing, and returns true if the rumor was processed.
 func (n *node) processRumorIfExpected(r types.Rumor, header *transport.Header) bool {
 	if err := n.validateNode(false); err != nil {
 		return false

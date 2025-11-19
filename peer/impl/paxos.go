@@ -14,7 +14,8 @@ import (
 	"go.dedis.ch/cs438/types"
 )
 
-// getQuorum returns quorum size based on configuration TotalPeers and optional PaxosThreshold
+// getQuorum returns quorum size based on configuration TotalPeers and optional PaxosThreshold.
+// Defaults to N/2 + 1 if no custom threshold function is provided.
 func (n *node) getQuorum() int {
 	if err := n.validateNode(false); err != nil {
 		return 1
@@ -30,7 +31,8 @@ func (n *node) getQuorum() int {
 	return int(total/2) + 1
 }
 
-// handlePaxosPrepare processes incoming PaxosPrepareMessage (acceptor role)
+// handlePaxosPrepare processes incoming PaxosPrepareMessage (acceptor role).
+// It promises to accept proposals with higher IDs and sends a promise message back.
 func (n *node) handlePaxosPrepare(m types.Message, pkt transport.Packet) error {
 	if err := n.validateNode(false); err != nil {
 		return err
@@ -105,7 +107,8 @@ func (n *node) handlePaxosPrepare(m types.Message, pkt transport.Packet) error {
 	return nil
 }
 
-// handlePaxosPropose processes incoming PaxosProposeMessage (acceptor role)
+// handlePaxosPropose processes incoming PaxosProposeMessage (acceptor role).
+// It accepts the proposal if the ID matches the promised ID and broadcasts an accept message.
 func (n *node) handlePaxosPropose(m types.Message, pkt transport.Packet) error {
 	if err := n.validateNode(false); err != nil {
 		return err
@@ -165,7 +168,8 @@ func (n *node) handlePaxosPropose(m types.Message, pkt transport.Packet) error {
 	return nil
 }
 
-// handlePaxosPromise processes incoming PaxosPromiseMessage (proposer role)
+// handlePaxosPromise processes incoming PaxosPromiseMessage (proposer role).
+// It collects promises and broadcasts a propose message when quorum is reached.
 func (n *node) handlePaxosPromise(m types.Message, pkt transport.Packet) error {
 	if err := n.validateNode(false); err != nil {
 		return err
@@ -238,7 +242,8 @@ func (n *node) handlePaxosPromise(m types.Message, pkt transport.Packet) error {
 	return nil
 }
 
-// handlePaxosAccept processes ACCEPT messages (learner role). TLC handling will be implemented later.
+// handlePaxosAccept processes ACCEPT messages (learner role).
+// It tracks accept counts and broadcasts TLC when quorum is reached for a step.
 func (n *node) handlePaxosAccept(m types.Message, pkt transport.Packet) error {
 	if err := n.validateNode(false); err != nil {
 		return err
@@ -290,7 +295,8 @@ func (n *node) handlePaxosAccept(m types.Message, pkt transport.Packet) error {
 	return nil
 }
 
-// handleTLC processes TLC messages (to be implemented later)
+// handleTLC processes TLC messages for blockchain consensus.
+// It counts TLC messages and commits steps when quorum is reached.
 func (n *node) handleTLC(m types.Message, pkt transport.Packet) error {
 	if err := n.validateNode(false); err != nil {
 		return err
@@ -361,7 +367,8 @@ func (n *node) handleTLC(m types.Message, pkt transport.Packet) error {
 	return nil
 }
 
-// buildBlock constructs a block for given step from value and previous last hash
+// buildBlock constructs a block for given step from value and previous last hash.
+// It computes the block hash using SHA256 over index, filename, metahash, and previous hash.
 func (n *node) buildBlock(step uint, value types.PaxosValue) types.BlockchainBlock {
 	if err := n.validateNode(false); err != nil {
 		return types.BlockchainBlock{}
@@ -387,9 +394,8 @@ func (n *node) buildBlock(step uint, value types.PaxosValue) types.BlockchainBlo
 	return block
 }
 
-// broadcastTLCOnce sends a TLC message exactly once per step. When processLocal
-// is true, the TLC handler is invoked directly before broadcasting so the local
-// node processes the message without re-serializing it.
+// broadcastTLCOnce sends a TLC message exactly once per step.
+// When processLocal is true, the TLC handler is invoked directly before broadcasting.
 func (n *node) broadcastTLCOnce(step uint, block types.BlockchainBlock, processLocal bool) {
 	if err := n.validateNode(true); err != nil {
 		return
@@ -421,7 +427,8 @@ func (n *node) broadcastTLCOnce(step uint, block types.BlockchainBlock, processL
 	}
 }
 
-// trackAcceptCounts tracks both proposer and global accept counts
+// trackAcceptCounts tracks both proposer and global accept counts.
+// Returns the proposer count, global count, and whether TLC was already broadcast.
 func (n *node) trackAcceptCounts(step uint, id uint, src string) (propCnt int, globalCnt int, tlcAlready bool) {
 	if err := n.validateNode(false); err != nil {
 		return 0, 0, false
@@ -462,7 +469,8 @@ func (n *node) trackAcceptCounts(step uint, id uint, src string) (propCnt int, g
 	return propCnt, globalCnt, tlcAlready
 }
 
-// shouldProcessPromise checks if a Promise should be processed
+// shouldProcessPromise checks if a Promise should be processed.
+// Returns true only if we're in phase 1 and the promise ID matches our proposer ID.
 func (n *node) shouldProcessPromise(step uint, promiseID uint) bool {
 	if err := n.validateNode(false); err != nil {
 		return false
@@ -471,7 +479,8 @@ func (n *node) shouldProcessPromise(step uint, promiseID uint) bool {
 		n.proposerID != nil && n.proposerID[step] == promiseID
 }
 
-// logIgnoredPromise logs when a Promise is ignored
+// logIgnoredPromise logs when a Promise is ignored.
+// Only logs in debug mode when GLOG is enabled and step is >= 4.
 func (n *node) logIgnoredPromise(step uint, promiseID uint, src string) {
 	if err := n.validateNode(false); err != nil {
 		return
@@ -495,7 +504,8 @@ func (n *node) logIgnoredPromise(step uint, promiseID uint, src string) {
 		n.conf.Socket.GetAddress(), step, promiseID, src, phase, proposerID)
 }
 
-// broadcastProposeAndAdvancePhase broadcasts a Propose message and advances to phase 2
+// broadcastProposeAndAdvancePhase broadcasts a Propose message and advances to phase 2.
+// It sends the propose message to all neighbors and updates the proposer phase state.
 func (n *node) broadcastProposeAndAdvancePhase(step uint, id uint, value types.PaxosValue) {
 	if err := n.validateNode(true); err != nil {
 		return
@@ -522,7 +532,8 @@ func (n *node) broadcastProposeAndAdvancePhase(step uint, id uint, value types.P
 	n.mu.Unlock()
 }
 
-// sendPromiseMessage sends a Promise message to the destination
+// sendPromiseMessage sends a Promise message to the destination.
+// It handles both unicast and self-delivery cases, ensuring proper message ordering.
 func (n *node) sendPromiseMessage(dest string, wirePromise transport.Message, tmsg transport.Message) {
 	if err := n.validateNode(true); err != nil {
 		return
@@ -551,7 +562,8 @@ func (n *node) sendPromiseMessage(dest string, wirePromise transport.Message, tm
 	_ = n.Broadcast(tmsg)
 }
 
-// commitBlock stores a block and updates naming store
+// commitBlock stores a block and updates naming store.
+// It persists the block to the blockchain store and updates the last block key.
 func (n *node) commitBlock(block types.BlockchainBlock) {
 	if err := n.validateNode(false); err != nil {
 		return
@@ -568,7 +580,8 @@ func (n *node) commitBlock(block types.BlockchainBlock) {
 	}
 }
 
-// completeStepWaiters closes all waiters for a step
+// completeStepWaiters closes all waiters for a step.
+// This notifies all goroutines waiting for the step to complete.
 func (n *node) completeStepWaiters(step uint) {
 	if err := n.validateNode(false); err != nil {
 		return
@@ -592,7 +605,8 @@ func (n *node) completeStepWaiters(step uint) {
 	n.stepWaitMu.Unlock()
 }
 
-// cleanupProposerState cleans up proposer state for a completed step
+// cleanupProposerState cleans up proposer state for a completed step.
+// It removes all proposer-related maps and marks the phase as done.
 func (n *node) cleanupProposerState(step uint) {
 	if err := n.validateNode(false); err != nil {
 		return
@@ -619,6 +633,8 @@ func (n *node) cleanupProposerState(step uint) {
 	n.mu.Unlock()
 }
 
+// commitStepAndAdvance commits a step and advances to the next step if possible.
+// It sequentially commits steps and catches up on future steps that already have TLC quorum.
 func (n *node) commitStepAndAdvance(step uint, block types.BlockchainBlock) {
 	if err := n.validateNode(false); err != nil {
 		return
@@ -669,6 +685,7 @@ func (n *node) commitStepAndAdvance(step uint, block types.BlockchainBlock) {
 }
 
 // cleanupTLCState removes TLC/accept bookkeeping for a completed step.
+// It frees memory by deleting TLC count, block, and accept count maps for the step.
 func (n *node) cleanupTLCState(step uint) {
 	if err := n.validateNode(false); err != nil {
 		return

@@ -14,7 +14,8 @@ import (
 	"golang.org/x/xerrors"
 )
 
-// listNeighbors returns direct neighbors (origin==relay and not self)
+// listNeighbors returns direct neighbors (origin==relay and not self).
+// It extracts all direct peer connections from the routing table.
 func (n *node) listNeighbors() []string {
 	if err := n.validateNode(false); err != nil {
 		return []string{}
@@ -37,6 +38,8 @@ type budgetItem struct {
 	b    int
 }
 
+// planBudget distributes a total budget across neighbors as evenly as possible.
+// Returns a list of budget items with destination and allocated budget amount.
 func planBudget(total int, neighbors []string) []budgetItem {
 	if total <= 0 || len(neighbors) == 0 {
 		return nil
@@ -72,6 +75,8 @@ func planBudget(total int, neighbors []string) []budgetItem {
 	return res
 }
 
+// createSearchWait creates a channel for waiting on search replies.
+// Returns a request ID and a buffered channel for collecting search responses.
 func (n *node) createSearchWait(k int) (string, chan types.SearchReplyMessage) {
 	if k <= 0 {
 		k = 1 // minimum buffer size
@@ -91,6 +96,8 @@ func (n *node) createSearchWait(k int) (string, chan types.SearchReplyMessage) {
 	return reqID, ch
 }
 
+// clearSearchWait removes a search wait channel from pending searches.
+// It cleans up the channel mapping when search is complete or cancelled.
 func (n *node) clearSearchWait(reqID string) {
 	if reqID == "" {
 		return
@@ -103,6 +110,8 @@ func (n *node) clearSearchWait(reqID string) {
 	n.searchMu.Unlock()
 }
 
+// sendSearchRequests sends search request messages according to the budget plan.
+// It distributes search requests to neighbors based on allocated budgets.
 func (n *node) sendSearchRequests(reqID, pattern string, plan []budgetItem) {
 	if reqID == "" || pattern == "" || plan == nil {
 		return
@@ -128,6 +137,8 @@ func (n *node) sendSearchRequests(reqID, pattern string, plan []budgetItem) {
 	}
 }
 
+// collectLocalNames collects file names from local storage matching the regex pattern.
+// Returns a set of names that have both naming store entries and complete blob data.
 func (n *node) collectLocalNames(reg regexp.Regexp) map[string]struct{} {
 	if err := n.validateNode(false); err != nil {
 		return make(map[string]struct{})
@@ -156,6 +167,8 @@ func (n *node) collectLocalNames(reg regexp.Regexp) map[string]struct{} {
 	return local
 }
 
+// waitCollectSearch waits for search replies and collects matching file names.
+// Returns a set of file names that match the regex pattern within the timeout period.
 func (n *node) waitCollectSearch(ch chan types.SearchReplyMessage, timeout time.Duration,
 	reg regexp.Regexp) map[string]struct{} {
 	if ch == nil || timeout <= 0 {
@@ -184,7 +197,8 @@ func (n *node) waitCollectSearch(ch chan types.SearchReplyMessage, timeout time.
 	}
 }
 
-// SearchAll implements peer.DataSharing
+// SearchAll implements peer.DataSharing.
+// It searches for all files matching the regex pattern using the given budget and timeout.
 func (n *node) SearchAll(reg regexp.Regexp, budget uint, timeout time.Duration) ([]string, error) {
 	if err := n.validateNode(false); err != nil {
 		return nil, err
@@ -225,7 +239,8 @@ func (n *node) SearchAll(reg regexp.Regexp, budget uint, timeout time.Duration) 
 	return res, nil
 }
 
-// checkLocalFullMatch checks if we have a local full match for the pattern
+// checkLocalFullMatch checks if we have a local full match for the pattern.
+// Returns the first matching file name that has all chunks available locally.
 func (n *node) checkLocalFullMatch(pattern regexp.Regexp) string {
 	if err := n.validateNode(false); err != nil {
 		return ""
@@ -264,7 +279,8 @@ func (n *node) checkLocalFullMatch(pattern regexp.Regexp) string {
 	return found
 }
 
-// normalizeExpandingRingConfig sets defaults for expanding ring search
+// normalizeExpandingRingConfig sets defaults for expanding ring search.
+// It applies reasonable bounds to initial budget, factor, retry count, and timeout.
 func normalizeExpandingRingConfig(conf peer.ExpandingRing) peer.ExpandingRing {
 	if conf.Initial == 0 {
 		conf.Initial = 1
@@ -294,7 +310,8 @@ func normalizeExpandingRingConfig(conf peer.ExpandingRing) peer.ExpandingRing {
 	return conf
 }
 
-// isFullMatch checks if a FileInfo represents a full match (all chunks present)
+// isFullMatch checks if a FileInfo represents a full match (all chunks present).
+// Returns true if all chunks in the FileInfo are non-empty.
 func isFullMatch(fi types.FileInfo) bool {
 	if len(fi.Chunks) == 0 {
 		return false
@@ -311,7 +328,8 @@ func isFullMatch(fi types.FileInfo) bool {
 	return true
 }
 
-// processSearchReply processes a search reply and returns first full match
+// processSearchReply processes a search reply and returns first full match.
+// It searches through responses for files matching the pattern with all chunks available.
 func processSearchReply(rep types.SearchReplyMessage, pattern regexp.Regexp) string {
 	if rep.Responses == nil {
 		return ""
@@ -331,7 +349,8 @@ func processSearchReply(rep types.SearchReplyMessage, pattern regexp.Regexp) str
 	return ""
 }
 
-// waitForFullMatch waits for search replies and returns first full match
+// waitForFullMatch waits for search replies and returns first full match.
+// It processes replies until a full match is found or timeout occurs.
 func (n *node) waitForFullMatch(ch chan types.SearchReplyMessage, timeout time.Duration,
 	pattern regexp.Regexp) string {
 	if ch == nil || timeout <= 0 {
@@ -352,7 +371,8 @@ func (n *node) waitForFullMatch(ch chan types.SearchReplyMessage, timeout time.D
 	}
 }
 
-// SearchFirst implements peer.DataSharing
+// SearchFirst implements peer.DataSharing.
+// It searches for the first file matching the pattern using expanding ring search with retries.
 func (n *node) SearchFirst(pattern regexp.Regexp, conf peer.ExpandingRing) (string, error) {
 	if err := n.validateNode(false); err != nil {
 		return "", err
@@ -400,6 +420,7 @@ func (n *node) SearchFirst(pattern regexp.Regexp, conf peer.ExpandingRing) (stri
 }
 
 // splitBudget computes per-neighbor budgets, distributing evenly with remainder.
+// Returns a slice of structs containing destination and allocated budget for each neighbor.
 func splitBudget(total int, neighbors []string) []struct {
 	dest string
 	b    int
@@ -445,6 +466,7 @@ func splitBudget(total int, neighbors []string) []struct {
 }
 
 // buildLocalFileInfos builds file infos for names matching pattern and having metafile.
+// It scans the naming store and constructs FileInfo objects with chunk availability.
 func (n *node) buildLocalFileInfos(pattern string) []types.FileInfo {
 	if pattern == "" {
 		return []types.FileInfo{}
@@ -498,7 +520,8 @@ func (n *node) buildLocalFileInfos(pattern string) []types.FileInfo {
 	return responses
 }
 
-// forwardSearchRequest forwards search request to neighbors if budget permits
+// forwardSearchRequest forwards search request to neighbors if budget permits.
+// It distributes remaining budget (budget-1) across neighbors excluding the source.
 func (n *node) forwardSearchRequest(req *types.SearchRequestMessage, pkt transport.Packet) {
 	if req == nil || pkt.Header == nil {
 		return
@@ -550,7 +573,8 @@ func (n *node) forwardSearchRequest(req *types.SearchRequestMessage, pkt transpo
 	}
 }
 
-// sendSearchReply sends search reply back to the original requester
+// sendSearchReply sends search reply back to the original requester.
+// It routes the reply through the packet source back to the request origin.
 func (n *node) sendSearchReply(req *types.SearchRequestMessage, responses []types.FileInfo,
 	pkt transport.Packet) error {
 	if req == nil || pkt.Header == nil {
@@ -573,7 +597,8 @@ func (n *node) sendSearchReply(req *types.SearchRequestMessage, responses []type
 	return n.conf.Socket.Send(src, transport.Packet{Header: &header, Msg: &wire}, time.Second)
 }
 
-// handleSearchRequest handles incoming search requests
+// handleSearchRequest handles incoming search requests.
+// It forwards the request if budget permits, checks local storage, and sends a reply.
 func (n *node) handleSearchRequest(m types.Message, pkt transport.Packet) error {
 	if err := n.validateNode(false); err != nil {
 		return err

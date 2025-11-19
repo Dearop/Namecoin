@@ -6,7 +6,8 @@ import (
 	"go.dedis.ch/cs438/peer"
 )
 
-// GetCatalog implements peer.DataSharing
+// GetCatalog implements peer.DataSharing.
+// Returns a copy of the catalog mapping data keys to sets of peer addresses that have them.
 func (n *node) GetCatalog() peer.Catalog {
 	if err := n.validateNode(false); err != nil {
 		return peer.Catalog{}
@@ -24,7 +25,8 @@ func (n *node) GetCatalog() peer.Catalog {
 	return out
 }
 
-// UpdateCatalog implements peer.DataSharing
+// UpdateCatalog implements peer.DataSharing.
+// Adds a peer address to the catalog entry for the given key, excluding self.
 func (n *node) UpdateCatalog(key string, peerAddr string) {
 	if err := n.validateNode(false); err != nil {
 		return

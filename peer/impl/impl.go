@@ -13,6 +13,8 @@ import (
 	"golang.org/x/xerrors"
 )
 
+// NewPeer creates a new peer node with the given configuration.
+// It initializes the routing table, sequence tracking, and rumor storage.
 func NewPeer(conf peer.Configuration) peer.Peer {
 	node := &node{conf: conf, stopCh: make(chan struct{})}
 	node.mu.Lock()
@@ -81,7 +83,8 @@ type pendingAck struct {
 	timer  *time.Timer
 }
 
-// Start implements peer.Service
+// Start implements peer.Service.
+// It initializes message handlers, starts the listen loop, and begins anti-entropy/heartbeat if configured.
 func (n *node) Start() error {
 	if err := n.validateNode(true); err != nil {
 		return err
@@ -132,6 +135,7 @@ func (n *node) Start() error {
 }
 
 // acceptExpectedRumors processes expected rumors and returns those that were newly accepted.
+// It validates each rumor and processes only those that are in sequence.
 func (n *node) acceptExpectedRumors(rumors []types.Rumor, header *transport.Header) []types.Rumor {
 	if err := n.validateNode(false); err != nil {
 		return nil
@@ -148,7 +152,8 @@ func (n *node) acceptExpectedRumors(rumors []types.Rumor, header *transport.Head
 	return accepted
 }
 
-// forwardAcceptedRumorsOnce forwards accepted rumors to one random neighbor (not the source), if any.
+// forwardAcceptedRumorsOnce forwards accepted rumors to one random neighbor (not the source).
+// It selects a random neighbor from the routing table and sends the rumors message.
 func (n *node) forwardAcceptedRumorsOnce(accepted []types.Rumor, header *transport.Header) {
 	if len(accepted) == 0 || header == nil {
 		return
@@ -179,6 +184,7 @@ func (n *node) forwardAcceptedRumorsOnce(accepted []types.Rumor, header *transpo
 }
 
 // respondToStatus handles status comparison, sending missing rumors and optionally continuing mongering.
+// It determines what rumors to send and whether to continue gossip propagation.
 func (n *node) respondToStatus(source, self string, remote types.StatusMessage) {
 	if err := n.validateNode(false); err != nil {
 		return
@@ -217,6 +223,8 @@ func (n *node) respondToStatus(source, self string, remote types.StatusMessage) 
 	}
 }
 
+// trackAck tracks acknowledgment for a packet with timeout-based retry.
+// On timeout, it forwards the rumor to a different neighbor and re-arms tracking.
 func (n *node) trackAck(pkt transport.Packet, dest string, rumors types.RumorsMessage) {
 	if err := n.validateNode(false); err != nil {
 		return
@@ -275,6 +283,8 @@ func (n *node) trackAck(pkt transport.Packet, dest string, rumors types.RumorsMe
 	}(pkt.Header.PacketID)
 }
 
+// listenLoop is the main packet receiving loop for the node.
+// It continuously receives packets and processes them until the node stops.
 func (n *node) listenLoop() {
 	if err := n.validateNode(false); err != nil {
 		return
@@ -300,7 +310,8 @@ func (n *node) listenLoop() {
 	}
 }
 
-// Stop implements peer.Service
+// Stop implements peer.Service.
+// It signals all goroutines to stop and waits for them to finish with a timeout.
 func (n *node) Stop() error {
 	if err := n.validateNode(false); err != nil {
 		return err
@@ -328,7 +339,8 @@ func (n *node) Stop() error {
 	return nil
 }
 
-// Unicast implements peer.Messaging
+// Unicast implements peer.Messaging.
+// It routes a message to a destination using the routing table and sends it via the next hop.
 func (n *node) Unicast(dest string, msg transport.Message) error {
 	if err := n.validateNode(false); err != nil {
 		return err
@@ -350,7 +362,8 @@ func (n *node) Unicast(dest string, msg transport.Message) error {
 	return n.conf.Socket.Send(nextHop, transport.Packet{Header: &header, Msg: &msg}, time.Second)
 }
 
-// getNeighborsAndRelays extracts neighbors and relay set from routing table
+// getNeighborsAndRelays extracts neighbors and relay set from routing table.
+// Neighbors are direct peers (origin==relay), while relaySet contains all known relays.
 func (n *node) getNeighborsAndRelays(nodeAddr string) (neighbors []string, relaySet map[string]struct{}) {
 	if err := n.validateNode(false); err != nil {
 		return nil, nil
@@ -376,7 +389,8 @@ func (n *node) getNeighborsAndRelays(nodeAddr string) (neighbors []string, relay
 	return neighbors, relaySet
 }
 
-// buildRumorMessage creates and stores a rumor message
+// buildRumorMessage creates and stores a rumor message.
+// It increments the sequence number for the origin and stores the rumor for anti-entropy.
 func (n *node) buildRumorMessage(nodeAddr string, msg transport.Message) (
 	transport.Message, types.RumorsMessage, error) {
 	if err := n.validateNode(true); err != nil {
@@ -412,7 +426,8 @@ func (n *node) buildRumorMessage(nodeAddr string, msg transport.Message) (
 	return wireMsg, rumorsMsg, nil
 }
 
-// isPaxosMessage checks if a message type is a Paxos/TLC message
+// isPaxosMessage checks if a message type is a Paxos/TLC message.
+// Returns true for paxosprepare, paxospromise, paxospropose, paxosaccept, tlc, and private messages.
 func isPaxosMessage(msgType string) bool {
 	switch msgType {
 	case "paxosprepare", "paxospromise", "paxospropose", "paxosaccept", "tlc", "private":
@@ -421,7 +436,8 @@ func isPaxosMessage(msgType string) bool {
 	return false
 }
 
-// determineBroadcastTargets determines which neighbors to send to
+// determineBroadcastTargets determines which neighbors to send to.
+// For Paxos messages, it sends to all relays; for others, it picks a random neighbor.
 func (n *node) determineBroadcastTargets(isPaxos bool, neighbors []string, relaySet map[string]struct{}) []string {
 	var targets []string
 	if isPaxos {
@@ -452,7 +468,8 @@ func (n *node) determineBroadcastTargets(isPaxos bool, neighbors []string, relay
 	return targets
 }
 
-// sendToTargets sends the wire message to all targets
+// sendToTargets sends the wire message to all targets.
+// Optionally tracks acknowledgments for rumor messages based on the trackAck flag.
 func (n *node) sendToTargets(nodeAddr string, wireMsg transport.Message,
 	targets []string, trackAck bool, rumorsMsg types.RumorsMessage) {
 	if err := n.validateNode(false); err != nil {
@@ -477,13 +494,14 @@ func (n *node) sendToTargets(nodeAddr string, wireMsg transport.Message,
 	}
 }
 
-// Broadcast implements peer.Messaging
+// Broadcast implements peer.Messaging.
+// It broadcasts a message using rumor mongering to propagate it through the network.
 func (n *node) Broadcast(msg transport.Message) error {
 	return n.broadcastWithOptions(msg, false)
 }
 
-// broadcastWithOptions centralizes the broadcast logic and optionally skips
-// local processing (used for internal Paxos/TLC retransmissions).
+// broadcastWithOptions centralizes the broadcast logic and optionally skips local processing.
+// It builds rumor messages, determines targets, and sends to neighbors.
 func (n *node) broadcastWithOptions(msg transport.Message, skipLocalProcessing bool) error {
 	if err := n.validateNode(false); err != nil {
 		return err
@@ -521,7 +539,8 @@ func (n *node) broadcastWithOptions(msg transport.Message, skipLocalProcessing b
 	return nil
 }
 
-// AddPeer implements peer.Messaging
+// AddPeer implements peer.Messaging.
+// It adds peer addresses to the routing table as direct neighbors.
 func (n *node) AddPeer(addr ...string) {
 	if err := n.validateNode(false); err != nil {
 		return
@@ -545,7 +564,8 @@ func (n *node) AddPeer(addr ...string) {
 	n.mu.Unlock()
 }
 
-// GetRoutingTable implements peer.Messaging
+// GetRoutingTable implements peer.Messaging.
+// Returns a copy of the routing table mapping destinations to relay addresses.
 func (n *node) GetRoutingTable() peer.RoutingTable {
 	if err := n.validateNode(false); err != nil {
 		return peer.RoutingTable{}
@@ -559,7 +579,8 @@ func (n *node) GetRoutingTable() peer.RoutingTable {
 	return copyTable
 }
 
-// SetRoutingEntry implements peer.Messaging
+// SetRoutingEntry implements peer.Messaging.
+// Sets or removes a routing table entry mapping an origin to a relay address.
 func (n *node) SetRoutingEntry(origin, relayAddr string) {
 	if err := n.validateNode(false); err != nil {
 		return

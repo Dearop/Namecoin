@@ -8,6 +8,8 @@ import (
 	"golang.org/x/xerrors"
 )
 
+// ensureConfigured validates that the node has a configured socket and address.
+// Returns the node address if valid, or an error if configuration is missing.
 func (n *node) ensureConfigured() (string, error) {
 	if n == nil || n.conf.Socket == nil {
 		return "", xerrors.Errorf("socket not configured")
@@ -19,6 +21,8 @@ func (n *node) ensureConfigured() (string, error) {
 	return addr, nil
 }
 
+// validateRecvPacket validates that a received packet has required fields.
+// It checks for header, message, and non-empty destination.
 func (n *node) validateRecvPacket(pkt transport.Packet) error {
 	if pkt.Header == nil {
 		return xerrors.Errorf("missing header")
@@ -41,6 +45,8 @@ func (n *node) validateRecvPacket(pkt transport.Packet) error {
 	return nil
 }
 
+// processPacket processes an incoming packet by routing or delivering it.
+// If the destination is this node, it processes locally; otherwise, it forwards via routing.
 func (n *node) processPacket(pkt transport.Packet) {
 	if n == nil {
 		return

@@ -7,6 +7,8 @@ import (
 	"go.dedis.ch/cs438/types"
 )
 
+// computeStatusDeltas compares local and remote status to determine what to exchange.
+// Returns flags indicating if we have rumors for them, need rumors from them, and local status.
 func (n *node) computeStatusDeltas(remote types.StatusMessage) (
 	haveForThem bool,
 	needFromThem bool,
@@ -53,6 +55,8 @@ func (n *node) computeStatusDeltas(remote types.StatusMessage) (
 	return haveForThem, needFromThem, local
 }
 
+// sendStatusToNeighbor sends status message to a random neighbor for anti-entropy.
+// It throttles sends based on AntiEntropyInterval and per-destination rate limiting.
 func (n *node) sendStatusToNeighbor() {
 	if err := n.validateNode(false); err != nil {
 		return
@@ -109,6 +113,8 @@ func (n *node) sendStatusToNeighbor() {
 	_ = n.conf.Socket.Send(dest, transport.Packet{Header: &header, Msg: &wire}, time.Second)
 }
 
+// buildStatus constructs a status message from local rumor sequence numbers.
+// It creates a map of origin addresses to their last known sequence numbers.
 func (n *node) buildStatus() types.StatusMessage {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
@@ -121,6 +127,8 @@ func (n *node) buildStatus() types.StatusMessage {
 	return status
 }
 
+// probabilisticallyMonger continues gossip propagation with probabilistic triggering.
+// It sends status to a random neighbor (excluding the specified one) based on ContinueMongering probability.
 func (n *node) probabilisticallyMonger(exclude string) {
 	if n == nil {
 		return

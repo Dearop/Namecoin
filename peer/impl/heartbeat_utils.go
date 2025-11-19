@@ -6,6 +6,8 @@ import (
 	"go.dedis.ch/cs438/types"
 )
 
+// sendHeartbeat sends an empty heartbeat message to all neighbors.
+// It broadcasts an empty message to maintain network connectivity.
 func (n *node) sendHeartbeat() {
 	if n == nil {
 		return
@@ -21,6 +23,8 @@ func (n *node) sendHeartbeat() {
 	_ = n.Broadcast(data)
 }
 
+// heartbeatLoop runs a periodic heartbeat sender at the specified interval.
+// It sends heartbeats until the node is stopped.
 func (n *node) heartbeatLoop(interval time.Duration) {
 	if n == nil {
 		return

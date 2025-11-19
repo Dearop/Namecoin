@@ -13,7 +13,8 @@ import (
 	"golang.org/x/xerrors"
 )
 
-// nextProposalID calculates the next proposal ID for a given slot
+// nextProposalID calculates the next proposal ID for a given slot.
+// It ensures the ID is higher than current and minimum, and matches the slot modulo.
 func nextProposalID(current, minimum uint, totalPeers, slot int) uint {
 	target := current + uint(totalPeers)
 	if target < minimum {
@@ -36,7 +37,8 @@ func nextProposalID(current, minimum uint, totalPeers, slot int) uint {
 	return target
 }
 
-// initializeProposerState initializes proposer state for a step
+// initializeProposerState initializes proposer state for a step.
+// It sets up phase 1, proposal ID, and initializes promise and accept tracking maps.
 func (n *node) initializeProposerState(step uint, value types.PaxosValue) {
 	n.mu.Lock()
 	if n.proposerValue == nil {
@@ -66,7 +68,8 @@ func (n *node) initializeProposerState(step uint, value types.PaxosValue) {
 	n.mu.Unlock()
 }
 
-// sendPaxosPrepare sends a Paxos Prepare message
+// sendPaxosPrepare sends a Paxos Prepare message.
+// It broadcasts a prepare message with the current proposer ID for the step.
 func (n *node) sendPaxosPrepare(step uint, self string) {
 	n.mu.Lock()
 	id := n.proposerID[step]
@@ -77,7 +80,8 @@ func (n *node) sendPaxosPrepare(step uint, self string) {
 	}
 }
 
-// delayForLeader calculates and applies delay based on leader election
+// delayForLeader calculates and applies delay based on leader election.
+// It introduces staggered delays so the leader for a step starts first.
 func (n *node) delayForLeader(step uint) {
 	if n.conf.TotalPeers <= 1 {
 		return
@@ -90,7 +94,8 @@ func (n *node) delayForLeader(step uint) {
 	time.Sleep(time.Duration(offset)*baseDelay + jitter)
 }
 
-// runProposerRetryLoop runs the retry loop for a proposer and returns a done channel
+// runProposerRetryLoop runs the retry loop for a proposer and returns a done channel.
+// It periodically retries proposal rounds until quorum is reached or the step completes.
 func (n *node) runProposerRetryLoop(step uint, slot int, totalPeers int, sendRound func()) chan struct{} {
 	retry := n.conf.PaxosProposerRetry
 	if retry <= 0 {
@@ -117,7 +122,8 @@ func (n *node) runProposerRetryLoop(step uint, slot int, totalPeers int, sendRou
 	return done
 }
 
-// handleProposerRetryTick handles a single retry tick
+// handleProposerRetryTick handles a single retry tick.
+// It checks phase progress and bumps proposal ID if quorum not reached, returning true if done.
 func (n *node) handleProposerRetryTick(localStep uint, slot int, totalPeers int, sendRound func()) bool {
 	n.mu.Lock()
 	phase := n.proposerPhase[localStep]
@@ -157,7 +163,8 @@ func (n *node) handleProposerRetryTick(localStep uint, slot int, totalPeers int,
 	return false
 }
 
-// bumpProposerPhase1 bumps proposer to a new ID in phase 1
+// bumpProposerPhase1 bumps proposer to a new ID in phase 1.
+// It calculates the next proposal ID based on current ID and highest promised ID seen.
 func (n *node) bumpProposerPhase1(localStep uint, id uint, totalPeers int, slot int, promises int) {
 	n.mu.Lock()
 	base := id
@@ -174,7 +181,8 @@ func (n *node) bumpProposerPhase1(localStep uint, id uint, totalPeers int, slot 
 	n.mu.Unlock()
 }
 
-// bumpProposerPhase2 bumps proposer back to phase 1 with new ID
+// bumpProposerPhase2 bumps proposer back to phase 1 with new ID.
+// It resets to phase 1 when phase 2 fails to reach quorum and calculates a new proposal ID.
 func (n *node) bumpProposerPhase2(localStep uint, id uint, totalPeers int, slot int, accepts int) {
 	n.mu.Lock()
 	base := id
@@ -193,7 +201,8 @@ func (n *node) bumpProposerPhase2(localStep uint, id uint, totalPeers int, slot 
 	n.mu.Unlock()
 }
 
-// waitForStepCompletion waits for a step to complete
+// waitForStepCompletion waits for a step to complete.
+// It registers a waiter channel and blocks until the step is committed.
 func (n *node) waitForStepCompletion(step uint, self string) {
 	ch := n.registerStepWaiter(step)
 	if ch == nil {
@@ -209,7 +218,8 @@ func (n *node) waitForStepCompletion(step uint, self string) {
 	}
 }
 
-// registerStepWaiter registers a waiter for a step and returns the channel
+// registerStepWaiter registers a waiter for a step and returns the channel.
+// Returns nil if the step has already completed, otherwise returns a channel that will be closed on completion.
 func (n *node) registerStepWaiter(step uint) chan struct{} {
 	n.stepWaitMu.Lock()
 	if n.stepWaiters == nil {
@@ -228,7 +238,8 @@ func (n *node) registerStepWaiter(step uint) chan struct{} {
 	return ch
 }
 
-// Tag implements peer.DataSharing
+// Tag implements peer.DataSharing.
+// It uses Paxos consensus to tag a name with a metahash, ensuring uniqueness across the network.
 func (n *node) Tag(name string, mh string) error {
 	if err := n.validateNode(false); err != nil {
 		return err
@@ -295,7 +306,8 @@ func (n *node) Tag(name string, mh string) error {
 	}
 }
 
-// Resolve implements peer.DataSharing
+// Resolve implements peer.DataSharing.
+// It looks up a name in the local naming store and returns the associated metahash.
 func (n *node) Resolve(name string) (metahash string) {
 	if err := n.validateNode(false); err != nil {
 		return ""

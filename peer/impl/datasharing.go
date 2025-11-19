@@ -15,7 +15,8 @@ import (
 	"golang.org/x/xerrors"
 )
 
-// Upload implements peer.DataSharing
+// Upload implements peer.DataSharing.
+// It reads data, splits it into chunks, stores them, and returns the metahash of the metafile.
 func (n *node) Upload(data io.Reader) (string, error) {
 	if err := n.validateNode(false); err != nil {
 		return "", err
@@ -87,7 +88,8 @@ func (n *node) Upload(data io.Reader) (string, error) {
 	return metahash, nil
 }
 
-// Download implements peer.DataSharing
+// Download implements peer.DataSharing.
+// It retrieves the metafile, fetches all chunks (locally or remotely), and reassembles the data.
 func (n *node) Download(metahash string) ([]byte, error) {
 	if err := n.validateNode(false); err != nil {
 		return nil, err
@@ -144,7 +146,8 @@ func (n *node) Download(metahash string) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// fetchRemote fetches data from remote peers using the catalog
+// fetchRemote fetches data from remote peers using the catalog.
+// It picks a random peer from the catalog, sends data requests with backoff, and waits for replies.
 func (n *node) fetchRemote(key string) ([]byte, error) {
 	// pick random peer from catalog for key, ensure routable
 	dest, ok := n.pickPeerForKey(key)
@@ -211,7 +214,8 @@ func (n *node) fetchRemote(key string) ([]byte, error) {
 	return nil, xerrors.Errorf("timeout fetching %s", key)
 }
 
-// pickPeerForKey selects a random peer from the catalog for the given key
+// pickPeerForKey selects a random peer from the catalog for the given key.
+// Returns the peer address and true if found, or empty string and false otherwise.
 func (n *node) pickPeerForKey(key string) (string, bool) {
 	if key == "" {
 		return "", false
@@ -242,7 +246,8 @@ func (n *node) pickPeerForKey(key string) (string, bool) {
 	return "", false
 }
 
-// removeFromCatalog removes a key from the catalog
+// removeFromCatalog removes a key from the catalog.
+// This is called when a peer fails to provide expected data or provides invalid data.
 func (n *node) removeFromCatalog(key string) {
 	if key == "" {
 		return
@@ -255,7 +260,8 @@ func (n *node) removeFromCatalog(key string) {
 	n.mu.Unlock()
 }
 
-// handleDataRequest handles incoming data requests
+// handleDataRequest handles incoming data requests.
+// It deduplicates requests, retrieves data from local storage, and sends a reply.
 func (n *node) handleDataRequest(m types.Message, pkt transport.Packet) error {
 	if err := n.validateNode(false); err != nil {
 		return err
@@ -300,7 +306,8 @@ func (n *node) handleDataRequest(m types.Message, pkt transport.Packet) error {
 	return n.conf.Socket.Send(nextHop, transport.Packet{Header: &header, Msg: &wire}, time.Second)
 }
 
-// handleDataReply handles incoming data replies
+// handleDataReply handles incoming data replies.
+// It notifies waiting download operations by sending the reply to the pending channel.
 func (n *node) handleDataReply(m types.Message, pkt transport.Packet) error {
 	if err := n.validateNode(false); err != nil {
 		return err

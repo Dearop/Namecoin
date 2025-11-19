@@ -5,6 +5,7 @@ import (
 )
 
 // lookupNextHop returns the relay address for a given destination if known.
+// Returns the relay address and true if found, or empty string and false otherwise.
 func (n *node) lookupNextHop(dest string) (string, bool) {
 	n.mu.RLock()
 	relay, ok := n.routingTable[dest]
