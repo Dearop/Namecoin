@@ -1,0 +1,30 @@
+package types
+
+// Tx is a generic on-chain transaction container. Concrete Namecoin
+// operations (such as name_new, name_firstupdate, name_update, etc.) will be
+// implemented using this basic form for inclusion in blocks.
+type Tx struct {
+	// ID uniquely identifies the transaction
+	ID []byte
+	// Raw payload (opaque for now)
+	Payload []byte
+}
+
+// BlockHeader captures the PoW header fields that are hashed when
+// mining, following the planned architecture (height, prev hash, tx root,
+// timestamp, nonce, miner, difficulty).
+type BlockHeader struct {
+	Height     uint64
+	PrevHash   []byte
+	TxRoot     []byte
+	Timestamp  int64
+	Nonce      uint64
+	Miner      string
+	Difficulty []byte
+}
+
+// Block ties the header with its transaction list.
+type Block struct {
+	Header       BlockHeader
+	Transactions []Tx
+}

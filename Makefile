@@ -8,12 +8,11 @@ export BENCHTIME = "10x"
 
 all: lint vet test
 
-test: test_hw0 test_hw1 test_hw2 test_hw3
+test: test_hw0 test_hw1 test_hw2
 
 test_hw0: test_unit_hw0 test_int_hw0
 test_hw1: test_unit_hw1 test_int_hw1
 test_hw2: test_unit_hw2 test_int_hw2
-test_hw3: test_unit_hw3 test_int_hw3
 
 test_unit_hw0:
 	go test -timeout 2m -v -race -run Test_HW0 ./peer/tests/unit
@@ -24,8 +23,9 @@ test_unit_hw1:
 test_unit_hw2:
 	go test -timeout 2m -v -race -run Test_HW2 ./peer/tests/unit
 
-test_unit_hw3:
-	go test -timeout 2m -v -race -run Test_HW3 ./peer/tests/unit
+# Target to run only PoW unit tests
+test_unit_POW:
+	go test -timeout 2m -v -race -run 'Test(MineNonce|CheckWork)' ./peer/tests/unit
 
 test_int_hw0:
 	go test -timeout 5m -v -race -run Test_HW0 ./peer/tests/integration
@@ -36,9 +36,6 @@ test_int_hw1:
 test_int_hw2:
 	go test -timeout 5m -v -race -run Test_HW2 ./peer/tests/integration
 
-test_int_hw3:
-	go test -timeout 5m -v -race -run Test_HW3 ./peer/tests/integration
-
 # JSONIFY is set to "-json" in CI to format for GitHub, empty for displaying locally
 # || true allows to ignore error code and allow for smoother output logging
 test_bench_hw1:
@@ -47,13 +44,6 @@ test_bench_hw1:
 test_bench_hw2:
 	@GLOG=no go test -v ${JSONIFY} -timeout 21m -run Test_HW2 -v -count 1 --tags=performance -benchtime=3x ./peer/tests/perf/ || true
 
-test_bench_hw3: test_bench_hw3_tlc test_bench_hw3_consensus
-
-test_bench_hw3_tlc:
-	@GLOG=no go test -v ${JSONIFY} -timeout 15s -run Test_HW3_BenchmarkTLC -v -count 1 --tags=performance -benchtime=${BENCHTIME} ./peer/tests/perf/ || true
-
-test_bench_hw3_consensus:
-	@GLOG=no go test -v ${JSONIFY} -timeout 12m -run Test_HW3_BenchmarkConsensus -v -count 1 --tags=performance -benchtime=${BENCHTIME} ./peer/tests/perf/ || true
 
 
 lint:
@@ -64,4 +54,3 @@ lint:
 
 vet:
 	go vet ./...
-

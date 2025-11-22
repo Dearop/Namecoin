@@ -316,10 +316,7 @@ func NewTestNode(t require.TestingT, f peer.Factory, trans transport.Transport,
 	config.ChunkSize = template.chunkSize
 	config.BackoffDataRequest = template.dataRequestBackoff
 	config.TotalPeers = template.totalPeers
-	config.PaxosThreshold = template.paxosThreshold
-	config.PaxosID = template.paxosID
-	config.PaxosProposerRetry = template.paxosProposerRetry
-
+	
 	node := f(config)
 
 	require.Equal(t, len(template.messages), len(template.handlers))

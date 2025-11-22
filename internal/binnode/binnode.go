@@ -112,8 +112,6 @@ func (b *binnode) Start() error {
 		"--heartbeat", b.conf.HeartbeatInterval.String(),
 		"--acktimeout", b.conf.AckTimeout.String(),
 		"--totalpeers", strconv.Itoa(int(b.conf.TotalPeers)),
-		"--paxosid", strconv.Itoa(int(b.conf.PaxosID)),
-		"--paxosproposerretry", b.conf.PaxosProposerRetry.String(),
 	}
 
 	// if this is a storage that uses the filesystem then we want to use it

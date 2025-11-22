@@ -1,10 +1,10 @@
 package peer
 
 import (
-	"time"
 	"go.dedis.ch/cs438/registry"
 	"go.dedis.ch/cs438/storage"
 	"go.dedis.ch/cs438/transport"
+	"time"
 )
 
 // Peer defines the interface of a peer in the Peerster system. It embeds all
@@ -24,6 +24,9 @@ type Factory func(Configuration) Peer
 type Configuration struct {
 	Socket          transport.Socket
 	MessageRegistry registry.Registry
+
+	// Namecoin PoW parameters.
+	PoWConfig PoWConfig
 
 	// AntiEntropyInterval is the interval at which the peer sends a status
 	// message to a random neighbor. 0 means no status messages are sent.
@@ -65,20 +68,6 @@ type Configuration struct {
 	// there is no use of Paxos/TLC/Blockchain.
 	// Default: 1
 	TotalPeers uint
-
-	// PaxosThreshold is a function that return the threshold of peers needed to
-	// have a consensus. Default value is N/2 + 1
-	PaxosThreshold func(uint) int
-
-	// PaxosID is the starting ID of a Paxos proposer. It is distributed from 1
-	// to peers.
-	// Default: 0
-	PaxosID uint
-
-	// PaxosProposerRetry is the amount of time a proposer waits before it
-	// retries to send a prepare when it doesn't get enough promises or accepts.
-	// Default: 5s.
-	PaxosProposerRetry time.Duration
 }
 
 // Backoff describes parameters for a backoff algorithm. The initial time must
