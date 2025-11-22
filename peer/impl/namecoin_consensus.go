@@ -1,11 +1,11 @@
 package impl
 
 import (
-	"errors"
 	"time"
 
 	"go.dedis.ch/cs438/peer"
 	"go.dedis.ch/cs438/types"
+	"golang.org/x/xerrors"
 )
 
 // NamecoinState abstracts the state machine that applies Namecoin txs. The
@@ -110,6 +110,6 @@ func (c *NamecoinConsensus) SetBaseHeader(h types.BlockHeader) {
 
 // Errors used by the consensus helper.
 var (
-	ErrNotInitialized = errors.New("namecoin consensus not fully initialized")
-	ErrMiningAborted  = errors.New("mining aborted")
+	ErrNotInitialized = xerrors.New("namecoin consensus not fully initialized")
+	ErrMiningAborted  = xerrors.New("mining aborted")
 )
