@@ -28,14 +28,6 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 			node.routingTable[nodeAddr] = nodeAddr
 		}
 	}
-	// Initialize PoW config with a sane default target; callers can override later.
-	node.powCfg = conf.PoWConfig
-	if node.powCfg.Target == nil {
-		node.powCfg.Target = defaultTarget
-	}
-	if node.powCfg.TimeSource == nil {
-		node.powCfg.TimeSource = time.Now
-	}
 	node.mu.Unlock()
 	return node
 }
@@ -63,20 +55,26 @@ type node struct {
 	processedDataReq sync.Map // map[string]bool - tracks processed request IDs
 	searchMu         sync.Mutex
 	pendingSearch    map[string]chan types.SearchReplyMessage
-	// Namecoin PoW config and mining state
-	powCfg             peer.PoWConfig
-	namecoinMiningMu   sync.Mutex
-	namecoinMiningStop chan struct{}
-}
-
-// stopNamecoinMining stops the background mining loop if running.
-func (n *node) stopNamecoinMining() {
-	n.namecoinMiningMu.Lock()
-	defer n.namecoinMiningMu.Unlock()
-	if n.namecoinMiningStop != nil {
-		close(n.namecoinMiningStop)
-		n.namecoinMiningStop = nil
-	}
+	currentStep      uint
+	// Acceptor state per step
+	promisedID    map[uint]uint
+	acceptedID    map[uint]uint
+	acceptedValue map[uint]*types.PaxosValue
+	// Proposer state per step
+	proposerPromises          map[uint]map[uint]map[string]struct{}
+	proposerValue             map[uint]types.PaxosValue
+	proposerHighestAcceptedID map[uint]uint
+	proposerPhase             map[uint]int // 0 none, 1 phase1, 2 phase2, 3 done
+	proposerID                map[uint]uint
+	proposerAccepts           map[uint]map[uint]map[string]struct{}
+	// Learner/TLC aggregation
+	acceptCount    map[uint]map[uint]map[string]struct{}
+	tlcCount       map[uint]map[string]struct{}
+	tlcBlock       map[uint]types.BlockchainBlock
+	tlcBroadcasted map[uint]bool
+	// Step completion waiters
+	stepWaitMu  sync.Mutex
+	stepWaiters map[uint][]chan struct{}
 }
 
 type pendingAck struct {
@@ -111,6 +109,12 @@ func (n *node) Start() error {
 	n.conf.MessageRegistry.RegisterMessageCallback(types.DataReplyMessage{}, n.handleDataReply)
 	n.conf.MessageRegistry.RegisterMessageCallback(types.SearchReplyMessage{}, n.handleSearchReply)
 	n.conf.MessageRegistry.RegisterMessageCallback(types.SearchRequestMessage{}, n.handleSearchRequest)
+	// Register consensus messages
+	n.conf.MessageRegistry.RegisterMessageCallback(types.PaxosPrepareMessage{}, n.handlePaxosPrepare)
+	n.conf.MessageRegistry.RegisterMessageCallback(types.PaxosPromiseMessage{}, n.handlePaxosPromise)
+	n.conf.MessageRegistry.RegisterMessageCallback(types.PaxosProposeMessage{}, n.handlePaxosPropose)
+	n.conf.MessageRegistry.RegisterMessageCallback(types.PaxosAcceptMessage{}, n.handlePaxosAccept)
+	n.conf.MessageRegistry.RegisterMessageCallback(types.TLCMessage{}, n.handleTLC)
 	n.wg.Add(1)
 	go n.listenLoop()
 
@@ -312,7 +316,6 @@ func (n *node) Stop() error {
 	if err := n.validateNode(false); err != nil {
 		return err
 	}
-	n.stopNamecoinMining()
 	select {
 	case <-n.stopCh:
 	default:
@@ -423,13 +426,39 @@ func (n *node) buildRumorMessage(nodeAddr string, msg transport.Message) (
 	return wireMsg, rumorsMsg, nil
 }
 
-// determineBroadcastTargets picks a neighbor to send a rumor to, falling back
-// to any known relay if needed.
-func (n *node) determineBroadcastTargets(neighbors []string, relaySet map[string]struct{}) []string {
+// isPaxosMessage checks if a message type is a Paxos/TLC message.
+// Returns true for paxosprepare, paxospromise, paxospropose, paxosaccept, tlc, and private messages.
+func isPaxosMessage(msgType string) bool {
+	switch msgType {
+	case "paxosprepare", "paxospromise", "paxospropose", "paxosaccept", "tlc", "private":
+		return true
+	}
+	return false
+}
+
+// determineBroadcastTargets determines which neighbors to send to.
+// For Paxos messages, it sends to all relays; for others, it picks a random neighbor.
+func (n *node) determineBroadcastTargets(isPaxos bool, neighbors []string, relaySet map[string]struct{}) []string {
 	var targets []string
-	if len(neighbors) > 0 {
+	if isPaxos {
+		// Deliver Paxos/TLC messages to every known next hop (reliable flood)
+		if len(relaySet) == 0 && len(neighbors) > 0 {
+			// Fallback: if we somehow lost relay info, at least push to direct peers
+			for _, neighbor := range neighbors {
+				relaySet[neighbor] = struct{}{}
+			}
+		}
+		if len(relaySet) > 0 {
+			targets = make([]string, 0, len(relaySet))
+			for relay := range relaySet {
+				targets = append(targets, relay)
+			}
+		}
+	} else if len(neighbors) > 0 {
+		// Traditional rumor mongering: pick a random direct neighbor
 		targets = []string{neighbors[int(time.Now().UnixNano())%len(neighbors)]}
 	} else if len(relaySet) > 0 {
+		// If we have no direct neighbor entries, fall back to any known relay
 		targets = make([]string, 0, len(relaySet))
 		for relay := range relaySet {
 			targets = append(targets, relay)
@@ -488,8 +517,9 @@ func (n *node) broadcastWithOptions(msg transport.Message, skipLocalProcessing b
 		return err
 	}
 
-	targets := n.determineBroadcastTargets(neighbors, relaySet)
-	n.sendToTargets(nodeAddr, wireMsg, targets, true, rumorsMsg)
+	isPaxos := isPaxosMessage(msg.Type)
+	targets := n.determineBroadcastTargets(isPaxos, neighbors, relaySet)
+	n.sendToTargets(nodeAddr, wireMsg, targets, !isPaxos, rumorsMsg)
 
 	// Process the embedded message locally after sending to neighbors. The rumor
 	// is already stored above for anti-entropy purposes.

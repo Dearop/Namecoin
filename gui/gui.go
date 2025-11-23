@@ -218,6 +218,11 @@ func start(c *urfave.Context) error {
 		Storage: storage,
 
 		TotalPeers: totalPeers,
+		PaxosThreshold: func(u uint) int {
+			return int(u/2 + 1)
+		},
+		PaxosID:            paxosID,
+		PaxosProposerRetry: c.Duration("paxosproposerretry"),
 	}
 
 	node := peerFactory(conf)
