@@ -27,6 +27,9 @@ test_unit_hw2:
 test_unit_hw3:
 	go test -timeout 2m -v -race -run Test_HW3 ./peer/tests/unit
 
+test_unit_POW:
+	go test -timeout 2m -v -race -run 'Test(MineNonce|CheckWork)' ./peer/tests/unit
+
 test_int_hw0:
 	go test -timeout 5m -v -race -run Test_HW0 ./peer/tests/integration
 
@@ -64,4 +67,3 @@ lint:
 
 vet:
 	go vet ./...
-

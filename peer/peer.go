@@ -30,6 +30,9 @@ type Configuration struct {
 	// Default: 0
 	AntiEntropyInterval time.Duration
 
+	// Namecoin PoW parameters.
+	PoWConfig PoWConfig
+
 	// HeartbeatInterval is the interval at which a rumor with an EmptyMessage
 	// is sent. At startup a rumor with EmptyMessage should always be sent. Note
 	// that sending a rumor is expensive as it involve the
