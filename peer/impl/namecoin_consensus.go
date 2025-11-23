@@ -45,9 +45,10 @@ type NamecoinConsensus struct {
 	validator     BlockValidator
 }
 
-// namecoinConsensusFactory creates a consensus helper. The caller provides how to
+// NamecoinConsensusFactory creates a consensus helper. The caller provides how to
 // build headers for hashing, how to construct full blocks when a nonce is
-// found, and how to validate/apply them.
+// found, and how to validate/apply them. Returns an error if required
+// dependencies are missing.
 func NamecoinConsensusFactory(
 	powCfg peer.PoWConfig,
 	baseHeader types.BlockHeader,
@@ -55,7 +56,10 @@ func NamecoinConsensusFactory(
 	assembler func(h types.BlockHeader) types.Block,
 	validator BlockValidator,
 	applier BlockApplier,
-) *NamecoinConsensus {
+) (*NamecoinConsensus, error) {
+	if err := validateConsensusDeps(powCfg, buildHeader, assembler, validator, applier); err != nil {
+		return nil, err
+	}
 	return &NamecoinConsensus{
 		powCfg:        powCfg,
 		baseHeader:    baseHeader,
@@ -63,7 +67,7 @@ func NamecoinConsensusFactory(
 		assembleBlock: assembler,
 		applier:       applier,
 		validator:     validator,
-	}
+	}, nil
 }
 
 // MineAndApply mines a block using the provided stop channel, validates it, and
@@ -112,4 +116,18 @@ func (c *NamecoinConsensus) SetBaseHeader(h types.BlockHeader) {
 var (
 	ErrNotInitialized = xerrors.New("namecoin consensus not fully initialized")
 	ErrMiningAborted  = xerrors.New("mining aborted")
+	ErrInvalidConfig  = xerrors.New("namecoin consensus invalid configuration")
 )
+
+func validateConsensusDeps(
+	cfg peer.PoWConfig,
+	buildHeader PoWHeaderBuilderFactory,
+	assembler func(h types.BlockHeader) types.Block,
+	validator BlockValidator,
+	applier BlockApplier,
+) error {
+	if cfg.Target == nil || buildHeader == nil || assembler == nil || validator == nil || applier == nil {
+		return ErrInvalidConfig
+	}
+	return nil
+}
