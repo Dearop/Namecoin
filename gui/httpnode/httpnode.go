@@ -95,6 +95,10 @@ func NewHTTPNode(node peer.Peer, conf peer.Configuration) Proxy {
 
 	mux.Handle("/blockchain", http.HandlerFunc(blockchain.BlockchainHandler()))
 
+	// Namecoin transaction endpoint
+	namecoinctrl := controller.NewNamecoinCtrl(node, &log)
+	mux.Handle("/namecoin/transaction", http.HandlerFunc(namecoinctrl.SubmitTransactionHandler()))
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not authorized", http.StatusBadGateway)
 		log.Error().Msgf("wrong endpoint: %s", r.URL.Path)
