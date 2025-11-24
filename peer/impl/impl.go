@@ -72,6 +72,8 @@ type node struct {
 	tlcCount       map[uint]map[string]struct{}
 	tlcBlock       map[uint]types.BlockchainBlock
 	tlcBroadcasted map[uint]bool
+	// Namecoin chain
+	namecoin *NamecoinChain
 	// Step completion waiters
 	stepWaitMu  sync.Mutex
 	stepWaiters map[uint][]chan struct{}
