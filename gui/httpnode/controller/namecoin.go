@@ -78,7 +78,6 @@ func (n namecoinctrl) submitTransactionPost(w http.ResponseWriter, r *http.Reque
 		Int("fee", req.Transaction.Fee).
 		Msg("Received transaction")
 
-	// TODO: Verify signature and process transaction
 	// For now, just acknowledge receipt
 	response := TransactionResponse{
 		Success: true,
