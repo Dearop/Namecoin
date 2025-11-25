@@ -1,9 +1,16 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+function getBaseURL() {
+  // Get proxy address from localStorage (set in Home view)
+  const proxyAddr = localStorage.getItem('proxyAddr');
+  if (!proxyAddr) {
+    throw new Error('No proxy address configured. Please connect to a peer first.');
+  }
+  return `http://${proxyAddr}`;
+}
 
 export async function sendTransaction(tx, signature) {
   try {
-    //I believe the API_BASE_URL will need to be changed to the backend/node's URL
-    const response = await fetch(`${API_BASE_URL}/namecoin/transaction`, {
+    const baseURL = getBaseURL();
+    const response = await fetch(`${baseURL}/namecoin/transaction`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -27,7 +34,8 @@ export async function sendTransaction(tx, signature) {
 
 export async function getTransactionStatus(txID) { //will be used later
   try {
-    const response = await fetch(`${API_BASE_URL}/namecoin/transaction/${txID}`);
+    const baseURL = getBaseURL();
+    const response = await fetch(`${baseURL}/namecoin/transaction/${txID}`);
     
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
@@ -42,7 +50,8 @@ export async function getTransactionStatus(txID) { //will be used later
 
 export async function getBlockchainState() {//will be used later
   try {
-    const response = await fetch(`${API_BASE_URL}/blockchain`);
+    const baseURL = getBaseURL();
+    const response = await fetch(`${baseURL}/blockchain`);
     
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);

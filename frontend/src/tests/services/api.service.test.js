@@ -8,9 +8,22 @@ import {
 // Mock fetch globally
 global.fetch = vi.fn();
 
+// Mock localStorage
+const localStorageMock = {
+  getItem: vi.fn((key) => {
+    if (key === 'proxyAddr') return '127.0.0.1:8080';
+    return null;
+  }),
+  setItem: vi.fn(),
+  removeItem: vi.fn(),
+  clear: vi.fn()
+};
+global.localStorage = localStorageMock;
+
 describe('api.service.js', () => {
   beforeEach(() => {
     fetch.mockClear();
+    localStorageMock.getItem.mockClear();
   });
 
   describe('sendTransaction', () => {
@@ -35,7 +48,7 @@ describe('api.service.js', () => {
 
       expect(result).toEqual(mockResponse);
       expect(fetch).toHaveBeenCalledWith(
-        '/namecoin/transaction',
+        'http://127.0.0.1:8080/namecoin/transaction',
         expect.objectContaining({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -122,7 +135,7 @@ describe('api.service.js', () => {
       const result = await getTransactionStatus('abc123');
 
       expect(result).toEqual(mockResponse);
-      expect(fetch).toHaveBeenCalledWith('/namecoin/transaction/abc123');
+      expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:8080/namecoin/transaction/abc123');
     });
 
     it('should throw error on non-ok response', async () => {
@@ -148,7 +161,7 @@ describe('api.service.js', () => {
 
       await getTransactionStatus('txid789');
 
-      expect(fetch).toHaveBeenCalledWith('/namecoin/transaction/txid789');
+      expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:8080/namecoin/transaction/txid789');
     });
   });
 
@@ -163,7 +176,7 @@ describe('api.service.js', () => {
       const result = await getBlockchainState();
 
       expect(result).toEqual(mockResponse);
-      expect(fetch).toHaveBeenCalledWith('/blockchain');
+      expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:8080/blockchain');
     });
 
     it('should throw error on non-ok response', async () => {
@@ -189,7 +202,7 @@ describe('api.service.js', () => {
 
       await getBlockchainState();
 
-      expect(fetch).toHaveBeenCalledWith('/blockchain');
+      expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:8080/blockchain');
     });
   });
 });
