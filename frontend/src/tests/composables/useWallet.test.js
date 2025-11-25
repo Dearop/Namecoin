@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { useWallet } from './useWallet.js';
+import { useWallet } from '../../composables/useWallet.js';
 
 // Mock dependencies
-vi.mock('../services/wallet.service.js', () => ({
+vi.mock('../../services/wallet.service.js', () => ({
   generateKeyPair: vi.fn(async () => ({
     publicKey: 'mock_public_key_123',
     privateKey: 'mock_private_key_456',
@@ -17,7 +17,7 @@ vi.mock('../services/wallet.service.js', () => ({
   })),
 }));
 
-vi.mock('../utils/storage.js', () => ({
+vi.mock('../../utils/storage.js', () => ({
   clear: vi.fn(),
 }));
 
@@ -71,7 +71,7 @@ describe('useWallet.js', () => {
 
   describe('createWallet', () => {
     it('should create a new wallet', async () => {
-      const walletService = await import('../services/wallet.service.js');
+      const walletService = await import('../../services/wallet.service.js');
       const { createWallet, wallet, walletID } = useWallet();
 
       const result = await createWallet();
@@ -89,7 +89,7 @@ describe('useWallet.js', () => {
     });
 
     it('should handle errors during creation', async () => {
-      const walletService = await import('../services/wallet.service.js');
+      const walletService = await import('../../services/wallet.service.js');
       walletService.generateKeyPair.mockRejectedValueOnce(new Error('Creation failed'));
 
       const { createWallet } = useWallet();
@@ -100,7 +100,7 @@ describe('useWallet.js', () => {
 
   describe('importWallet', () => {
     it('should import wallet from file', async () => {
-      const walletService = await import('../services/wallet.service.js');
+      const walletService = await import('../../services/wallet.service.js');
       const { importWallet, wallet } = useWallet();
 
       const mockFile = new Blob(['{}'], { type: 'application/json' });
@@ -116,7 +116,7 @@ describe('useWallet.js', () => {
     });
 
     it('should handle import errors', async () => {
-      const walletService = await import('../services/wallet.service.js');
+      const walletService = await import('../../services/wallet.service.js');
       walletService.importWalletFromFile.mockRejectedValueOnce(new Error('Import failed'));
 
       const { importWallet } = useWallet();

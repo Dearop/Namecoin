@@ -6,10 +6,10 @@ import {
   loadWallet,
   exportWalletToFile,
   importWalletFromFile,
-} from './wallet.service.js';
+} from '../../services/wallet.service.js';
 
 // Mock dependencies
-vi.mock('../utils/storage.js', () => ({
+vi.mock('../../utils/storage.js', () => ({
   saveWalletData: vi.fn((wallet) => true),
   getWalletData: vi.fn(() => null),
 }));
@@ -80,7 +80,7 @@ describe('wallet.service.js', () => {
     });
 
     it('should include createdAt timestamp', async () => {
-      const { saveWalletData } = await import('../utils/storage.js');
+      const { saveWalletData } = await import('../../utils/storage.js');
       
       saveWallet('abc', 'def');
 

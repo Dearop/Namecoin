@@ -67,3 +67,24 @@ lint:
 
 vet:
 	go vet ./...
+
+.PHONY: frontend test_frontend test_frontend_coverage clean clean_frontend
+frontend:
+	cd frontend && npm install && npm run dev
+
+test_frontend:
+	cd frontend && \
+		npm install && \
+		npm run test -- --coverage=false
+
+test_frontend_coverage:
+	cd frontend && \
+		npm install && \
+		npm run test -- --coverage=true
+
+clean_frontend:
+	rm -rf frontend/coverage
+	rm -rf frontend/node_modules
+	rm -rf frontend/dist
+
+clean: clean_frontend

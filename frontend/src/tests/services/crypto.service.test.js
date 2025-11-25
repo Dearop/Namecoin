@@ -8,7 +8,7 @@ import {
   hashTransactionData,
   hashTransaction,
   generateSalt,
-} from './crypto.service.js';
+} from '../../services/crypto.service.js';
 
 // Mock tweetnacl
 vi.mock('tweetnacl', () => ({

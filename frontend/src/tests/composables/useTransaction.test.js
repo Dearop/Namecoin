@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { useTransaction } from './useTransaction.js';
+import { useTransaction } from '../../composables/useTransaction.js';
 
 // Mock dependencies
-vi.mock('../services/transaction.service.js', () => ({
+vi.mock('../../services/transaction.service.js', () => ({
   buildTransaction: vi.fn(async (params) => ({
     type: params.type,
     source: params.walletID,
@@ -21,20 +21,20 @@ vi.mock('../services/transaction.service.js', () => ({
   })),
 }));
 
-vi.mock('../services/crypto.service.js', () => ({
+vi.mock('../../services/crypto.service.js', () => ({
   hashTransaction: vi.fn(async (tx) => 'mocked_tx_hash'),
   generateTransactionSignature: vi.fn(async (txHash, privateKey) => 'mocked_signature'),
   verifyTransactionSignature: vi.fn(async (txHash, signature, publicKey) => true),
 }));
 
-vi.mock('../services/api.service.js', () => ({
+vi.mock('../../services/api.service.js', () => ({
   sendTransaction: vi.fn(async (tx, signature) => ({
     success: true,
     txID: tx.transactionID,
   })),
 }));
 
-vi.mock('../utils/storage.js', () => ({
+vi.mock('../../utils/storage.js', () => ({
   incrementNonce: vi.fn(() => 1),
   saveDomain: vi.fn(),
 }));
@@ -82,7 +82,7 @@ describe('useTransaction.js', () => {
     });
 
     it('should increment nonce', async () => {
-      const storage = await import('../utils/storage.js');
+      const storage = await import('../../utils/storage.js');
       const { createTransaction } = useTransaction();
 
       await createTransaction({
@@ -96,7 +96,7 @@ describe('useTransaction.js', () => {
     });
 
     it('should validate transaction', async () => {
-      const txService = await import('../services/transaction.service.js');
+      const txService = await import('../../services/transaction.service.js');
       const { createTransaction } = useTransaction();
 
       await createTransaction({
@@ -110,7 +110,7 @@ describe('useTransaction.js', () => {
     });
 
     it('should handle validation errors', async () => {
-      const txService = await import('../services/transaction.service.js');
+      const txService = await import('../../services/transaction.service.js');
       txService.validateTransaction.mockReturnValueOnce({
         valid: false,
         errors: ['Invalid fee', 'Missing payload'],
@@ -152,8 +152,8 @@ describe('useTransaction.js', () => {
 
   describe('signAndSend', () => {
     it('should sign and send transaction', async () => {
-      const cryptoService = await import('../services/crypto.service.js');
-      const apiService = await import('../services/api.service.js');
+      const cryptoService = await import('../../services/crypto.service.js');
+      const apiService = await import('../../services/api.service.js');
       const { createTransaction, signAndSend, status } = useTransaction();
 
       // First create a transaction
@@ -182,7 +182,7 @@ describe('useTransaction.js', () => {
     });
 
     it('should handle signature verification failure', async () => {
-      const cryptoService = await import('../services/crypto.service.js');
+      const cryptoService = await import('../../services/crypto.service.js');
       cryptoService.verifyTransactionSignature.mockResolvedValueOnce(false);
 
       const { createTransaction, signAndSend, status, error } = useTransaction();
@@ -203,7 +203,7 @@ describe('useTransaction.js', () => {
     });
 
     it('should handle API errors', async () => {
-      const apiService = await import('../services/api.service.js');
+      const apiService = await import('../../services/api.service.js');
       apiService.sendTransaction.mockRejectedValueOnce(new Error('Network error'));
 
       const { createTransaction, signAndSend, status, error } = useTransaction();

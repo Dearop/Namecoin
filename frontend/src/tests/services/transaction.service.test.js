@@ -4,17 +4,17 @@ import {
   computeTransactionID,
   encodePayload,
   validateTransaction,
-} from './transaction.service.js';
+} from '../../services/transaction.service.js';
 
 // Mock the dependencies
-vi.mock('../utils/hash.js', () => ({
+vi.mock('../../utils/hash.js', () => ({
   generateTxID: vi.fn(async (params) => {
     // Mock implementation that creates a predictable hash
     return `txid_${params.type}_${params.nonce}`;
   }),
 }));
 
-vi.mock('../utils/storage.js', () => ({
+vi.mock('../../utils/storage.js', () => ({
   getNonce: vi.fn(() => 1),
   incrementNonce: vi.fn(() => 2),
 }));

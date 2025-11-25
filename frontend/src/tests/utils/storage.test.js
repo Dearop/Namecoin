@@ -12,7 +12,7 @@ import {
   saveDomain,
   getDomains,
   StorageKeys,
-} from './storage.js';
+} from '../../utils/storage.js';
 
 // Mock localStorage
 const localStorageMock = (() => {

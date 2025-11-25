@@ -4,7 +4,7 @@ import {
   isValidFee,
   isValidHex,
   isValidWalletID,
-} from './validation.js';
+} from '../../utils/validation.js';
 
 describe('validation.js', () => {
   describe('isValidDomain', () => {

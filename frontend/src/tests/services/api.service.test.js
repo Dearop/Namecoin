@@ -3,7 +3,7 @@ import {
   sendTransaction,
   getTransactionStatus,
   getBlockchainState,
-} from './api.service.js';
+} from '../../services/api.service.js';
 
 // Mock fetch globally
 global.fetch = vi.fn();

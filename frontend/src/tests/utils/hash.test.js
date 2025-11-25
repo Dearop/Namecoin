@@ -8,7 +8,7 @@ import {
   generateSalt,
   hashTxData,
   generateTxID,
-} from './hash.js';
+} from '../../utils/hash.js';
 
 describe('hash.js', () => {
   describe('bytesToHex', () => {
