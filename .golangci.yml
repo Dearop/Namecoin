@@ -259,3 +259,6 @@ issues:
         "rand."
       checks:
         - '-SA1019' # rand.* has been deprecated since Go 1.20 because it shouldn't be used: For almost all use cases, crypto/rand.Read is more appropriate.
+    - path: "^peer/tests/"
+      linters:
+        - staticcheck
