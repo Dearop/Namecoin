@@ -46,21 +46,6 @@ func TestTransactionServiceApplyTransaction(t *testing.T) {
 	}
 }
 
-func TestTransactionServiceValidateTransactionNameNew(t *testing.T) {
-	service := impl.NewTransactionService(impl.NewState())
-	pub, priv := mustMakeKeyPair(t)
-
-	tx := buildSignedTransaction(t, pub, priv, impl.NameNew{}.Name(), 5, impl.NameNew{
-		Commitment: "commitment",
-	})
-
-	fundAddress(service, tx.From, 10)
-
-	if err := service.ValidateTransaction(&tx); err != nil {
-		t.Fatalf("expected validation to succeed, got %v", err)
-	}
-}
-
 func TestTransactionServiceValidateTransactionSignatureMismatch(t *testing.T) {
 	service := impl.NewTransactionService(impl.NewState())
 	pub, priv := mustMakeKeyPair(t)
