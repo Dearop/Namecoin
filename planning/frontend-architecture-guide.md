@@ -1,7 +1,35 @@
 # Frontend Architecture Guide - Crypto Wallet Implementation
 **Project:** Peerster DNS Miners  
-**Date:** November 24, 2025  
-**Approach:** Vue.js Frontend (Option B)
+**Date:** November 24-25, 2025  
+**Approach:** Vue.js Frontend (Simplified Single-Page Implementation)  
+**Last Updated:** November 25, 2025
+
+---
+
+## 🔄 Recent Updates (Nov 25, 2025)
+
+### Implementation Status: **WORKING**
+- ✅ TweetNaCl Ed25519 integration (replaced @noble/ed25519)
+- ✅ Simplified single-page UI (App.vue only)
+- ✅ Auto-wallet creation on first load
+- ✅ Correct transaction flow with two hashes (txId and txHash)
+- ✅ Proper payload format (commitment string, not object)
+- ✅ Ed25519 signature of full transaction hash
+- ✅ Backend endpoint created (/namecoin/transaction)
+
+### Key Changes from Original Design
+1. **Library Switch**: @noble/ed25519 → TweetNaCl (team recommendation)
+2. **UI Simplification**: Three separate components → Single App.vue
+3. **Auto-Wallet**: No manual wallet setup UI needed
+4. **Transaction Flow**: Fixed payload format and signing process
+5. **Hash Clarity**: Distinguished between txId (field hash) and txHash (full tx hash)
+
+### Current Architecture
+- **Active Files**: App.vue, useWallet.js, crypto.service.js, transaction.service.js, api.service.js
+- **Inactive Components**: WalletManager.vue, DomainCreator.vue, TransactionSigner.vue (exist but unused)
+- **Crypto Library**: TweetNaCl 1.0.3
+- **Build Tool**: Vite 4.5.14
+- **Framework**: Vue 3.3.4
 
 ---
 
@@ -189,26 +217,43 @@ Export functions:
 Export functions:
 
 - generateSalt(length = 32)
-  → Returns: hex string
+  → Re-exported from utils/hash.js
+  → Returns: hex string (64 chars for 32 bytes)
   → Uses: crypto.getRandomValues()
 
 - hashDomainWithSalt(domain, salt)
-  → Returns: hex string
+  → Returns: Promise<string> (hex hash)
   → Uses: SHA256(domain + salt)
+  → Called generateHash() internally from utils/hash.js
 
-- hashTransaction(txObject)
-  → Returns: transaction ID (hex string)
-  → Hash order: type + source + fee + payload + nonce
-  → Excludes signature field
+- generateSaltedHash(domain)
+  → Returns: Promise<{ hashedDomain, salt }>
+  → Generates salt and hash together
 
-- signTransaction(txHash, privateKey)
-  → Returns: signature (hex string)
-  → Uses: Ed25519 or ECDSA
-  → Input: transaction hash, private key
+- hashTransaction(tx)
+  → Returns: Promise<string> (hex hash of entire transaction)
+  → Hashes the complete unsigned transaction object as JSON
+  → Used for signing (step 5 in transaction flow)
+  → Includes: type, source, fee, payload, nonce, transactionID
 
-- verifySignature(txHash, signature, publicKey)
-  → Returns: boolean (for testing)
-  → Verifies signature is valid
+- generateTransactionSignature(txHash, privateKey)
+  → Returns: Promise<string> (hex signature, 128 chars for 64 bytes)
+  → Uses: TweetNaCl Ed25519 (nacl.sign.detached)
+  → Input: txHash (hex string), privateKey (hex string, 128 chars)
+  → Process: hexToBytes → nacl.sign.detached → bytesToHex
+
+- verifyTransactionSignature(txHash, signature, publicKey)
+  → Returns: Promise<boolean>
+  → Uses: TweetNaCl Ed25519 (nacl.sign.detached.verify)
+  → Verifies Ed25519 signature is valid
+
+- verifyDomainHash(domain, salt, hashedDomain)
+  → Returns: Promise<boolean>
+  → Recomputes hash and compares
+
+- hashTransactionData(txData)
+  → Returns: Promise<string>
+  → Generic SHA256 hasher for any data
 ```
 
 #### **services/transaction.service.js**
@@ -377,21 +422,41 @@ Returns reactive state and methods:
 {
   // State
   wallet: ref({ publicKey: null, privateKey: null }),
-  walletID: computed(() => derive from publicKey),
+  walletID: computed(() => wallet.value.publicKey || null),
   isWalletLoaded: computed(() => wallet.value.publicKey !== null),
   
   // Methods
-  async createWallet(),
-  async loadWallet(),
-  async exportWallet(),
-  async importWallet(file),
-  clearWallet()
+  async createWallet(),        // Creates new keypair, saves to localStorage
+  loadWallet(),                // Loads existing wallet from localStorage (sync)
+  exportWallet(),              // Exports wallet to JSON file (optional)
+  async importWallet(file),    // Imports wallet from JSON file (optional)
+  clearWallet()                // Clears wallet state and localStorage
 }
 
+Implementation details:
+- createWallet():
+  * Calls walletService.generateKeyPair() (TweetNaCl)
+  * Derives walletID using walletService.deriveWalletID(publicKey)
+  * Saves to localStorage via walletService.saveWallet()
+  * Returns wallet object with { publicKey, privateKey, id }
+  
+- loadWallet():
+  * Calls walletService.loadWallet() (reads from localStorage)
+  * Returns true if wallet found, false otherwise
+  * Sets wallet.value with loaded data
+  
+- Wallet structure:
+  * publicKey: hex string (64 chars = 32 bytes)
+  * privateKey: hex string (128 chars = 64 bytes, TweetNaCl format)
+  * id: same as publicKey (used as wallet identifier)
+
 Internally calls:
-- walletService methods
+- walletService.generateKeyPair() → nacl.sign.keyPair()
+- walletService.deriveWalletID() → SHA256 of publicKey
+- walletService.saveWallet() → localStorage.setItem('wallet', ...)
+- walletService.loadWallet() → localStorage.getItem('wallet')
 - Updates reactive state
-- Handles errors
+- Handles errors with try/catch
 ```
 
 #### **composables/useTransaction.js**
@@ -431,188 +496,339 @@ Internally calls:
 [User Interface] → [Component] → [Composable] → [Service] → [Util] → [Backend]
 
 ═══════════════════════════════════════════════════════════════════════
-STEP 1: Wallet Creation
+STEP 1: Automatic Wallet Creation on App Load
 ═══════════════════════════════════════════════════════════════════════
 
-User clicks "Create Wallet"
+App.vue mounts (onMounted hook)
   ↓
-WalletManager.vue → createWallet()
+loadWallet() called first
   ↓
-useWallet.js → createWallet()
+walletService.loadWallet() checks localStorage
+  ↓
+If wallet exists → loads and returns true
+If no wallet → returns false
+  ↓
+If loadWallet() returned false:
+  ↓
+createWallet() called automatically
   ↓
 walletService.generateKeyPair()
-  ↓ (uses Web Crypto API)
-Returns { publicKey, privateKey }
+  ↓ (uses TweetNaCl Ed25519)
+nacl.sign.keyPair() generates:
+  - secretKey: 64 bytes (seed + public concatenated)
+  - publicKey: 32 bytes
   ↓
 walletService.deriveWalletID(publicKey)
   ↓
 utils/hash.js → sha256(publicKey)
   ↓
-walletService.saveWallet()
+walletService.saveWallet(publicKey, privateKey)
   ↓
-utils/storage.js → setItem('wallet', data)
+localStorage.setItem('wallet', JSON.stringify({
+  publicKey: hex(64 chars),
+  privateKey: hex(128 chars)
+}))
   ↓
-useWallet state updates (reactive)
+useWallet reactive state updates:
+  - wallet.value = { publicKey, privateKey, id }
+  - walletID.value = publicKey
+  - isWalletLoaded.value = true
   ↓
-WalletManager.vue displays wallet ID
+App.vue ready with wallet (automatic, no UI needed)
 
 
 ═══════════════════════════════════════════════════════════════════════
-STEP 2: Domain Name Creation (name_new)
+STEP 2: Domain Transaction Creation (name_new) - CURRENT IMPLEMENTATION
 ═══════════════════════════════════════════════════════════════════════
 
-User types domain "example.com"
+User types domain "example.com" in App.vue
   ↓
-DomainCreator.vue → onInput()
-  ↓ (auto-generates salt on mount)
-cryptoService.generateSalt()
+User clicks "Create Transaction" button
   ↓
-utils/hash.js → generateRandomSalt(32)
-  ↓ (user sees salt, must save it!)
-User clicks "Create Domain"
+App.vue → handleSubmit()
   ↓
-DomainCreator.vue → createDomain()
+1. Generate salt (32 bytes random)
+generateSalt() from utils/hash.js
+  ↓ crypto.getRandomValues(new Uint8Array(32))
+Returns hex string (64 chars)
   ↓
-cryptoService.hashDomainWithSalt(domain, salt)
+2. Create commitment hash
+hashDomainWithSalt(domain, salt)
   ↓
-utils/hash.js → sha256(domain + salt)
-  ↓ (now build transaction)
-useTransaction.js → createTransaction({
+utils/hash.js → generateHash(domain, salt)
+  ↓ SHA256(domain + salt)
+Returns commitment hex string (64 chars = 32 bytes)
+  ↓
+3. Build unsigned transaction
+buildTransaction({
   type: 'name_new',
-  walletID: wallet.value.id,
+  walletID: walletID.value,
   fee: 1,
-  payload: { hash: hashedValue },
-  nonce: transactionService.incrementNonce()
+  payload: commitment  // JUST the commitment hash string
 })
   ↓
-transactionService.buildTransaction(params)
-  ↓ (creates tx object)
-transactionService.encodePayload(params.payload)
-  ↓ (encodes hash for payload field)
-transactionService.computeTransactionID(tx)
-  ↓
-cryptoService.hashTransaction(tx)
-  ↓
-utils/hash.js → sha256(type + source + fee + payload + nonce)
-  ↓
-Returns complete transaction object with ID
-  ↓
-useTransaction.currentTransaction updates
-  ↓
-DomainCreator emits event to parent
-  ↓
-Parent passes tx to TransactionSigner.vue
-
-
-═══════════════════════════════════════════════════════════════════════
-STEP 3: Transaction Signing & Sending
-═══════════════════════════════════════════════════════════════════════
-
-TransactionSigner.vue displays tx preview
-  ↓
-User clicks "Sign & Send"
-  ↓
-TransactionSigner.vue → signAndSend()
-  ↓
-useTransaction.js → signAndSend()
-  ↓
-cryptoService.signTransaction(
-  currentTransaction.value.transactionID,
-  wallet.value.privateKey
-)
-  ↓ (uses Web Crypto API for signing)
-Returns signature (hex string)
-  ↓
-apiService.sendTransaction(tx, signature)
-  ↓
-POST http://localhost:8080/namecoin/transaction
-Body: {
-  transaction: {
-    type: "name_new",
-    source: "wallet_id_hex",
-    fee: 1,
-    payload: "hash_hex",
-    nonce: 1,
-    transactionID: "tx_id_hex"
-  },
-  signature: "signature_hex"
+transactionService.buildTransaction()
+  ↓ encodePayload() handles string payload
+Returns transaction object:
+{
+  type: "name_new",
+  source: walletID,
+  fee: 1,
+  payload: commitment,  // string, not object
+  nonce: incrementNonce()
 }
   ↓
-[BACKEND RECEIVES]
+4. Compute transaction ID (hash of fields a-e)
+computeTransactionID(txUnsigned)
   ↓
-backend validates signature
+utils/hash.js → generateTxID()
+  ↓ SHA256(type|source|fee|payload|nonce)
+Returns txId, sets tx.transactionID
   ↓
-backend processes transaction
+5. Hash entire unsigned transaction
+hashTransaction(txWithId)
   ↓
-backend returns { success: true, txID: "..." }
+crypto.service.js → hashTransaction()
+  ↓ SHA256(JSON.stringify(entire tx object))
+Returns txHash (used for signing)
   ↓
-apiService returns response
+6. Sign the transaction hash
+generateTransactionSignature(txHash, privateKey)
   ↓
-useTransaction updates status to 'success'
+crypto.service.js:
+  - hexToBytes(txHash) → 32 bytes
+  - hexToBytes(privateKey) → 64 bytes
+  - nacl.sign.detached(messageBytes, privateKeyBytes)
+  - bytesToHex(signature) → 128 chars
+Returns Ed25519 signature
   ↓
-TransactionSigner.vue shows success message
+7. Send to backend
+sendTransaction(txWithId, signature)
   ↓
-Transaction added to history (localStorage)
+api.service.js → POST /namecoin/transaction
+Body: {
+  transaction: { ...txWithId },
+  signature: signature
+}
+
+
+═══════════════════════════════════════════════════════════════════════
+STEP 3: Backend Response & UI Update - CURRENT IMPLEMENTATION
+═══════════════════════════════════════════════════════════════════════
+
+Backend receives POST /namecoin/transaction
+  ↓
+Request body:
+{
+  transaction: {
+    type: "name_new",
+    source: "publicKey_hex",
+    fee: 1,
+    payload: "commitment_hash_hex",
+    nonce: 1,
+    transactionID: "txId_hex"
+  },
+  signature: "ed25519_signature_hex"
+}
+  ↓
+[BACKEND PROCESSING - Currently TODO]
+- Decode transaction from JSON
+- Verify signature using Ed25519
+- Validate transaction fields
+- Process with Paxos consensus (HW3)
+- Return response
+  ↓
+Backend returns:
+{
+  success: true,
+  txID: "transaction_id",
+  message: "Transaction submitted"
+}
+  ↓
+api.service.js receives response
+  ↓
+App.vue handleSubmit() receives result
+  ↓
+UI updates:
+- status.value = "Success! Transaction created."
+- lastTxId.value = result.txID
+- domainName.value = '' (clear input)
+- isProcessing.value = false
+  ↓
+User sees success message with transaction ID
+
+═══════════════════════════════════════════════════════════════════════
+SIMPLIFIED ARCHITECTURE NOTES
+═══════════════════════════════════════════════════════════════════════
+
+The current implementation uses a SIMPLIFIED single-page approach:
+- App.vue contains all UI (no separate WalletManager/DomainCreator/TransactionSigner)
+- Wallet auto-created on first load (no manual setup)
+- Transaction creation, signing, and sending happen in one flow
+- handleSubmit() orchestrates the entire 7-step process
+- Minimal UI: domain input + submit button + status display
+
+Components NOT currently used:
+- WalletManager.vue (wallet auto-created)
+- DomainCreator.vue (merged into App.vue)
+- TransactionSigner.vue (merged into App.vue)
+
+These components exist for future enhancements but aren't in the active flow.
 ```
 
 ---
 
 ## 4. Cryptographic Implementation
 
-### Recommended Library: @noble/ed25519
+### Current Library: TweetNaCl
 
 ```bash
-npm install @noble/ed25519
+npm install tweetnacl
 ```
 
-**Why Ed25519?**
+**Why TweetNaCl?**
 - Fast, small signatures (64 bytes)
-- Modern, secure (better than RSA)
+- Ed25519 implementation (modern, secure)
 - Pure JavaScript, no native dependencies
-- Compatible with most backends
+- Well-audited, widely used
+- Recommended by team for compatibility
 
-### Key Generation Example
+**Previously considered:** @noble/ed25519 (similar API, different implementation)
+
+### Key Generation Example (CURRENT)
 
 ```javascript
 // In wallet.service.js
-import * as ed from '@noble/ed25519';
+import nacl from 'tweetnacl';
+import { bytesToHex, hexToBytes } from '../utils/hash.js';
 
-async function generateKeyPair() {
-  // Generate 32-byte private key
-  const privateKey = ed.utils.randomPrivateKey();
+export async function generateKeyPair() {
+  // Generate Ed25519 keypair
+  const keypair = nacl.sign.keyPair();
   
-  // Derive public key from private
-  const publicKey = await ed.getPublicKey(privateKey);
+  // TweetNaCl returns:
+  // - secretKey: 64 bytes (32-byte seed + 32-byte public concatenated)
+  // - publicKey: 32 bytes
   
   return {
-    privateKey: bytesToHex(privateKey),
-    publicKey: bytesToHex(publicKey)
+    privateKey: bytesToHex(keypair.secretKey),  // 128 hex chars
+    publicKey: bytesToHex(keypair.publicKey)    // 64 hex chars
   };
 }
 ```
 
-### Signing Example
+### Signing Example (CURRENT)
 
 ```javascript
 // In crypto.service.js
-import * as ed from '@noble/ed25519';
+import nacl from 'tweetnacl';
+import { hexToBytes, bytesToHex } from '../utils/hash.js';
 
-async function signTransaction(txHash, privateKeyHex) {
-  const privateKey = hexToBytes(privateKeyHex);
-  const message = hexToBytes(txHash);
+export async function generateTransactionSignature(txHash, privateKey) {
+  // Convert hex strings to byte arrays
+  const privateKeyBytes = hexToBytes(privateKey);  // 64 bytes
+  const messageBytes = hexToBytes(txHash);         // 32 bytes
   
-  // Sign the transaction hash
-  const signature = await ed.sign(message, privateKey);
+  // Sign with Ed25519 (detached signature)
+  const signature = nacl.sign.detached(messageBytes, privateKeyBytes);
   
-  return bytesToHex(signature);
+  // Returns 64-byte signature
+  return bytesToHex(signature);  // 128 hex chars
 }
 ```
 
-### Hash Function Example
+### Signature Verification Example (CURRENT)
+
+```javascript
+// In crypto.service.js
+export async function verifyTransactionSignature(txHash, signature, publicKey) {
+  try {
+    const publicKeyBytes = hexToBytes(publicKey);     // 32 bytes
+    const messageBytes = hexToBytes(txHash);          // 32 bytes
+    const signatureBytes = hexToBytes(signature);     // 64 bytes
+    
+    // Verify Ed25519 signature
+    return nacl.sign.detached.verify(
+      messageBytes, 
+      signatureBytes, 
+      publicKeyBytes
+    );
+  } catch (error) {
+    console.error('[Crypto] Signature verification failed:', error);
+    return false;
+  }
+}
+```
+
+### Critical Transaction Flow Details (CURRENT IMPLEMENTATION)
+
+**Important:** The transaction flow has TWO different hashes:
+1. **Transaction ID (txId)** - Hash of specific fields (a-e)
+2. **Transaction Hash (txHash)** - Hash of entire unsigned transaction object
+
+```javascript
+// STEP-BY-STEP BREAKDOWN in App.vue handleSubmit()
+
+// 1. Generate salt (32 bytes)
+const salt = generateSalt();
+// Result: "a3f5...89cd" (64 hex chars)
+
+// 2. Create commitment = Hash(domain + salt)
+const commitment = await hashDomainWithSalt(domainName.value, salt);
+// Result: "7b2e...45ac" (64 hex chars)
+
+// 3. Build unsigned transaction
+const txUnsigned = await buildTransaction({
+  type: 'name_new',
+  walletID: walletID.value,
+  fee: 1,
+  payload: commitment  // ← CRITICAL: Just the hash string, not an object
+});
+// Result: {
+//   type: "name_new",
+//   source: "publicKey_hex",
+//   fee: 1,
+//   payload: "7b2e...45ac",  // ← String, not {hash, domain, salt}
+//   nonce: 1
+// }
+
+// 4. Compute Transaction ID (hash of fields a-e ONLY)
+const txWithId = await computeTransactionID(txUnsigned);
+// Hashes: type|source|fee|payload|nonce
+// Result adds: transactionID: "9d4f...2b1a"
+
+// 5. Hash entire unsigned transaction (for signing)
+const txHash = await hashTransaction(txWithId);
+// Hashes: JSON.stringify(entire tx object)
+// Result: "e8c3...7f6d" (64 hex chars)
+
+// 6. Sign txHash (NOT txId!)
+const signature = await generateTransactionSignature(
+  txHash,  // ← Sign the full transaction hash
+  wallet.value.privateKey
+);
+// Result: "a1b2...f9e8" (128 hex chars = 64 bytes Ed25519)
+
+// 7. Send to backend
+await sendTransaction(txWithId, signature);
+// POST body: { transaction: {...}, signature: "..." }
+```
+
+**Key Differences:**
+- `transactionID` = Hash(type|source|fee|payload|nonce) - identifies the tx
+- `txHash` = Hash(entire JSON tx object) - what gets signed
+- `signature` = Ed25519(txHash, privateKey) - proves authenticity
+
+**Common Mistakes to Avoid:**
+- ❌ payload: {hash, domain, salt} → ✅ payload: commitment (string)
+- ❌ Sign transactionID → ✅ Sign txHash (full transaction hash)
+- ❌ Missing hashTransaction step → ✅ Always hash before signing
+
+### Hash Function Example (CURRENT)
 
 ```javascript
 // In utils/hash.js
-async function sha256(input) {
+export async function sha256(input) {
   const encoder = new TextEncoder();
   const data = typeof input === 'string' 
     ? encoder.encode(input) 
