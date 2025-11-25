@@ -78,11 +78,11 @@ func (n Namecoin) New(w http.ResponseWriter, r *http.Request) {
 }
 
 func (n Namecoin) FirstUpdate(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, fmt.Sprintf("Not implemented"),
+	http.Error(w, "Not implemented",
 		http.StatusInternalServerError)
 }
 
 func (n Namecoin) Update(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, fmt.Sprintf("Not implemented"),
+	http.Error(w, "Not implemented",
 		http.StatusInternalServerError)
 }

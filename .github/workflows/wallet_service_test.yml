@@ -1,4 +1,4 @@
-name: PoW_tests
+name: wallet_service_test
 
 on:
   push
@@ -30,16 +30,16 @@ jobs:
         run: |
           mkdir -p ./${{ github.run_attempt }}
 
-      # Run PoW unit tests with nice formatting
-      - name: Run PoW unit tests
+      # Run Wallet Service unit tests with nice formatting
+      - name: Run Wallet Service unit tests
         run: |
           set -euo pipefail
-          go test -json -timeout 5m -v -race -run token_wallet_manager_test ./peer/tests/unit 2>&1 | tee ./${{ github.run_attempt }}/gotest-pow-unit.log | gotestfmt
+          go test -json -timeout 5m -v -race -run TestTokenWalletManager ./peer/tests/unit 2>&1 | tee ./${{ github.run_attempt }}/gotest-walletService-unit.log | gotestfmt
 
       # Upload formatted logs
-      - name: Upload PoW unit test log
+      - name: Upload Wallet Service unit test log
         uses: actions/upload-artifact@v4
         with:
-          name: pow-unit-test-log
-          path: ./${{ github.run_attempt }}/gotest-pow-unit.log
+          name: wallet-service-unit-test-log
+          path: ./${{ github.run_attempt }}/gotest-walletService-unit.log
           if-no-files-found: error

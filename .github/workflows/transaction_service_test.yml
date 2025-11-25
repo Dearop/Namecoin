@@ -1,4 +1,4 @@
-name: PoW_tests
+name: transaction_service_test
 
 on:
   push
@@ -30,16 +30,16 @@ jobs:
         run: |
           mkdir -p ./${{ github.run_attempt }}
 
-      # Run PoW unit tests with nice formatting
-      - name: Run PoW unit tests
+      # Run Transaction Service unit tests with nice formatting
+      - name: Run Transaction Service unit tests
         run: |
           set -euo pipefail
-          go test -json -timeout 5m -v -race -run transaction_service_test ./peer/tests/unit 2>&1 | tee ./${{ github.run_attempt }}/gotest-pow-unit.log | gotestfmt
+          go test -json -timeout 5m -v -race -run TestTransactionService ./peer/tests/unit 2>&1 | tee ./${{ github.run_attempt }}/gotest-transactionService-unit.log | gotestfmt
 
       # Upload formatted logs
-      - name: Upload PoW unit test log
+      - name: Upload Transaction Service unit test log
         uses: actions/upload-artifact@v4
         with:
-          name: pow-unit-test-log
-          path: ./${{ github.run_attempt }}/gotest-pow-unit.log
+          name: transaction-service-unit-test-log
+          path: ./${{ github.run_attempt }}/gotest-transactionService-unit.log
           if-no-files-found: error

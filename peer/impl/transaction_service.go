@@ -35,11 +35,11 @@ func (t *TmpState) GetPendingTransactions() []*SignedTransaction {
 }
 
 // DropTransaction removes a transaction from the pending pool.
-func (t *TmpState) DropTransaction(txId string) {
+func (t *TmpState) DropTransaction(txID string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for i, tx := range t.MemPool {
-		if tx.TxID == txId {
+		if tx.TxID == txID {
 			t.MemPool = append(t.MemPool[:i], t.MemPool[i+1:]...)
 			return
 		}
@@ -54,10 +54,18 @@ func (t *TmpState) DropTransactions() {
 }
 
 // ApplyTransaction stores transaction in the state
-func (s *TmpState) ApplyTransaction(txID string, tx types.Tx) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.transactions[txID] = &tx
+func (t *TmpState) ApplyTransaction(txID string, tx types.Tx) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.transactions[txID] = &tx
+}
+
+// GetTransaction returns a transaction by its txId if known otherwise nil.
+func (t *TmpState) GetTransaction(txID string) *types.Tx {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	return t.transactions[txID]
 }
 
 // NewTransactionService creates a new TransactionService instance.
@@ -127,12 +135,4 @@ func (t *TransactionService) ValidateTransaction(tx *SignedTransaction) error {
 	}
 
 	return nil
-}
-
-// GetTransaction returns a transaction by its txId if known otherwise nil.
-func (t *TmpState) GetTransaction(txId string) *types.Tx {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	return t.transactions[txId]
 }

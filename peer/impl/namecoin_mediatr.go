@@ -33,21 +33,21 @@ func ResolveNameCoinCommand[T CommandType](command string, payload json.RawMessa
 	case NameNew{}.Name():
 		var nameNew NameNew
 		if err := json.Unmarshal(payload, &nameNew); err != nil {
-			return any(nameNew).(T), fmt.Errorf("invalid NameNew payload: %v", err)
+			return any(nameNew).(T), fmt.Errorf("invalid NameNew payload: %w", err)
 		}
 
 		return any(nameNew).(T), nil
 	case NameFirstUpdate{}.Name():
 		var firstUpdate NameFirstUpdate
 		if err := json.Unmarshal(payload, &firstUpdate); err != nil {
-			return any(firstUpdate).(T), fmt.Errorf("invalid NameFirstUpdate payload: %v", err)
+			return any(firstUpdate).(T), fmt.Errorf("invalid NameFirstUpdate payload: %w", err)
 		}
 
 		return any(firstUpdate).(T), nil
 	case NameUpdate{}.Name():
 		var updateName NameUpdate
 		if err := json.Unmarshal(payload, &updateName); err != nil {
-			return any(updateName).(T), fmt.Errorf("invalid NameUpdate payload: %v", err)
+			return any(updateName).(T), fmt.Errorf("invalid NameUpdate payload: %w", err)
 		}
 
 		return any(updateName).(T), nil
