@@ -1,13 +1,18 @@
 package types
 
+import "encoding/json"
+
 // Tx is a generic on-chain transaction container. Concrete Namecoin
 // operations (such as name_new, name_firstupdate, name_update, etc.) will be
 // implemented using this basic form for inclusion in blocks.
+// txID - is a transaction hash constructed with these properties. No need to store it here
+// because storage itself will refer to this transaction by using txID as a key.
 type Tx struct {
-	// ID uniquely identifies the transaction
-	ID []byte
-	// Raw payload (opaque for now)
-	Payload []byte
+	Type    string
+	From    string
+	Fee     uint64
+	Nonce   uint64 // replay attacks protection
+	Payload json.RawMessage
 }
 
 // BlockHeader captures the PoW header fields that are hashed when
