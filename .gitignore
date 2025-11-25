@@ -27,3 +27,8 @@ peer/impl/graph.pdf
 gui/node
 peer/tests/integration/node*
 gui/gui
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
