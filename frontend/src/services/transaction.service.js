@@ -31,12 +31,14 @@ export async function computeTransactionID(tx) {
 }
 
 export function encodePayload(data) {
-  // For now, simple JSON encoding
-  // Could be extended for different transaction types
-  if (typeof data === 'object') {
-    return JSON.stringify(data);
+  // Payload should be a simple string (e.g., commitment hash)
+  // For name_new: just the commitment
+  // For other types: could be different formats
+  if (typeof data === 'string') {
+    return data;
   }
-  return data;
+  // If it's an object, stringify it (for other transaction types)
+  return JSON.stringify(data);
 }
 
 export function validateTransaction(tx) {

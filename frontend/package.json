@@ -8,7 +8,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@noble/ed25519": "^2.0.0",
+    "tweetnacl": "^1.0.3",
     "vue": "^3.3.4"
   },
   "devDependencies": {

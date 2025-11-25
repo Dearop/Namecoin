@@ -37,7 +37,7 @@ export function useTransaction() {
       currentTransaction.value = completeTx;
       return completeTx;
     } catch (err) {
-      error.value = err.message;
+      error.value = err.message + ' (in createTransaction)';
       throw err;
     } finally {
       isProcessing.value = false;
@@ -54,11 +54,24 @@ export function useTransaction() {
       status.value = 'signing';
       error.value = null;
 
+        const txHash = await cryptoService.hashTransaction(currentTransaction.value);
+
       // Sign the transaction
       const signature = await cryptoService.generateTransactionSignature(
-        currentTransaction.value.transactionID,
+        txHash,
         privateKey
       );
+
+
+      const validation = await cryptoService.verifyTransactionSignature(
+        txHash,
+        signature,
+        currentTransaction.value.source
+      );
+
+        if (!validation) {
+            throw new Error('Signature verification failed after signing');
+        }
 
       status.value = 'sending';
 

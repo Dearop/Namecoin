@@ -1,14 +1,13 @@
-import * as ed from '@noble/ed25519';
+import nacl from 'tweetnacl';
 import { bytesToHex, hexToBytes, sha256 } from '../utils/hash.js';
 import { saveWalletData, getWalletData } from '../utils/storage.js';
 
 export async function generateKeyPair() {
-  const privateKey = ed.utils.randomPrivateKey();
-  const publicKey = await ed.getPublicKey(privateKey);
+  const keyPair = nacl.sign.keyPair();
   
   return {
-    privateKey: bytesToHex(privateKey),
-    publicKey: bytesToHex(publicKey)
+    privateKey: bytesToHex(keyPair.secretKey),  // 64 bytes (seed + public key)
+    publicKey: bytesToHex(keyPair.publicKey)     // 32 bytes
   };
 }
 

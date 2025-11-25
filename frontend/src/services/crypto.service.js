@@ -1,5 +1,9 @@
-import * as ed from '@noble/ed25519';
+import nacl from 'tweetnacl';
 import { generateSalt as _generateSalt, generateHash, sha256, bytesToHex, hexToBytes } from '../utils/hash.js';
+
+/*
+* look at hash diagram to understand the different hashing functions and their purposes
+*/
 
 // Re-export generateSalt for convenience
 export { generateSalt } from '../utils/hash.js';
@@ -22,7 +26,7 @@ export async function verifyDomainHash(domain, salt, hashedDomain) {
 export async function generateTransactionSignature(txHash, privateKey) {
   const privateKeyBytes = hexToBytes(privateKey);
   const messageBytes = hexToBytes(txHash);
-  const signature = await ed.sign(messageBytes, privateKeyBytes);
+  const signature = nacl.sign.detached(messageBytes, privateKeyBytes);
   return bytesToHex(signature);
 }
 
@@ -31,7 +35,7 @@ export async function verifyTransactionSignature(txHash, signature, publicKey) {
     const publicKeyBytes = hexToBytes(publicKey);
     const messageBytes = hexToBytes(txHash);
     const signatureBytes = hexToBytes(signature);
-    return await ed.verify(signatureBytes, messageBytes, publicKeyBytes);
+    return nacl.sign.detached.verify(messageBytes, signatureBytes, publicKeyBytes);
   } catch (error) {
     console.error('[Crypto] Signature verification failed:', error);
     return false;
@@ -43,8 +47,15 @@ export async function hashTransactionData(txData) {
 }
 
 export async function hashTransaction(tx) {
-  // Hash all fields except signature
-  const { type, source, fee, payload, nonce } = tx;
-  const txDataString = `${type}|${source}|${fee}|${payload}|${nonce}`;
-  return await sha256(txDataString);
+  // Hash the entire unsigned transaction object
+  // This is used for signing (step 5 in the flow)
+  const txString = JSON.stringify({
+    type: tx.type,
+    source: tx.source,
+    fee: tx.fee,
+    payload: tx.payload,
+    nonce: tx.nonce,
+    transactionID: tx.transactionID
+  });
+  return await sha256(txString);
 }

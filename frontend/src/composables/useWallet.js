@@ -51,11 +51,11 @@ export function useWallet() {
     }
   }
 
-  function exportWallet() {
+  function exportWallet() { //do not believe we need this, but keeping just in case
     walletService.exportWalletToFile(wallet.value);
   }
 
-  async function importWallet(file) {
+  async function importWallet(file) {//do not believe we need this, but keeping just in case
     try {
       const importedWallet = await walletService.importWalletFromFile(file);
       wallet.value = {
