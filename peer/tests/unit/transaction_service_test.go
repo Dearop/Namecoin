@@ -21,7 +21,6 @@ func TestTransactionServiceApplyTransaction(t *testing.T) {
 		Type:    "custom",
 		From:    addr,
 		Fee:     30,
-		Nonce:   1,
 		Payload: json.RawMessage("{}"),
 	}
 
@@ -131,7 +130,6 @@ func buildSignedTransaction(t *testing.T, publicKey ed25519.PublicKey, privateKe
 		Type:      txType,
 		From:      hex.EncodeToString(impl.Hash(publicKey)),
 		Fee:       fee,
-		Nonce:     1,
 		Payload:   json.RawMessage(payloadBytes),
 		PublicKey: hex.EncodeToString(publicKey),
 	}

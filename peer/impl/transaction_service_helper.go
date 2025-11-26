@@ -13,7 +13,6 @@ func BuildUnsignedTxBytes(t *SignedTransaction) []byte {
 		"type":    t.Type,
 		"from":    t.From,
 		"fee":     t.Fee,
-		"nonce":   t.Nonce,
 		"payload": t.Payload,
 	}
 
