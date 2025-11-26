@@ -21,7 +21,6 @@ type SignedTransaction struct {
 	Type    string          `json:"type"`    // e.g. "name_new", "name_firstupdate", "name_update"
 	From    string          `json:"from"`    // wallet address (public key hash / base58 / hex)
 	Fee     uint64          `json:"fee"`     // token fee
-	Nonce   uint64          `json:"nonce"`   // anti-replay counter
 	Payload json.RawMessage `json:"payload"` // raw payload, variant by type
 
 	// Non-hash-related properties

@@ -11,7 +11,6 @@ type Tx struct {
 	Type    string
 	From    string
 	Fee     uint64
-	Nonce   uint64 // replay attacks protection
 	Payload json.RawMessage
 }
 
