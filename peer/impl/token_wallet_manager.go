@@ -28,8 +28,8 @@ func (t *TokenWalletManager) GetBalance(from string) uint64 {
 
 // ChargeAndGet deducts the given amount from the balance of the given address
 func (t *TokenWalletManager) ChargeAndGet(from string, amount uint64) (uint64, error) {
-	balance := t.GetBalance(from)
 	t.mu.Lock()
+	balance := t.GetBalance(from)
 	defer t.mu.Unlock()
 	if balance < amount {
 		return 0, fmt.Errorf("insufficient funds")

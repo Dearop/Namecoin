@@ -72,6 +72,7 @@ func (n Namecoin) New(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to validate transaction: %v", err),
 			http.StatusBadRequest)
+		return
 	}
 
 	// todo: Send transaction to consensus, etc...

@@ -27,11 +27,30 @@ type TmpState struct {
 	mu sync.RWMutex
 }
 
-// GetPendingTransactions returns all transactions waiting to be mined.
-func (t *TmpState) GetPendingTransactions() []*SignedTransaction {
+// GetDomainOwner returns the owner of a given domain
+func (t *TmpState) GetDomainOwner(domain string) string {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	return t.MemPool
+	return t.DomainOwners[domain]
+}
+
+// GetCommitment returns commitment for a given domain
+func (t *TmpState) GetCommitment(domain string) string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.Commitments[domain]
+}
+
+// GetPendingTransactions returns all transactions waiting to be mined.
+func (t *TmpState) GetPendingTransactions() []SignedTransaction {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	mempoolCopy := make([]SignedTransaction, len(t.MemPool))
+	for i, tx := range t.MemPool {
+		mempoolCopy[i] = *tx
+	}
+
+	return mempoolCopy
 }
 
 // DropTransaction removes a transaction from the pending pool.
@@ -132,6 +151,51 @@ func (t *TransactionService) ValidateTransaction(tx *SignedTransaction) error {
 	err = t.verifyCommand(tx)
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+// verifyCommand verifies the payload of a transaction based on its type
+func (t *TransactionService) verifyCommand(tx *SignedTransaction) error {
+	switch tx.Type {
+
+	case NameNew{}.Name():
+		p, wErr := ResolveNameCoinCommand[NameNew](tx.Type, tx.Payload)
+
+		if wErr != nil {
+			return wErr
+		}
+
+		if len(p.Commitment) == 0 {
+			return fmt.Errorf("name_new commitment empty")
+		}
+
+	case NameFirstUpdate{}.Name():
+		p, wErr := ResolveNameCoinCommand[NameFirstUpdate](tx.Type, tx.Payload)
+		if wErr != nil {
+			return wErr
+		}
+
+		// Must match earlier commitment
+		storedCommit := t.state.GetCommitment(tx.From)
+		if HashString(p.Salt+p.Domain) != storedCommit {
+			return fmt.Errorf("commitment mismatch for domain %s", p.Domain)
+		}
+
+	case NameUpdate{}.Name():
+		p, wErr := ResolveNameCoinCommand[NameUpdate](tx.Type, tx.Payload)
+		if wErr != nil {
+			return wErr
+		}
+
+		owner := t.state.GetDomainOwner(p.Domain)
+		if owner != tx.From {
+			return fmt.Errorf("cannot update domain you do not own")
+		}
+
+	default:
+		return fmt.Errorf("unsupported transaction type: %s", tx.Type)
 	}
 
 	return nil
