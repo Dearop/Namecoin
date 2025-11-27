@@ -9,6 +9,31 @@ import { generateSalt as _generateSalt, generateHash, sha256, bytesToHex, hexToB
 // Re-export generateSalt for convenience
 export { generateSalt } from '../utils/hash.js';
 
+// Timing-safe equality comparison
+function timingSafeEqual(a, b) {
+  // Convert strings to Uint8Arrays if needed
+  const bufA = typeof a === 'string' ? new TextEncoder().encode(a) : a;
+  const bufB = typeof b === 'string' ? new TextEncoder().encode(b) : b;
+  
+  // Must be same length
+  if (bufA.length !== bufB.length) {
+    // Still do a dummy comparison to avoid timing leak on length
+    let diff = 1;
+    for (let i = 0; i < bufA.length; i++) {
+      diff |= bufA[i] ^ 0;
+    }
+    return false;
+  }
+  
+  // Constant-time comparison
+  let diff = 0;
+  for (let i = 0; i < bufA.length; i++) {
+    diff |= bufA[i] ^ bufB[i];
+  }
+  
+  return diff === 0;
+}
+
 export async function generateSaltedHash(domain) {
   const salt = _generateSalt();
   const hashedDomain = await generateHash(domain, salt);
@@ -21,11 +46,7 @@ export async function hashDomainWithSalt(domain, salt) {
 
 export async function verifyDomainHash(domain, salt, hashedDomain) {
   const computedHash = await generateHash(domain, salt);
-  // If hashes are hex strings, convert to bytes
-  const computedBytes = new TextEncoder().encode(computedHash);
-  const expectedBytes = new TextEncoder().encode(hashedDomain);
-  
-  return timingSafeEqual(computedBytes, expectedBytes);
+  return timingSafeEqual(computedHash, hashedDomain);
 }
 
 export async function generateTransactionSignature(txHash, privateKey) {

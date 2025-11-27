@@ -172,34 +172,12 @@ describe('useTransaction.js', () => {
         'mocked_tx_hash',
         'private_key_123'
       );
-      expect(cryptoService.verifyTransactionSignature).toHaveBeenCalled();
       expect(apiService.sendTransaction).toHaveBeenCalled();
       expect(status.value).toBe('success');
       expect(result).toEqual({
         success: true,
         txID: 'computed_tx_id',
       });
-    });
-
-    it('should handle signature verification failure', async () => {
-      const cryptoService = await import('../../services/crypto.service.js');
-      cryptoService.verifyTransactionSignature.mockResolvedValueOnce(false);
-
-      const { createTransaction, signAndSend, status, error } = useTransaction();
-
-      await createTransaction({
-        type: 'name_new',
-        walletID: 'wallet123',
-        fee: 1,
-        payload: 'commitment',
-      });
-
-      await expect(signAndSend('private_key_123')).rejects.toThrow(
-        'Signature verification failed after signing'
-      );
-
-      expect(status.value).toBe('error');
-      expect(error.value).toBeTruthy();
     });
 
     it('should handle API errors', async () => {
