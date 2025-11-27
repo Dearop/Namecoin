@@ -6,6 +6,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"go.dedis.ch/cs438/peer"
+	"go.dedis.ch/cs438/types"
 )
 
 // NewNamecoinCtrl returns a new namecoin controller
@@ -76,13 +77,52 @@ func (n namecoinctrl) submitTransactionPost(w http.ResponseWriter, r *http.Reque
 		Str("type", req.Transaction.Type).
 		Str("source", req.Transaction.Source).
 		Int("fee", req.Transaction.Fee).
+		Str("payload", req.Transaction.Payload).
 		Msg("Received transaction")
 
-	// For now, just acknowledge receipt
+	// Build the transaction struct
+	tx := types.Transaction{
+		Type:          req.Transaction.Type,
+		Source:        req.Transaction.Source,
+		Fee:           req.Transaction.Fee,
+		Payload:       req.Transaction.Payload,
+		Nonce:         req.Transaction.Nonce,
+		TransactionID: req.Transaction.TransactionID,
+	}
+
+	signedTx := types.SignedTransaction{
+		Tx:        tx,
+		Signature: req.Signature,
+	}
+
+	// Submit the transaction
+	txID, err := n.peer.SubmitTransaction(signedTx)
+	if err != nil {
+		n.log.Error().Err(err).Msg("SubmitTransaction failed")
+		json.NewEncoder(w).Encode(TransactionResponse{
+			Success: false,
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	n.log.Info().
+		Str("txID", txID).
+		Msg("Successfully submitted transaction")
+
+	if err != nil {
+		n.log.Error().Err(err).Msg("SubmitTransaction failed")
+		json.NewEncoder(w).Encode(TransactionResponse{
+			Success: false,
+			Error:   err.Error(),
+		})
+		return
+	}
+
 	response := TransactionResponse{
 		Success: true,
-		TxID:    req.Transaction.TransactionID,
-		Status:  "pending",
+		TxID:    txID,
+		Status:  "confirmed",
 	}
 
 	json.NewEncoder(w).Encode(response)

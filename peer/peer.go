@@ -2,9 +2,11 @@ package peer
 
 import (
 	"time"
+
 	"go.dedis.ch/cs438/registry"
 	"go.dedis.ch/cs438/storage"
 	"go.dedis.ch/cs438/transport"
+	"go.dedis.ch/cs438/types"
 )
 
 // Peer defines the interface of a peer in the Peerster system. It embeds all
@@ -13,6 +15,7 @@ type Peer interface {
 	Service
 	Messaging
 	DataSharing
+	types.NameCoin
 }
 
 // Factory is the type of function we are using to create new instances of

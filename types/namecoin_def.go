@@ -28,3 +28,24 @@ type Block struct {
 	Header       BlockHeader
 	Transactions []Tx
 }
+
+type SignedTransaction struct {
+	Tx        Transaction
+	Signature string
+}
+
+type Transaction struct {
+	Type          string
+	Source        string
+	Fee           int
+	Payload       string
+	Nonce         int
+	TransactionID string
+}
+
+// NameCoin defines the interface for namecoin transaction processing
+type NameCoin interface {
+	// SubmitTransaction submits a signed transaction to the namecoin system.
+	// It processes the transaction and returns the transaction ID on success.
+	SubmitTransaction(tx SignedTransaction) (string, error)
+}

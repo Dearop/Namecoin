@@ -131,3 +131,7 @@ func validateConsensusDeps(
 	}
 	return nil
 }
+
+func (n *node) SubmitTransaction(tx types.SignedTransaction) (string, error) {//dummy implementation. I need it to be able to run the gui
+	return tx.Tx.TransactionID, nil
+}
