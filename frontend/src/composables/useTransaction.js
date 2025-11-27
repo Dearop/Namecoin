@@ -63,16 +63,6 @@ export function useTransaction() {
       );
 
 
-      const validation = await cryptoService.verifyTransactionSignature(
-        txHash,
-        signature,
-        currentTransaction.value.source
-      );
-
-        if (!validation) {
-            throw new Error('Signature verification failed after signing');
-        }
-
       status.value = 'sending';
 
       // Send to backend

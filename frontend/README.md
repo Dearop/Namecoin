@@ -1,4 +1,4 @@
-# Peerster Crypto Wallet Frontend
+# Namecoin Frontend
 
 A Vue 3 frontend for the Peerster Crypto Wallet that handles domain name transactions with a connection-based architecture similar to the backend's CLI/Web GUI system.
 

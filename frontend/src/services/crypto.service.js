@@ -1,4 +1,5 @@
 import nacl from 'tweetnacl';
+import canonicalize from 'canonicalize';
 import { generateSalt as _generateSalt, generateHash, sha256, bytesToHex, hexToBytes } from '../utils/hash.js';
 
 /*
@@ -20,7 +21,11 @@ export async function hashDomainWithSalt(domain, salt) {
 
 export async function verifyDomainHash(domain, salt, hashedDomain) {
   const computedHash = await generateHash(domain, salt);
-  return computedHash === hashedDomain;
+  // If hashes are hex strings, convert to bytes
+  const computedBytes = new TextEncoder().encode(computedHash);
+  const expectedBytes = new TextEncoder().encode(hashedDomain);
+  
+  return timingSafeEqual(computedBytes, expectedBytes);
 }
 
 export async function generateTransactionSignature(txHash, privateKey) {
@@ -43,19 +48,17 @@ export async function verifyTransactionSignature(txHash, signature, publicKey) {
 }
 
 export async function hashTransactionData(txData) {
-  return await sha256(JSON.stringify(txData));
+  return await sha256(canonicalize(txData));
 }
 
 export async function hashTransaction(tx) {
-  // Hash the entire unsigned transaction object
-  // This is used for signing (step 5 in the flow)
-  const txString = JSON.stringify({
-    type: tx.type,
-    source: tx.source,
-    fee: tx.fee,
-    payload: tx.payload,
-    nonce: tx.nonce,
-    transactionID: tx.transactionID
-  });
+    const txString = canonicalize({
+        type: tx.type,
+        source: tx.source,
+        fee: tx.fee,
+        payload: tx.payload,
+        nonce: tx.nonce,
+        transactionID: tx.transactionID
+    });
   return await sha256(txString);
 }

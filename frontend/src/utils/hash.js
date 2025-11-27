@@ -1,11 +1,24 @@
+import canonicalize from 'canonicalize';
 // Browser-compatible crypto utilities using Web Crypto API
 
 export async function sha256(input) {
-  const encoder = new TextEncoder();
-  const data = typeof input === 'string' ? encoder.encode(input) : input;
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = new Uint8Array(hashBuffer);
-  return bytesToHex(hashArray);
+  // Strict input type validation
+  if (typeof input === 'string') {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(input);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = new Uint8Array(hashBuffer);
+    return bytesToHex(hashArray);
+  } else if (input instanceof Uint8Array) {
+    const hashBuffer = await crypto.subtle.digest('SHA-256', input);
+    const hashArray = new Uint8Array(hashBuffer);
+    return bytesToHex(hashArray);
+  } else {
+    throw new TypeError(
+      `sha256: Invalid input type. Expected string or Uint8Array, got ${typeof input}. ` +
+      `If you have an object or array, stringify it first using JSON.stringify() or canonicalize().`
+    );
+  }
 }
 
 export function bytesToHex(bytes) {
@@ -29,7 +42,7 @@ export function generateRandomSalt(length = 32) {
 }
 
 export async function generateHash(domain, salt) {
-  return await sha256(domain + salt);
+  return await sha256(`DOMAIN_HASH_v1:${domain}:${salt}`);
 }
 
 export function generateSalt() {
@@ -37,11 +50,12 @@ export function generateSalt() {
 }
 
 export async function hashTxData(txData) {
-  return await sha256(JSON.stringify(txData));
+  return await sha256(canonicalize(txData));
 }
 
 export async function generateTxID(params) {
   const { type, sourceID, fee, payload, nonce } = params;
-  const txDataString = `${type}|${sourceID}|${fee}|${payload}|${nonce}`;
+  const payloadString = typeof payload === 'string' ? payload : canonicalize(payload);
+  const txDataString = `${type}|${sourceID}|${fee}|${payloadString}|${nonce}`;
   return await sha256(txDataString);
 }
