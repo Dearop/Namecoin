@@ -13,6 +13,7 @@ import (
 	"github.com/rs/zerolog"
 	"go.dedis.ch/cs438/gui/httpnode/controller"
 	"go.dedis.ch/cs438/peer"
+	"go.dedis.ch/cs438/peer/impl"
 	"golang.org/x/xerrors"
 )
 
@@ -53,7 +54,7 @@ type Proxy interface {
 }
 
 // NewHTTPNode return a proxy http.
-func NewHTTPNode(node peer.Peer, conf peer.Configuration) Proxy {
+func NewHTTPNode(node peer.Peer, conf peer.Configuration, transactionService *impl.TransactionService) Proxy {
 	log := zerolog.New(logout).
 		Level(defaultLevel).
 		With().Timestamp().Logger().
@@ -68,6 +69,7 @@ func NewHTTPNode(node peer.Peer, conf peer.Configuration) Proxy {
 	servicectrl := controller.NewServiceCtrl(node, &log)
 	datasharingctrl := controller.NewDataSharing(node, &log)
 	blockchain := controller.NewBlockchain(conf, &log)
+	namecoin := controller.NewNamecoinController(transactionService, &log)
 
 	mux.Handle("/messaging/peers", http.HandlerFunc(messagingctrl.PeerHandler()))
 	mux.Handle("/messaging/routing", http.HandlerFunc(messagingctrl.RoutingHandler()))
@@ -94,6 +96,10 @@ func NewHTTPNode(node peer.Peer, conf peer.Configuration) Proxy {
 	mux.Handle("/datasharing/searchFirst", http.HandlerFunc(datasharingctrl.SearchFirstHandler()))
 
 	mux.Handle("/blockchain", http.HandlerFunc(blockchain.BlockchainHandler()))
+
+	mux.Handle("/namecoin/new", http.HandlerFunc(namecoin.NewHandler()))
+	mux.Handle("/namecoin/firstUpdate", http.HandlerFunc(namecoin.FirstUpdateHandler()))
+	mux.Handle("/namecoin/update", http.HandlerFunc(namecoin.UpdateHandler()))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not authorized", http.StatusBadGateway)
