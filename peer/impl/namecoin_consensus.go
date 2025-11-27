@@ -1,6 +1,9 @@
 package impl
 
 import (
+	"crypto/ed25519"
+	"encoding/hex"
+	"fmt"
 	"time"
 
 	"go.dedis.ch/cs438/peer"
@@ -132,6 +135,47 @@ func validateConsensusDeps(
 	return nil
 }
 
-func (n *node) SubmitTransaction(tx types.SignedTransaction) (string, error) {//dummy implementation. I need it to be able to run the gui
+func (n *node) SubmitTransaction(tx types.SignedTransaction) (string, error) {
+	//dummy implementation. I need it to be able to run the gui
+	valid, err := veriifySignature(tx)
+	if err != nil {
+		return "", xerrors.Errorf("failed to verify signature: %v", err)
+	}
+	if !valid {
+		return "", xerrors.New("invalid signature")
+	}
 	return tx.Tx.TransactionID, nil
+}
+
+func veriifySignature(tx types.SignedTransaction) (bool, error) {
+	pK := tx.Tx.Source
+	pKBytes, err := hex.DecodeString(pK)
+	if err != nil {
+		return false, xerrors.New("invalid public key format")
+	}
+
+	if len(pKBytes) != ed25519.PublicKeySize {
+		return false, xerrors.New("invalid public key size")
+	}
+
+	publicKey := ed25519.PublicKey(pKBytes)
+
+	message := fmt.Sprintf("%s%s%d%s%d%s",
+		tx.Tx.Type,
+		tx.Tx.Source,
+		tx.Tx.Fee,
+		tx.Tx.Payload,
+		tx.Tx.Nonce,
+		tx.Tx.TransactionID,
+	)
+	messageBytes := []byte(message)
+
+	// Decode the signature from hex
+	signatureBytes, err := hex.DecodeString(tx.Signature)
+	if err != nil {
+		return false, fmt.Errorf("invalid signature hex: %w", err)
+	} // Verify the signature
+	valid := ed25519.Verify(publicKey, messageBytes, signatureBytes)
+
+	return valid, nil
 }

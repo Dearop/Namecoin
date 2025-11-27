@@ -110,15 +110,6 @@ func (n namecoinctrl) submitTransactionPost(w http.ResponseWriter, r *http.Reque
 		Str("txID", txID).
 		Msg("Successfully submitted transaction")
 
-	if err != nil {
-		n.log.Error().Err(err).Msg("SubmitTransaction failed")
-		json.NewEncoder(w).Encode(TransactionResponse{
-			Success: false,
-			Error:   err.Error(),
-		})
-		return
-	}
-
 	response := TransactionResponse{
 		Success: true,
 		TxID:    txID,
