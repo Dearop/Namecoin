@@ -54,8 +54,8 @@ export async function hashTxData(txData) {
 }
 
 export async function generateTxID(params) {
-  const { type, sourceID, fee, payload, nonce } = params;
+  const { type, sourceID, fee, payload } = params;
   const payloadString = typeof payload === 'string' ? payload : canonicalize(payload);
-  const txDataString = `${type}|${sourceID}|${fee}|${payloadString}|${nonce}`;
+  const txDataString = `${type}|${sourceID}|${fee}|${payloadString}`;
   return await sha256(txDataString);
 }

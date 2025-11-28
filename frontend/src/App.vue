@@ -3,6 +3,7 @@
 </template>
 
 <script setup>
+import { RouterView } from 'vue-router';
 // App is now just a router container
 // All logic has been moved to views
 </script>
@@ -17,16 +18,11 @@
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: #f5f5f5;
-  min-height: 100vh;
-  padding: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 #app {
   width: 100%;
-  max-width: 500px;
+  min-height: 100vh;
 }
 
 .container {

@@ -8,7 +8,6 @@ vi.mock('../../services/transaction.service.js', () => ({
     source: params.walletID,
     fee: params.fee,
     payload: params.payload,
-    nonce: params.nonce,
     transactionID: null,
   })),
   computeTransactionID: vi.fn(async (tx) => ({
@@ -35,7 +34,6 @@ vi.mock('../../services/api.service.js', () => ({
 }));
 
 vi.mock('../../utils/storage.js', () => ({
-  incrementNonce: vi.fn(() => 1),
   saveDomain: vi.fn(),
 }));
 
@@ -74,25 +72,10 @@ describe('useTransaction.js', () => {
         source: 'wallet123',
         fee: 1,
         payload: 'commitment_hash',
-        nonce: 1,
         transactionID: 'computed_tx_id',
       });
 
       expect(currentTransaction.value).toEqual(result);
-    });
-
-    it('should increment nonce', async () => {
-      const storage = await import('../../utils/storage.js');
-      const { createTransaction } = useTransaction();
-
-      await createTransaction({
-        type: 'name_new',
-        walletID: 'wallet123',
-        fee: 1,
-        payload: 'commitment',
-      });
-
-      expect(storage.incrementNonce).toHaveBeenCalled();
     });
 
     it('should validate transaction', async () => {

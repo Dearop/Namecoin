@@ -78,7 +78,6 @@ export async function hashTransaction(tx) {
         source: tx.source,
         fee: tx.fee,
         payload: tx.payload,
-        nonce: tx.nonce,
         transactionID: tx.transactionID
     });
   return await sha256(txString);

@@ -2,7 +2,6 @@ const STORAGE_PREFIX = 'peerster_';
 
 export const StorageKeys = {
   WALLET: `${STORAGE_PREFIX}wallet`,
-  NONCE: `${STORAGE_PREFIX}nonce`,
   DOMAINS: `${STORAGE_PREFIX}domains`,
   TRANSACTIONS: `${STORAGE_PREFIX}transactions`,
 };
@@ -45,22 +44,6 @@ export function saveWalletData(wallet) {
 
 export function getWalletData() {
   return getItem(StorageKeys.WALLET);
-}
-
-// Nonce helpers
-export function saveNonce(nonce) {
-  return setItem(StorageKeys.NONCE, nonce);
-}
-
-export function getNonce() {
-  return getItem(StorageKeys.NONCE, 0);
-}
-
-export function incrementNonce() {
-  const current = getNonce();
-  const next = current + 1;
-  saveNonce(next);
-  return next;
 }
 
 // Domain helpers

@@ -10,13 +10,8 @@ import {
 vi.mock('../../utils/hash.js', () => ({
   generateTxID: vi.fn(async (params) => {
     // Mock implementation that creates a predictable hash
-    return `txid_${params.type}_${params.nonce}`;
+    return `txid_${params.type}`;
   }),
-}));
-
-vi.mock('../../utils/storage.js', () => ({
-  getNonce: vi.fn(() => 1),
-  incrementNonce: vi.fn(() => 2),
 }));
 
 describe('transaction.service.js', () => {
@@ -36,22 +31,8 @@ describe('transaction.service.js', () => {
         source: 'abc123',
         fee: 1,
         payload: 'commitment_hash',
-        nonce: 1,
         transactionID: null,
       });
-    });
-
-    it('should use provided nonce', async () => {
-      const params = {
-        type: 'name_new',
-        walletID: 'abc123',
-        fee: 1,
-        payload: 'commitment_hash',
-        nonce: 5,
-      };
-
-      const tx = await buildTransaction(params);
-      expect(tx.nonce).toBe(5);
     });
 
     it('should encode payload correctly', async () => {
@@ -86,13 +67,12 @@ describe('transaction.service.js', () => {
         source: 'abc123',
         fee: 1,
         payload: 'commitment',
-        nonce: 1,
         transactionID: null,
       };
 
       const result = await computeTransactionID(tx);
 
-      expect(result.transactionID).toBe('txid_name_new_1');
+      expect(result.transactionID).toBe('txid_name_new');
       expect(result.type).toBe('name_new');
       expect(result.source).toBe('abc123');
     });
@@ -103,14 +83,13 @@ describe('transaction.service.js', () => {
         source: 'abc123',
         fee: 1,
         payload: 'commitment',
-        nonce: 1,
         transactionID: null,
       };
 
       const result = await computeTransactionID(tx);
 
       expect(tx.transactionID).toBe(null);
-      expect(result.transactionID).toBe('txid_name_new_1');
+      expect(result.transactionID).toBe('txid_name_new');
     });
   });
 
@@ -165,7 +144,6 @@ describe('transaction.service.js', () => {
         source: 'abc123',
         fee: 1,
         payload: 'commitment',
-        nonce: 1,
       };
 
       const result = validateTransaction(tx);
@@ -178,7 +156,6 @@ describe('transaction.service.js', () => {
         source: 'abc123',
         fee: 1,
         payload: 'commitment',
-        nonce: 1,
       };
 
       const result = validateTransaction(tx);
@@ -191,7 +168,6 @@ describe('transaction.service.js', () => {
         type: 'name_new',
         fee: 1,
         payload: 'commitment',
-        nonce: 1,
       };
 
       const result = validateTransaction(tx);
@@ -205,7 +181,6 @@ describe('transaction.service.js', () => {
         source: 'abc123',
         fee: 0,
         payload: 'commitment',
-        nonce: 1,
       };
 
       const result = validateTransaction(tx);
@@ -218,25 +193,11 @@ describe('transaction.service.js', () => {
         type: 'name_new',
         source: 'abc123',
         fee: 1,
-        nonce: 1,
       };
 
       const result = validateTransaction(tx);
       expect(result.valid).toBe(false);
       expect(result.errors).toContain('Payload is required');
-    });
-
-    it('should detect missing nonce', () => {
-      const tx = {
-        type: 'name_new',
-        source: 'abc123',
-        fee: 1,
-        payload: 'commitment',
-      };
-
-      const result = validateTransaction(tx);
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContain('Nonce is required');
     });
 
     it('should collect multiple errors', () => {
@@ -253,24 +214,11 @@ describe('transaction.service.js', () => {
         source: 'abc123',
         fee: 10,
         payload: 'commitment',
-        nonce: 1,
       };
 
       const result = validateTransaction(tx);
       expect(result.valid).toBe(true);
     });
 
-    it('should accept nonce of 0', () => {
-      const tx = {
-        type: 'name_new',
-        source: 'abc123',
-        fee: 1,
-        payload: 'commitment',
-        nonce: 0,
-      };
-
-      const result = validateTransaction(tx);
-      expect(result.valid).toBe(true);
-    });
   });
 });

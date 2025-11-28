@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import canonicalize from 'canonicalize';
 import {
   sendTransaction,
   getTransactionStatus,
@@ -48,13 +49,18 @@ describe('api.service.js', () => {
 
       expect(result).toEqual(mockResponse);
       expect(fetch).toHaveBeenCalledWith(
-        'http://127.0.0.1:8080/namecoin/transaction',
+        'http://127.0.0.1:8080/namecoin/new',
         expect.objectContaining({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            transaction: tx,
-            signature: signature,
+          body: canonicalize({
+            type: tx.type,
+            from: tx.source,
+            fee: tx.fee,
+            payload: tx.payload,
+            publicKey: tx.source,
+            txId: tx.transactionID,
+            signature: signature
           }),
         })
       );
@@ -71,7 +77,6 @@ describe('api.service.js', () => {
         source: 'wallet123',
         fee: 1,
         payload: 'commitment',
-        nonce: 1,
         transactionID: 'txid123',
       };
       const signature = 'sig123';
@@ -87,7 +92,6 @@ describe('api.service.js', () => {
         source: 'wallet123',
         fee: 1,
         payload: 'commitment',
-        nonce: 1,
         transactionID: 'txid123',
       };
       const signature = 'sig123';
@@ -106,7 +110,6 @@ describe('api.service.js', () => {
         source: 'wallet123',
         fee: 1,
         payload: 'commitment',
-        nonce: 1,
         transactionID: 'txid123',
       };
       const signature = 'sig123';
@@ -118,8 +121,13 @@ describe('api.service.js', () => {
       const bodyObj = JSON.parse(bodyString);
 
       expect(bodyObj).toEqual({
-        transaction: tx,
-        signature: signature,
+        type: tx.type,
+        from: tx.source,
+        fee: tx.fee,
+        payload: tx.payload,
+        publicKey: tx.source,
+        txId: tx.transactionID,
+        signature: signature
       });
     });
   });

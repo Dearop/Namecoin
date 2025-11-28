@@ -1,3 +1,5 @@
+import canonicalize from 'canonicalize';
+
 function getBaseURL() {
   // Get proxy address from localStorage (set in Home view)
   const proxyAddr = localStorage.getItem('proxyAddr');
@@ -10,13 +12,18 @@ function getBaseURL() {
 export async function sendTransaction(tx, signature) {
   try {
     const baseURL = getBaseURL();
-    const response = await fetch(`${baseURL}/namecoin/transaction`, {
+    const response = await fetch(`${baseURL}/namecoin/new`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        transaction: tx,
+      body: canonicalize({
+        type: tx.type,
+        from: tx.source,
+        fee: tx.fee,
+        payload: tx.payload,
+        publicKey: tx.source,
+        txId: tx.transactionID,
         signature: signature
       })
     });

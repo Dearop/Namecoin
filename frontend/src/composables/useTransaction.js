@@ -2,7 +2,7 @@ import { ref } from 'vue';
 import * as transactionService from '../services/transaction.service.js';
 import * as cryptoService from '../services/crypto.service.js';
 import * as apiService from '../services/api.service.js';
-import { incrementNonce, saveDomain } from '../utils/storage.js';
+import { saveDomain } from '../utils/storage.js';
 
 const currentTransaction = ref(null);
 const isProcessing = ref(false);
@@ -15,14 +15,10 @@ export function useTransaction() {
     try {
       isProcessing.value = true;
       error.value = null;
-
-      // Get fresh nonce
-      const nonce = incrementNonce();
       
       // Build transaction
       const tx = await transactionService.buildTransaction({
-        ...params,
-        nonce
+        ...params
       });
 
       // Compute transaction ID

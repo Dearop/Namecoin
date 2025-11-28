@@ -98,14 +98,12 @@ describe('storage.js', () => {
   describe('clear', () => {
     it('should remove all peerster items', () => {
       setItem(StorageKeys.WALLET, { key: 'value' });
-      setItem(StorageKeys.NONCE, 5);
       setItem(StorageKeys.DOMAINS, []);
       setItem('other_key', 'should remain'); // Non-peerster key
 
       clear();
 
       expect(getItem(StorageKeys.WALLET)).toBe(null);
-      expect(getItem(StorageKeys.NONCE)).toBe(null);
       expect(getItem(StorageKeys.DOMAINS)).toBe(null);
       expect(getItem('other_key')).toBe('should remain');
     });
@@ -126,40 +124,6 @@ describe('storage.js', () => {
     it('should return null if no wallet saved', () => {
       const retrieved = getWalletData();
       expect(retrieved).toBe(null);
-    });
-  });
-
-  describe('Nonce helpers', () => {
-    it('should save and retrieve nonce', () => {
-      saveNonce(10);
-      const retrieved = getNonce();
-      expect(retrieved).toBe(10);
-    });
-
-    it('should return 0 if no nonce saved', () => {
-      const retrieved = getNonce();
-      expect(retrieved).toBe(0);
-    });
-
-    it('should increment nonce', () => {
-      saveNonce(5);
-      const next = incrementNonce();
-      expect(next).toBe(6);
-      expect(getNonce()).toBe(6);
-    });
-
-    it('should increment from 0 if no nonce saved', () => {
-      const next = incrementNonce();
-      expect(next).toBe(1);
-      expect(getNonce()).toBe(1);
-    });
-
-    it('should increment multiple times', () => {
-      incrementNonce(); // 1
-      incrementNonce(); // 2
-      const next = incrementNonce(); // 3
-      expect(next).toBe(3);
-      expect(getNonce()).toBe(3);
     });
   });
 
@@ -194,7 +158,6 @@ describe('storage.js', () => {
   describe('StorageKeys', () => {
     it('should have correct prefixed keys', () => {
       expect(StorageKeys.WALLET).toBe('peerster_wallet');
-      expect(StorageKeys.NONCE).toBe('peerster_nonce');
       expect(StorageKeys.DOMAINS).toBe('peerster_domains');
       expect(StorageKeys.TRANSACTIONS).toBe('peerster_transactions');
     });

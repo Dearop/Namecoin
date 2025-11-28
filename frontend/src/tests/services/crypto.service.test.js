@@ -209,7 +209,6 @@ describe('crypto.service.js', () => {
         source: 'abc123',
         fee: 1,
         payload: 'commitment',
-        nonce: 1,
         transactionID: 'txid123',
       };
 
@@ -226,11 +225,10 @@ describe('crypto.service.js', () => {
         source: 'abc123',
         fee: 1,
         payload: 'commitment',
-        nonce: 1,
         transactionID: 'txid123',
       };
 
-      const tx2 = { ...tx1, nonce: 2 };
+      const tx2 = { ...tx1, type: 'name_update' };
 
       const hash1 = await hashTransaction(tx1);
       const hash2 = await hashTransaction(tx2);
@@ -245,7 +243,6 @@ describe('crypto.service.js', () => {
         source: 'abc123',
         fee: 1,
         payload: 'commitment',
-        nonce: 1,
         transactionID: 'txid123',
       };
 
@@ -261,7 +258,6 @@ describe('crypto.service.js', () => {
         source: 'abc123',
         fee: 1,
         payload: 'commitment',
-        nonce: 1,
         transactionID: 'txid123',
       };
 

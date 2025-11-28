@@ -92,7 +92,6 @@ import { hashDomainWithSalt, generateTransactionSignature, hashTransaction } fro
 import { buildTransaction, computeTransactionID } from '../services/transaction.service.js';
 import { sendTransaction, getBlockchainState } from '../services/api.service.js';
 import { generateSalt } from '../utils/hash.js';
-import { incrementNonce } from '../utils/storage.js';
 
 const router = useRouter();
 const proxyAddr = ref(localStorage.getItem('proxyAddr') || '');
@@ -184,7 +183,6 @@ async function handleSubmit() {
       lastTxId.value = response.txID;
       status.value = `Transaction successful! Status: ${response.status}`;
       domainName.value = '';
-      incrementNonce();
     } else {
       status.value = `Transaction failed: ${response.error}`;
     }

@@ -175,7 +175,6 @@ describe('hash.js', () => {
         sourceID: 'abc123',
         fee: 1,
         payload: 'hash123',
-        nonce: 1,
       };
       const txID = await generateTxID(params);
       expect(txID).toHaveLength(64);
@@ -187,25 +186,10 @@ describe('hash.js', () => {
         sourceID: 'abc123',
         fee: 1,
         payload: 'hash123',
-        nonce: 1,
       };
       const txID1 = await generateTxID(params);
       const txID2 = await generateTxID(params);
       expect(txID1).toBe(txID2);
-    });
-
-    it('should produce different IDs for different nonces', async () => {
-      const params1 = {
-        type: 'name_new',
-        sourceID: 'abc123',
-        fee: 1,
-        payload: 'hash123',
-        nonce: 1,
-      };
-      const params2 = { ...params1, nonce: 2 };
-      const txID1 = await generateTxID(params1);
-      const txID2 = await generateTxID(params2);
-      expect(txID1).not.toBe(txID2);
     });
 
     it('should include all parameters in hash', async () => {
@@ -214,7 +198,6 @@ describe('hash.js', () => {
         sourceID: 'abc123',
         fee: 1,
         payload: 'hash123',
-        nonce: 1,
       };
       const baseID = await generateTxID(params);
 
