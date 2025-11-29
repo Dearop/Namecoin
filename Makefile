@@ -30,6 +30,12 @@ test_unit_hw3:
 test_unit_POW:
 	go test -timeout 2m -v -race -run 'Test(MineNonce|CheckWork)' ./peer/tests/unit
 
+test_unit_transaction_service:
+	go test -timeout 2m -v -race -run TestTransactionService ./peer/tests/unit
+
+test_unit_wallet_manager:
+	go test -timeout 2m -v -race -run TestTokenWalletManager ./peer/tests/unit
+
 test_int_hw0:
 	go test -timeout 5m -v -race -run Test_HW0 ./peer/tests/integration
 

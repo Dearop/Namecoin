@@ -226,8 +226,9 @@ func start(c *urfave.Context) error {
 	}
 
 	node := peerFactory(conf)
+	transactionService := impl.NewTransactionService(impl.NewState())
 
-	httpnode := httpnode.NewHTTPNode(node, conf)
+	httpnode := httpnode.NewHTTPNode(node, conf, transactionService)
 
 	notify := make(chan os.Signal, 1)
 	signal.Notify(notify,
