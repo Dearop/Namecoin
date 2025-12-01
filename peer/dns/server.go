@@ -172,6 +172,14 @@ func (s *Server) buildResponse(msg []byte) ([]byte, bool) {
 
 // DNS encoding helpers.
 
+
+// parseQuestion parses the question section of a DNS message.
+// It returns the name, type, class, and offset of the end of the question section.
+// It also returns an error if the question section is truncated or invalid.
+// The name is a list of labels separated by dots.
+// The type is a 16-bit unsigned integer.
+// The class is a 16-bit unsigned integer.
+// The offset is the index of the first byte of the next section.
 func parseQuestion(msg []byte, off int) (string, uint16, uint16, int, error) {
 	labels := make([]string, 0, 4)
 	for {

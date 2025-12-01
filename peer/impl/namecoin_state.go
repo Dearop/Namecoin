@@ -209,154 +209,167 @@ func (s *NamecoinState) pruneExpired(height uint64) {
 
 // ---- Core Apply Tx ----
 
-// ApplyTx applies a single tx to the state under a given block context
-// ApplyTx validates ownership, fees, expiry, and updates domain/balance state
-// for each tx type. Balance debits/credits deferred to block reward/fees
-// nolint:funlen // validation logic is kept inline for readability
+// ApplyTx applies a single tx to the state under a given block context.
+// It validates ownership, fees, expiry, and updates domain/balance state
+// for each tx type. Balance debits/credits are deferred to block reward/fees.
 func (s *NamecoinState) ApplyTx(tx *types.Tx, ctx BlockContext) error {
+	if err := s.validateTxInput(tx, ctx); err != nil {
+		return err
+	}
+	p := tx.Payload
+	if err := s.applyFee(p); err != nil {
+		return err
+	}
+	s.pruneExpired(ctx.Height)
+
+	switch p.Op {
+	case opCoinbase:
+		return s.applyCoinbase(p, ctx)
+	case "pay":
+		return s.applyPay(p)
+	case "register":
+		return s.applyRegister(p, ctx)
+	case "firstupdate":
+		return s.applyFirstUpdate(p, ctx)
+	case "update":
+		return s.applyUpdate(p, ctx)
+	case "transfer":
+		return s.applyTransfer(p, ctx)
+	default:
+		return fmt.Errorf("unknown op %q", p.Op)
+	}
+}
+
+func (s *NamecoinState) validateTxInput(tx *types.Tx, ctx BlockContext) error {
 	if s == nil {
 		return fmt.Errorf("apply tx: nil NamecoinState")
 	}
 	if tx == nil || tx.ID == nil {
 		return fmt.Errorf("apply tx: nil tx")
 	}
-
-	p := tx.Payload
-	op := p.Op
-
-	// Very basic timestamp sanity (optional).
 	if ctx.Timestamp > 0 {
 		now := time.Now().Unix()
 		if ctx.Timestamp > now+MaxClockSkewSecs {
 			return fmt.Errorf("apply tx: block timestamp too far in future")
 		}
 	}
+	return nil
+}
 
-	// Apply fees first (except coinbase)
-	if op != opCoinbase && p.Fee > 0 {
-		if p.Fee < MinTxFee {
-			return fmt.Errorf("fee below minimum")
-		}
-		if err := s.debit(p.From, p.Fee); err != nil {
-			return fmt.Errorf("fee debit failed: %w", err)
-		}
+func (s *NamecoinState) applyFee(p types.TxPayload) error {
+	if p.Op == opCoinbase || p.Fee == 0 {
+		return nil
 	}
-
-	// Prune expired domains before applying name ops
-	s.pruneExpired(ctx.Height)
-
-	switch op {
-
-	case opCoinbase:
-		// Block subsidy + fees will be handled at block level; here we assume
-		// this payload just transfers Amount to Miner or To
-		if p.Amount == 0 {
-			return nil
-		}
-		target := p.To
-		if target == "" {
-			target = ctx.Miner
-		}
-		if target == "" {
-			return fmt.Errorf("coinbase without target address")
-		}
-		s.credit(target, p.Amount)
-		return nil
-
-	case "pay":
-		if p.Name != "" {
-			return fmt.Errorf("pay must not carry name")
-		}
-		if p.Amount == 0 {
-			return fmt.Errorf("pay with zero amount")
-		}
-		if err := s.debit(p.From, p.Amount); err != nil {
-			return fmt.Errorf("pay debit failed: %w", err)
-		}
-		s.credit(p.To, p.Amount)
-		return nil
-
-	case "register":
-		// Simple name_new/commit stand-in:
-		// - name must not exist (or must be expired)
-		// TODO: add commit logic
-		if p.Name == "" {
-			return fmt.Errorf("register without name")
-		}
-		if rec, ok := s.Domains[p.Name]; ok && rec.ExpiresAt == 0 || rec.ExpiresAt > ctx.Height {
-			return fmt.Errorf("name %s already registered", p.Name)
-		}
-		s.Domains[p.Name] = types.NameRecord{
-			Owner:     p.From,
-			Value:     p.Value,
-			ExpiresAt: ctx.Height + DomainTTLBlocks,
-		}
-		return nil
-
-	case "firstupdate":
-		// TODO: In real Namecoin this reveals a commit
-		if p.Name == "" {
-			return fmt.Errorf("firstupdate without name")
-		}
-		rec, ok := s.Domains[p.Name]
-		if !ok {
-			return fmt.Errorf("firstupdate for unknown name %s", p.Name)
-		}
-		if rec.Owner != p.From {
-			return fmt.Errorf("firstupdate: not owner")
-		}
-
-		// Update value and refresh expiry
-		rec.Value = p.Value
-		rec.ExpiresAt = ctx.Height + DomainTTLBlocks
-		s.Domains[p.Name] = rec
-		return nil
-
-	case "update":
-		if p.Name == "" {
-			return fmt.Errorf("update without name")
-		}
-		rec, ok := s.Domains[p.Name]
-		if !ok {
-			return fmt.Errorf("update non-existent name %s", p.Name)
-		}
-		if rec.ExpiresAt != 0 && rec.ExpiresAt <= ctx.Height {
-			return fmt.Errorf("update on expired name %s", p.Name)
-		}
-		if rec.Owner != p.From {
-			return fmt.Errorf("update: not owner")
-		}
-		rec.Value = p.Value
-		// Expand expiry on update
-		rec.ExpiresAt = ctx.Height + DomainTTLBlocks
-		s.Domains[p.Name] = rec
-		return nil
-
-	case "transfer":
-		if p.Name == "" {
-			return fmt.Errorf("transfer without name")
-		}
-		if p.To == "" {
-			return fmt.Errorf("transfer without recipient")
-		}
-		rec, ok := s.Domains[p.Name]
-		if !ok {
-			return fmt.Errorf("transfer non-existent name %s", p.Name)
-		}
-		if rec.ExpiresAt != 0 && rec.ExpiresAt <= ctx.Height {
-			return fmt.Errorf("transfer on expired name %s", p.Name)
-		}
-		if rec.Owner != p.From {
-			return fmt.Errorf("transfer: not owner")
-		}
-		rec.Owner = p.To
-		s.Domains[p.Name] = rec
-		return nil
-
-	default:
-		// Unknown op: treat as invalid
-		return fmt.Errorf("unknown op %q", op)
+	if p.Fee < MinTxFee {
+		return fmt.Errorf("fee below minimum")
 	}
+	if err := s.debit(p.From, p.Fee); err != nil {
+		return fmt.Errorf("fee debit failed: %w", err)
+	}
+	return nil
+}
+
+func (s *NamecoinState) applyCoinbase(p types.TxPayload, ctx BlockContext) error {
+	if p.Amount == 0 {
+		return nil
+	}
+	target := p.To
+	if target == "" {
+		target = ctx.Miner
+	}
+	if target == "" {
+		return fmt.Errorf("coinbase without target address")
+	}
+	s.credit(target, p.Amount)
+	return nil
+}
+
+func (s *NamecoinState) applyPay(p types.TxPayload) error {
+	if p.Name != "" {
+		return fmt.Errorf("pay must not carry name")
+	}
+	if p.Amount == 0 {
+		return fmt.Errorf("pay with zero amount")
+	}
+	if err := s.debit(p.From, p.Amount); err != nil {
+		return fmt.Errorf("pay debit failed: %w", err)
+	}
+	s.credit(p.To, p.Amount)
+	return nil
+}
+
+func (s *NamecoinState) applyRegister(p types.TxPayload, ctx BlockContext) error {
+	if p.Name == "" {
+		return fmt.Errorf("register without name")
+	}
+	if rec, ok := s.Domains[p.Name]; ok && (rec.ExpiresAt == 0 || rec.ExpiresAt > ctx.Height) {
+		return fmt.Errorf("name %s already registered", p.Name)
+	}
+	s.Domains[p.Name] = types.NameRecord{
+		Owner:     p.From,
+		Value:     p.Value,
+		ExpiresAt: ctx.Height + DomainTTLBlocks,
+	}
+	return nil
+}
+
+func (s *NamecoinState) applyFirstUpdate(p types.TxPayload, ctx BlockContext) error {
+	if p.Name == "" {
+		return fmt.Errorf("firstupdate without name")
+	}
+	rec, ok := s.Domains[p.Name]
+	if !ok {
+		return fmt.Errorf("firstupdate for unknown name %s", p.Name)
+	}
+	if rec.Owner != p.From {
+		return fmt.Errorf("firstupdate: not owner")
+	}
+	rec.Value = p.Value
+	rec.ExpiresAt = ctx.Height + DomainTTLBlocks
+	s.Domains[p.Name] = rec
+	return nil
+}
+
+func (s *NamecoinState) applyUpdate(p types.TxPayload, ctx BlockContext) error {
+	if p.Name == "" {
+		return fmt.Errorf("update without name")
+	}
+	rec, ok := s.Domains[p.Name]
+	if !ok {
+		return fmt.Errorf("update non-existent name %s", p.Name)
+	}
+	if rec.ExpiresAt != 0 && rec.ExpiresAt <= ctx.Height {
+		return fmt.Errorf("update on expired name %s", p.Name)
+	}
+	if rec.Owner != p.From {
+		return fmt.Errorf("update: not owner")
+	}
+	rec.Value = p.Value
+	rec.ExpiresAt = ctx.Height + DomainTTLBlocks
+	s.Domains[p.Name] = rec
+	return nil
+}
+
+func (s *NamecoinState) applyTransfer(p types.TxPayload, ctx BlockContext) error {
+	if p.Name == "" {
+		return fmt.Errorf("transfer without name")
+	}
+	if p.To == "" {
+		return fmt.Errorf("transfer without recipient")
+	}
+	rec, ok := s.Domains[p.Name]
+	if !ok {
+		return fmt.Errorf("transfer non-existent name %s", p.Name)
+	}
+	if rec.ExpiresAt != 0 && rec.ExpiresAt <= ctx.Height {
+		return fmt.Errorf("transfer on expired name %s", p.Name)
+	}
+	if rec.Owner != p.From {
+		return fmt.Errorf("transfer: not owner")
+	}
+	rec.Owner = p.To
+	s.Domains[p.Name] = rec
+	return nil
 }
 
 // ApplyBlock applies all txs in a block to the state

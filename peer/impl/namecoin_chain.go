@@ -211,11 +211,33 @@ func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
 	}
 
 	state := NewState()
-
-	// Read stored head hash - can be empty
 	storedHeadHash := store.Get(NamecoinLastBlockKey)
 
-	// Scan all Namecoin blocks
+	blocks := collectNamecoinBlocks(store)
+	if len(blocks) == 0 {
+		return &NamecoinChain{
+			store: store, state: state,
+		}, nil
+	}
+
+	sort.Slice(blocks, func(i, j int) bool {
+		return blocks[i].Height < blocks[j].Height
+	})
+
+	headHash, headHeight := replayNamecoinBlocks(state, blocks, storedHeadHash)
+	if headHash != nil {
+		store.Set(NamecoinLastBlockKey, headHash)
+	}
+
+	return &NamecoinChain{
+		store:      store,
+		state:      state,
+		headHash:   headHash,
+		headHeight: headHeight,
+	}, nil
+}
+
+func collectNamecoinBlocks(store storage.Store) []loadedBlock {
 	var blocks []loadedBlock
 	store.ForEach(func(key string, val []byte) bool {
 		if !strings.HasPrefix(key, NamecoinBlockPrefix) {
@@ -233,23 +255,10 @@ func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
 		})
 		return true
 	})
+	return blocks
+}
 
-	if len(blocks) == 0 {
-		// Nothing to replay.
-		return &NamecoinChain{
-			store:      store,
-			state:      state,
-			headHash:   nil,
-			headHeight: 0,
-		}, nil
-	}
-
-	// Order by height from genesis to head
-	sort.Slice(blocks, func(i, j int) bool {
-		return blocks[i].Height < blocks[j].Height
-	})
-
-	// replay vars
+func replayNamecoinBlocks(state *NamecoinState, blocks []loadedBlock, storedHeadHash []byte) ([]byte, uint64) {
 	var (
 		prevHash   []byte
 		headHash   []byte
@@ -257,44 +266,21 @@ func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
 		foundHead  bool
 	)
 
-	// Replay blocks in order
 	for _, lb := range blocks {
-		var blk types.Block
-		if err := blk.Unmarshal(lb.Raw); err != nil {
-			warnf("load namecoin chain: skipping block at height %d: cannot unmarshal: %v",
-				lb.Height, err)
+		blk, ok := decodeLoadedBlock(lb)
+		if !ok {
 			continue
 		}
-
-		// Basic height sanity: header height should match key height if set
-		if blk.Header.Height != 0 && blk.Header.Height != lb.Height {
-			warnf("load namecoin chain: block key height %d != header height %d; skipping",
-				lb.Height, blk.Header.Height)
+		if !validateLoadedBlockHeight(lb, &blk) {
 			continue
 		}
-		if blk.Header.Height == 0 {
-			blk.Header.Height = lb.Height
-		}
-
-		// Basic prevHash linkage
-		if blk.Header.Height == 0 {
-			// Genesis prevHash should be empty
-			if len(blk.Header.PrevHash) != 0 {
-				warnf("load namecoin chain: genesis block with non-empty prevHash; continuing anyway")
-			}
-		} else if prevHash != nil && !bytes.Equal(blk.Header.PrevHash, prevHash) {
-			warnf("load namecoin chain: skipping block at height %d: prevHash mismatch", blk.Header.Height)
+		if !validateLoadedPrev(prevHash, &blk) {
 			continue
 		}
-
-		// Apply block transactions to state
 		if err := ApplyNamecoinBlock(state, &blk); err != nil {
 			warnf("namecoin: error applying block at height %d: %v", blk.Header.Height, err)
-			// for robustness, we keep going; bad blocks dont kill replay
 			continue
 		}
-
-		// Track head and linkage for the next iteration
 		prevHash = append([]byte(nil), blk.Header.Hash...)
 		headHash = prevHash
 		headHeight = blk.Header.Height
@@ -305,23 +291,46 @@ func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
 		}
 	}
 
-	// If we had a stored head but never encountered it, we use the
-	// last valid block we replayed and overwrite NamecoinLastBlockKey below
 	if storedHeadHash != nil && !foundHead {
 		warnf("namecoin: stored head hash not found in chain; using last valid block at height %d", headHeight)
 	}
+	return headHash, headHeight
+}
 
-	// Persist the new head hash
-	if headHash != nil {
-		store.Set(NamecoinLastBlockKey, headHash)
+func decodeLoadedBlock(lb loadedBlock) (types.Block, bool) {
+	var blk types.Block
+	if err := blk.Unmarshal(lb.Raw); err != nil {
+		warnf("load namecoin chain: skipping block at height %d: cannot unmarshal: %v",
+			lb.Height, err)
+		return blk, false
 	}
+	return blk, true
+}
 
-	return &NamecoinChain{
-		store:      store,
-		state:      state,
-		headHash:   headHash,
-		headHeight: headHeight,
-	}, nil
+func validateLoadedBlockHeight(lb loadedBlock, blk *types.Block) bool {
+	if blk.Header.Height != 0 && blk.Header.Height != lb.Height {
+		warnf("load namecoin chain: block key height %d != header height %d; skipping",
+			lb.Height, blk.Header.Height)
+		return false
+	}
+	if blk.Header.Height == 0 {
+		blk.Header.Height = lb.Height
+	}
+	return true
+}
+
+func validateLoadedPrev(prevHash []byte, blk *types.Block) bool {
+	if blk.Header.Height == 0 {
+		if len(blk.Header.PrevHash) != 0 {
+			warnf("load namecoin chain: genesis block with non-empty prevHash; continuing anyway")
+		}
+		return true
+	}
+	if prevHash != nil && !bytes.Equal(blk.Header.PrevHash, prevHash) {
+		warnf("load namecoin chain: skipping block at height %d: prevHash mismatch", blk.Header.Height)
+		return false
+	}
+	return true
 }
 
 // ---- Core Validate Block ----
@@ -352,23 +361,8 @@ func (c *NamecoinChain) ValidateBlock(blk *types.Block) (*NamecoinState, error) 
 	currentState := c.state
 	c.mu.RUnlock()
 
-	// Basic height / prevHash linkage.
-	if currentHeadHash == nil {
-		// Empty chain: expect genesis block
-		if blk.Header.Height != 0 {
-			return nil, fmt.Errorf("invalid genesis height %d; expected 0", blk.Header.Height)
-		}
-		if len(blk.Header.PrevHash) != 0 {
-			return nil, fmt.Errorf("genesis block must have empty prevHash")
-		}
-	} else {
-		expectedHeight := currentHeadHeight + 1
-		if blk.Header.Height != expectedHeight {
-			return nil, fmt.Errorf("invalid height %d; expected %d", blk.Header.Height, expectedHeight)
-		}
-		if !bytes.Equal(blk.Header.PrevHash, currentHeadHash) {
-			return nil, fmt.Errorf("prevHash mismatch")
-		}
+	if err := validateLinkage(currentHeadHash, currentHeadHeight, blk); err != nil {
+		return nil, err
 	}
 
 	// txRoot consistency
@@ -387,6 +381,27 @@ func (c *NamecoinChain) ValidateBlock(blk *types.Block) (*NamecoinState, error) 
 	}
 
 	return tmp, nil
+}
+
+func validateLinkage(headHash []byte, headHeight uint64, blk *types.Block) error {
+	if headHash == nil {
+		if blk.Header.Height != 0 {
+			return fmt.Errorf("invalid genesis height %d; expected 0", blk.Header.Height)
+		}
+		if len(blk.Header.PrevHash) != 0 {
+			return fmt.Errorf("genesis block must have empty prevHash")
+		}
+		return nil
+	}
+
+	expectedHeight := headHeight + 1
+	if blk.Header.Height != expectedHeight {
+		return fmt.Errorf("invalid height %d; expected %d", blk.Header.Height, expectedHeight)
+	}
+	if !bytes.Equal(blk.Header.PrevHash, headHash) {
+		return fmt.Errorf("prevHash mismatch")
+	}
+	return nil
 }
 
 // ---- Core Apply Block ----
