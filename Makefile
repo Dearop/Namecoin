@@ -36,6 +36,9 @@ test_unit_transaction_service:
 test_unit_wallet_manager:
 	go test -timeout 2m -v -race -run TestTokenWalletManager ./peer/tests/unit
 
+test_unit_namecoin_resolver:
+	go test -timeout 2m -v -race -run 'TestNamecoinDNS' ./peer/tests/unit
+
 test_int_hw0:
 	go test -timeout 5m -v -race -run Test_HW0 ./peer/tests/integration
 

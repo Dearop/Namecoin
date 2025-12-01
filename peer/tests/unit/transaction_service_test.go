@@ -12,16 +12,17 @@ import (
 )
 
 func TestTransactionServiceApplyTransaction(t *testing.T) {
-	state := impl.NewState()
+	state := impl.NewTmpState()
 	service := impl.NewTransactionService(state)
 	const addr = "carol"
 	fundAddress(service, addr, 200)
 
 	tx := types.Tx{
-		Type:    "custom",
-		From:    addr,
-		Fee:     30,
-		Payload: json.RawMessage("{}"),
+		Payload: types.TxPayload{
+			From: addr,
+			Op:   "custom",
+			Fee:  30,
+		},
 	}
 
 	balance, err := service.ApplyTransaction("tx-1", tx)
@@ -36,7 +37,7 @@ func TestTransactionServiceApplyTransaction(t *testing.T) {
 	if stored == nil {
 		t.Fatalf("expected transaction to be stored")
 	}
-	if stored.From != tx.From || stored.Fee != tx.Fee || stored.Type != tx.Type {
+	if stored.Payload.From != tx.Payload.From || stored.Payload.Fee != tx.Payload.Fee || stored.Payload.Op != tx.Payload.Op {
 		t.Fatalf("unexpected stored transaction %+v", stored)
 	}
 
@@ -46,7 +47,7 @@ func TestTransactionServiceApplyTransaction(t *testing.T) {
 }
 
 func TestTransactionServiceValidateTransactionSignatureMismatch(t *testing.T) {
-	service := impl.NewTransactionService(impl.NewState())
+	service := impl.NewTransactionService(impl.NewTmpState())
 	pub, priv := mustMakeKeyPair(t)
 
 	tx := buildSignedTransaction(t, pub, priv, impl.NameNew{}.Name(), 2, impl.NameNew{Commitment: "commitment"})
@@ -59,7 +60,7 @@ func TestTransactionServiceValidateTransactionSignatureMismatch(t *testing.T) {
 }
 
 func TestTransactionServiceValidateTransactionSignatureMatch(t *testing.T) {
-	service := impl.NewTransactionService(impl.NewState())
+	service := impl.NewTransactionService(impl.NewTmpState())
 	pub, priv := mustMakeKeyPair(t)
 
 	tx := buildSignedTransaction(t, pub, priv, impl.NameNew{}.Name(), 2, impl.NameNew{Commitment: "commitment"})
@@ -71,7 +72,7 @@ func TestTransactionServiceValidateTransactionSignatureMatch(t *testing.T) {
 }
 
 func TestTransactionServiceValidateTransactionFirstUpdateCommitmentMismatch(t *testing.T) {
-	state := impl.NewState()
+	state := impl.NewTmpState()
 	service := impl.NewTransactionService(state)
 	pub, priv := mustMakeKeyPair(t)
 
@@ -92,7 +93,7 @@ func TestTransactionServiceValidateTransactionFirstUpdateCommitmentMismatch(t *t
 }
 
 func TestTransactionServiceValidateTransactionNameUpdateWrongOwner(t *testing.T) {
-	state := impl.NewState()
+	state := impl.NewTmpState()
 	service := impl.NewTransactionService(state)
 	pub, priv := mustMakeKeyPair(t)
 	payload := impl.NameUpdate{

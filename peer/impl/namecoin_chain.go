@@ -53,6 +53,18 @@ func (c *NamecoinChain) HeadHeight() uint64 {
 	return c.headHeight
 }
 
+// SnapshotDomains returns a shallow copy of the domain map and the current height.
+// Used by read-only components like DNS resolvers to avoid holding locks.
+func (c *NamecoinChain) SnapshotDomains() (map[string]types.NameRecord, uint64) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make(map[string]types.NameRecord, len(c.state.Domains))
+	for k, v := range c.state.Domains {
+		out[k] = v
+	}
+	return out, c.headHeight
+}
+
 // ---- Helper utils ----
 // loadedBlock is used only during chain replay to sort blocks by height and
 // keep both the key and raw bytes on hand
@@ -340,7 +352,7 @@ func (c *NamecoinChain) ValidateBlock(blk *types.Block) (*NamecoinState, error) 
 	currentState := c.state
 	c.mu.RUnlock()
 
-	// Basic height / prevHash linkage
+	// Basic height / prevHash linkage.
 	if currentHeadHash == nil {
 		// Empty chain: expect genesis block
 		if blk.Header.Height != 0 {

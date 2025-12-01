@@ -7,7 +7,7 @@ import (
 	"go.dedis.ch/cs438/types"
 )
 
-func NewState() *TmpState {
+func NewTmpState() *TmpState {
 	return &TmpState{
 		transactions: map[string]*types.Tx{},
 		// todo: not sure, teacher said that we don't need MemPool
@@ -102,7 +102,9 @@ type TransactionService struct {
 
 func (t *TransactionService) ApplyTransaction(txID string, tx types.Tx) (uint64, error) {
 	// todo: replace with actual storing on blockchain
-	balance, err := t.TokenManager.ChargeAndGet(tx.From, tx.Fee)
+	from := tx.Payload.From
+	fee := tx.Payload.Fee
+	balance, err := t.TokenManager.ChargeAndGet(from, fee)
 	if err != nil {
 		return 0, err
 	}

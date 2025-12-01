@@ -91,7 +91,7 @@ func Test_Namecoin_LoadNamecoinChain_SingleBlock(t *testing.T) {
 }
 
 func Test_Namecoin_LoadNamecoinChain_MultipleBlocksAndPrevHashMismatch(t *testing.T) {
-	chain, store := newTestChain(t)
+	_, store := newTestChain(t)
 
 	tx0 := types.Tx{
 		ID: []byte("tx0"),

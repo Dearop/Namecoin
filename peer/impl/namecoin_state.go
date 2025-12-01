@@ -167,6 +167,7 @@ const (
 	BlockSubsidyBase uint64 = 50 * 1e8
 	MinTxFee         uint64 = 1e4
 	MaxClockSkewSecs        = 2 * 60
+	opCoinbase              = "coinbase"
 )
 
 // BlockContext is supplied by the chain when applying a block
@@ -211,6 +212,7 @@ func (s *NamecoinState) pruneExpired(height uint64) {
 // ApplyTx applies a single tx to the state under a given block context
 // ApplyTx validates ownership, fees, expiry, and updates domain/balance state
 // for each tx type. Balance debits/credits deferred to block reward/fees
+// nolint:funlen // validation logic is kept inline for readability
 func (s *NamecoinState) ApplyTx(tx *types.Tx, ctx BlockContext) error {
 	if s == nil {
 		return fmt.Errorf("apply tx: nil NamecoinState")
@@ -231,7 +233,7 @@ func (s *NamecoinState) ApplyTx(tx *types.Tx, ctx BlockContext) error {
 	}
 
 	// Apply fees first (except coinbase)
-	if op != "coinbase" && p.Fee > 0 {
+	if op != opCoinbase && p.Fee > 0 {
 		if p.Fee < MinTxFee {
 			return fmt.Errorf("fee below minimum")
 		}
@@ -245,7 +247,7 @@ func (s *NamecoinState) ApplyTx(tx *types.Tx, ctx BlockContext) error {
 
 	switch op {
 
-	case "coinbase":
+	case opCoinbase:
 		// Block subsidy + fees will be handled at block level; here we assume
 		// this payload just transfers Amount to Miner or To
 		if p.Amount == 0 {
