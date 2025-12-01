@@ -6,19 +6,6 @@ import (
 	"go.dedis.ch/cs438/types"
 )
 
-// NewTransactionService creates a new TransactionService instance.
-func NewTransactionService(blockchain *NamecoinState) *TransactionService {
-	return &TransactionService{
-		TokenManager: NewBalanceManager(blockchain),
-		state:        blockchain}
-}
-
-// TransactionService implements ITransactionService
-type TransactionService struct {
-	TokenManager *BalanceManager
-	state        *NamecoinState
-}
-
 func (t *TransactionService) ValidateTransaction(tx *SignedTransaction) error {
 	// 1. Decode public key
 	pubKeyBytes, err := decodeHex(tx.From)
@@ -27,7 +14,7 @@ func (t *TransactionService) ValidateTransaction(tx *SignedTransaction) error {
 	}
 
 	// 2. Recompute TxID from unsigned transaction
-	unsignedBytes := BuildUnsignedTxBytes(tx)
+	unsignedBytes := tx.SerializeTransaction()
 	computedTxID := HashHex(unsignedBytes)
 
 	if computedTxID != tx.TxID {
@@ -41,7 +28,7 @@ func (t *TransactionService) ValidateTransaction(tx *SignedTransaction) error {
 	}
 
 	// 4. Validate payload based on transaction type
-	err = t.verifyCommand(tx)
+	err = t.state.ValidateCommand(tx)
 	if err != nil {
 		return err
 	}
@@ -49,7 +36,10 @@ func (t *TransactionService) ValidateTransaction(tx *SignedTransaction) error {
 	return nil
 }
 
-func (t *TransactionService) VerifyBalance(txID, from string, amount uint64) ([]types.TxInput, []types.TxOutput, error) {
+func (t *TransactionService) VerifyBalance(
+	txID,
+	from string,
+	amount uint64) ([]types.TxInput, []types.TxOutput, error) {
 	// 5. Check user balance use BalanceManager
 	// generating UTXOs to burn and one for leftovers
 	inputs, output, err := t.TokenManager.VerifyBalance(txID, from, amount)
@@ -58,51 +48,4 @@ func (t *TransactionService) VerifyBalance(txID, from string, amount uint64) ([]
 	}
 
 	return inputs, output, nil
-}
-
-// verifyCommand verifies the payload of a transaction based on its type
-func (t *TransactionService) verifyCommand(tx *SignedTransaction) error {
-	switch tx.Type {
-
-	case NameNew{}.Name():
-		p, wErr := ResolveNameCoinCommand[NameNew](tx.Type, tx.Payload)
-
-		if wErr != nil {
-			return wErr
-		}
-
-		if len(p.Commitment) == 0 {
-			return fmt.Errorf("name_new commitment empty")
-		}
-
-	case NameFirstUpdate{}.Name():
-		p, wErr := ResolveNameCoinCommand[NameFirstUpdate](tx.Type, tx.Payload)
-		if wErr != nil {
-			return wErr
-		}
-
-		// Must match earlier commitment
-		storedCommit := t.state.GetCommitment(tx.From)
-
-		//todo: Update, to avoid collisions.
-		if HashString(p.Salt+p.Domain) != storedCommit {
-			return fmt.Errorf("commitment mismatch for domain %s", p.Domain)
-		}
-
-	case NameUpdate{}.Name():
-		p, wErr := ResolveNameCoinCommand[NameUpdate](tx.Type, tx.Payload)
-		if wErr != nil {
-			return wErr
-		}
-
-		owner := t.state.GetDomainOwner(p.Domain)
-		if owner != tx.From {
-			return fmt.Errorf("cannot update domain you do not own")
-		}
-
-	default:
-		return fmt.Errorf("unsupported transaction type: %s", tx.Type)
-	}
-
-	return nil
 }

@@ -1,9 +1,8 @@
 package types
 
 import (
-	"bytes"
 	"crypto/sha256"
-	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 )
 
@@ -33,7 +32,7 @@ type Tx struct {
 	Inputs []TxInput
 
 	// we can produce at MAX one UTXO to corresponding transaction
-	// stored as array for simplicity
+	// stored as an array for simplicity
 	Outputs []TxOutput
 
 	Amount  uint64
@@ -73,9 +72,26 @@ type NameRecord struct {
 
 // Serialisation
 // Marshal marshals the NamecoinBlock into bytes for the blockchain store
-func (b *Block) Marshal() ([]byte, error) {
 
-	return json.Marshal(b)
+func (b *Block) Marshal() ([]byte, error) {
+	// Serialize the header using the custom method to respect determinism
+	headerBytes := b.Header.SerializeHeader()
+	headerHex := hex.EncodeToString(headerBytes)
+
+	// Marshal transactions normally
+	txData := b.Transactions
+
+	// Marshal hash as hex string too
+	hashHex := hex.EncodeToString(b.Hash)
+
+	// Create JSON structure
+	data := map[string]interface{}{
+		"header":       headerHex,
+		"transactions": txData,
+		"hash":         hashHex,
+	}
+
+	return json.Marshal(data)
 }
 
 // Unmarshal unmarshals data into this NamecoinBlock
@@ -100,47 +116,29 @@ func (b *Block) ComputeHash() []byte {
 }
 
 func (h *BlockHeader) SerializeHeader() []byte {
-	buf := new(bytes.Buffer)
+	data := map[string]interface{}{
+		"height":     h.Height,
+		"prevHash":   h.PrevHash,
+		"txRoot":     h.TxRoot,
+		"timestamp":  h.Timestamp,
+		"nonce":      h.Nonce,
+		"miner":      h.Miner,
+		"difficulty": h.Difficulty,
+	}
 
-	_ = binary.Write(buf, binary.LittleEndian, h.Height)
-
-	_ = binary.Write(buf, binary.LittleEndian, uint32(len(h.PrevHash)))
-	buf.Write(h.PrevHash)
-
-	_ = binary.Write(buf, binary.LittleEndian, uint32(len(h.TxRoot)))
-	buf.Write(h.TxRoot)
-
-	_ = binary.Write(buf, binary.LittleEndian, h.Timestamp)
-
-	_ = binary.Write(buf, binary.LittleEndian, h.Nonce)
-
-	minerBytes := []byte(h.Miner)
-	_ = binary.Write(buf, binary.LittleEndian, uint32(len(minerBytes)))
-	buf.Write(minerBytes)
-
-	_ = binary.Write(buf, binary.LittleEndian, uint32(len(h.Difficulty)))
-	buf.Write(h.Difficulty)
-
-	return buf.Bytes()
+	b, _ := json.Marshal(data)
+	return b
 }
 
 func (h *BlockHeader) SerializeBase() []byte {
-	buf := new(bytes.Buffer)
+	data := map[string]interface{}{
+		"height":     h.Height,
+		"prevHash":   h.PrevHash,
+		"txRoot":     h.TxRoot,
+		"miner":      h.Miner,
+		"difficulty": h.Difficulty,
+	}
 
-	_ = binary.Write(buf, binary.LittleEndian, h.Height)
-
-	_ = binary.Write(buf, binary.LittleEndian, uint32(len(h.PrevHash)))
-	buf.Write(h.PrevHash)
-
-	_ = binary.Write(buf, binary.LittleEndian, uint32(len(h.TxRoot)))
-	buf.Write(h.TxRoot)
-
-	minerBytes := []byte(h.Miner)
-	_ = binary.Write(buf, binary.LittleEndian, uint32(len(minerBytes)))
-	buf.Write(minerBytes)
-
-	_ = binary.Write(buf, binary.LittleEndian, uint32(len(h.Difficulty)))
-	buf.Write(h.Difficulty)
-
-	return buf.Bytes()
+	b, _ := json.Marshal(data)
+	return b
 }

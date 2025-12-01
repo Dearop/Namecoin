@@ -210,7 +210,7 @@ func ReplayBlocks(state *NamecoinState, blocks []loadedBlock, storedHeadHash []b
 		}
 
 		// Apply block transactions to state
-		if err := ApplyBlockToState(state, &blk); err != nil {
+		if err := state.ApplyBlock(&blk); err != nil {
 			warnf("namecoin: error applying block at height %d: %v", blk.Header.Height, err)
 			// for robustness, we keep going; bad blocks don't kill replay
 			continue
@@ -277,7 +277,7 @@ func (c *NamecoinChain) ValidateAndApply(currentHeadHeight uint64, currentHeadHa
 	}
 
 	// Replay txs on a cloned state to ensure they all apply cleanly
-	if err = ApplyBlockToState(currentState, blk); err != nil {
+	if err = currentState.ApplyBlock(blk); err != nil {
 		return fmt.Errorf("block tx replay failed: %w", err)
 	}
 
