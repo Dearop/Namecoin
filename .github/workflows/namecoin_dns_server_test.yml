@@ -1,0 +1,40 @@
+name: namecoin_dns_server_test
+
+on:
+  push
+  pull_request
+
+jobs:
+  tests:
+    runs-on:
+      group: runners_v1
+    steps:
+      - name: Use Go = 1.23
+        uses: actions/setup-go@v3
+        with:
+          go-version: '=1.23'
+        id: go
+
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v3
+
+      - name: Set up gotestfmt
+        uses: gotesttools/gotestfmt-action@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create temp directory
+        run: |
+          mkdir -p ./${{ github.run_attempt }}
+
+      - name: Run Namecoin DNS server integration tests
+        run: |
+          set -euo pipefail
+          go test -json -timeout 5m -v -race -run 'TestNamecoinDNSServer' ./peer/tests/integration 2>&1 | tee ./${{ github.run_attempt }}/gotest-namecoin-dns-server-int.log | gotestfmt
+
+      - name: Upload Namecoin DNS server integration test log
+        uses: actions/upload-artifact@v4
+        with:
+          name: namecoin-dns-server-integration-log
+          path: ./${{ github.run_attempt }}/gotest-namecoin-dns-server-int.log
+          if-no-files-found: error

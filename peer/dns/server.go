@@ -63,6 +63,14 @@ func (s *Server) Close() error {
 	return err
 }
 
+// Addr returns the local address the server is bound to.
+func (s *Server) Addr() string {
+	if s == nil || s.conn == nil {
+		return ""
+	}
+	return s.conn.LocalAddr().String()
+}
+
 func (s *Server) loop() {
 	defer s.wg.Done()
 	buf := make([]byte, maxDNSPacketSize)
@@ -171,7 +179,6 @@ func (s *Server) buildResponse(msg []byte) ([]byte, bool) {
 }
 
 // DNS encoding helpers.
-
 
 // parseQuestion parses the question section of a DNS message.
 // It returns the name, type, class, and offset of the end of the question section.

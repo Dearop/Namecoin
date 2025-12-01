@@ -51,6 +51,9 @@ test_int_hw2:
 test_int_hw3:
 	go test -timeout 5m -v -race -run Test_HW3 ./peer/tests/integration
 
+test_int_namecoin_dns:
+	go test -timeout 5m -v -race -run TestNamecoinDNSServer ./peer/tests/integration
+
 # JSONIFY is set to "-json" in CI to format for GitHub, empty for displaying locally
 # || true allows to ignore error code and allow for smoother output logging
 test_bench_hw1:
