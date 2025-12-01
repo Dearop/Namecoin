@@ -1,6 +1,7 @@
 package impl
 
 import (
+	"encoding/json"
 	"errors"
 	"log"
 	"os"
@@ -40,9 +41,13 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 	if err != nil {
 		panic(err)
 	}
+	namecoinChain.SetPowTarget(conf.PoWConfig.Target)
 
-	node.namecoinChain = namecoinChain
+	transactionService := NewTransactionService(namecoinChain.state)
+
+	node.NamecoinChain = namecoinChain
 	node.namecoinConsensus = consensus
+	node.transactionService = transactionService
 	node.mu.Unlock()
 	return node
 }
@@ -89,8 +94,9 @@ type node struct {
 	tlcBroadcasted map[uint]bool
 
 	// Namecoin
-	namecoinConsensus *NamecoinConsensus
-	namecoinChain     *NamecoinChain
+	namecoinConsensus  *NamecoinConsensus
+	NamecoinChain      *NamecoinChain
+	transactionService *TransactionService
 
 	// MinerPubKey
 	minerStopCh chan struct{}
@@ -160,15 +166,46 @@ func (n *node) Start() error {
 	return nil
 }
 
-// BroadcastTransaction implements Messaging.BroadcastTransaction
-func (n *node) BroadcastTransaction(message *types.NamecoinTransactionMessage) error {
-	msg, err := n.conf.MessageRegistry.MarshalMessage(message)
+func (n *node) HandleNamecoinCommand(buf []byte) error {
+	var transaction SignedTransaction
+	err := json.Unmarshal(buf, &transaction)
 	if err != nil {
 		return err
 	}
 
-	err = n.Broadcast(msg)
-	return err
+	err = n.transactionService.ValidateTransaction(&transaction)
+	if err != nil {
+		return err
+	}
+
+	inputs, outputs, err := n.transactionService.VerifyBalance(transaction.TxID, transaction.From, transaction.Amount)
+	if err != nil {
+		return err
+	}
+
+	msg := types.NamecoinTransactionMessage{
+		TxID: transaction.TxID,
+		Tx: types.Tx{
+			From:    transaction.From,
+			Type:    transaction.Type,
+			Inputs:  inputs,
+			Outputs: outputs,
+			Amount:  transaction.Amount,
+			Payload: transaction.Payload,
+		},
+	}
+
+	marshaled, err := n.conf.MessageRegistry.MarshalMessage(msg)
+	if err != nil {
+		return err
+	}
+
+	err = n.Broadcast(marshaled)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 type pendingAck struct {
@@ -225,12 +262,16 @@ func (n *node) StopMiner() {
 func (n *node) MinerDoWork() error {
 	// Build base header from current chain head
 	n.mu.RLock()
-	headHash := n.namecoinChain.HeadHash()
-	headHeight := n.namecoinChain.HeadHeight()
+	headHash := n.NamecoinChain.HeadHash()
+	headHeight := n.NamecoinChain.HeadHeight()
 	n.mu.RUnlock()
 
+	nextHeight := headHeight + 1
+	if headHash == nil {
+		nextHeight = 0
+	}
 	base := types.BlockHeader{
-		Height:    headHeight + 1,
+		Height:    nextHeight,
 		PrevHash:  headHash,
 		Miner:     n.conf.PoWConfig.PubKey,
 		Timestamp: time.Now().Unix(),
@@ -242,6 +283,8 @@ func (n *node) MinerDoWork() error {
 		return err
 	}
 
+	log.Printf("Mined block: %v", block)
+
 	// Broadcast mined block
 	msg := types.NamecoinBlockMessage{
 		Block: block,
@@ -252,12 +295,12 @@ func (n *node) MinerDoWork() error {
 		return err
 	}
 
-	err = n.Broadcast(wire)
+	err = n.broadcastWithOptions(wire, true)
 	if err != nil {
 		return err
 	}
 	// Apply block locally
-	if err = n.namecoinChain.ApplyBlock(&block); err != nil {
+	if err = n.NamecoinChain.ApplyBlock(&block); err != nil {
 		// should not happen; log but continue
 		log.Printf("Error applying mined block: %v", err)
 	}

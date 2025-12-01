@@ -5,33 +5,58 @@ import (
 	"testing"
 
 	"go.dedis.ch/cs438/peer/impl"
+	"go.dedis.ch/cs438/types"
 )
 
-func TestTokenBalanceManagerChargeAndGet(t *testing.T) {
-	manager := impl.NewBalanceManager(nil)
+func TestVerifyBalanceAggregatesInputs(t *testing.T) {
+	state := impl.NewState()
 	const addr = "alice"
+	state.UTXOMap[addr] = map[string]types.UTXO{
+		"coin-1": {
+			TxID:   "coin-1",
+			To:     addr,
+			Amount: 20,
+		},
+		"coin-2": {
+			TxID:   "coin-2",
+			To:     addr,
+			Amount: 30,
+		},
+	}
+	manager := impl.NewBalanceManager(state)
 
-	manager.SetBalance(addr, 100)
-
-	balance, err := manager.ChargeAndGet(addr, 40)
+	inputs, outputs, err := manager.VerifyBalance("tx-spend", addr, 50)
 	if err != nil {
-		t.Fatalf("ChargeAndGet returned error: %v", err)
+		t.Fatalf("VerifyBalance returned error: %v", err)
 	}
-	if balance != 100 {
-		t.Fatalf("expected returned balance 100, got %d", balance)
+	if len(outputs) != 0 {
+		t.Fatalf("expected no change outputs, got %#v", outputs)
 	}
-	if got := manager.VerifyBalance(addr); got != 60 {
-		t.Fatalf("expected balance to be deducted to 60, got %d", got)
+	if len(inputs) != 2 {
+		t.Fatalf("expected two inputs, got %#v", inputs)
+	}
+	seen := map[string]bool{}
+	for _, in := range inputs {
+		seen[in.TxID] = true
+	}
+	if !seen["coin-1"] || !seen["coin-2"] {
+		t.Fatalf("missing expected inputs, got %#v", inputs)
 	}
 }
 
-func TestTokenBalanceManagerChargeAndGetInsufficientFunds(t *testing.T) {
-	manager := impl.NewBalanceManager(nil)
+func TestVerifyBalanceInsufficientFunds(t *testing.T) {
+	state := impl.NewState()
 	const addr = "bob"
+	state.UTXOMap[addr] = map[string]types.UTXO{
+		"coin-3": {
+			TxID:   "coin-3",
+			To:     addr,
+			Amount: 5,
+		},
+	}
+	manager := impl.NewBalanceManager(state)
 
-	manager.SetBalance(addr, 5)
-
-	if _, err := manager.ChargeAndGet(addr, 6); err == nil {
+	if _, _, err := manager.VerifyBalance("tx-miss", addr, 10); err == nil {
 		t.Fatalf("expected insufficient funds error")
 	}
 }

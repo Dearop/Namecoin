@@ -5,6 +5,7 @@ import (
 	"maps"
 	"sync"
 
+	"github.com/rs/zerolog/log"
 	"go.dedis.ch/cs438/types"
 )
 
@@ -19,7 +20,8 @@ type NamecoinState struct {
 	// Simple coin balances per address
 	UTXOMap map[string]map[string]types.UTXO
 
-	Transactions map[string]map[string]types.Tx
+	// To deduplicate transactions. Subject to discuss, but now suggest as a temp solution
+	txMap map[string]struct{}
 
 	mu sync.RWMutex
 }
@@ -33,10 +35,10 @@ func (c *NamecoinChain) State() *NamecoinState {
 // NewState creates an empty state with fresh maps and a pending pool
 func NewState() *NamecoinState {
 	return &NamecoinState{
-		Domains:      make(map[string]types.NameRecord),
-		Commitments:  make(map[string]string),
-		UTXOMap:      make(map[string]map[string]types.UTXO),
-		Transactions: make(map[string]map[string]types.Tx),
+		Domains:     make(map[string]types.NameRecord),
+		Commitments: make(map[string]string),
+		UTXOMap:     make(map[string]map[string]types.UTXO),
+		txMap:       make(map[string]struct{}),
 	}
 }
 
@@ -81,22 +83,37 @@ func (st *NamecoinState) Clone() *NamecoinState {
 	if st == nil {
 		return NewState()
 	}
-	out := &NamecoinState{
-		Domains: maps.Clone(st.Domains),
-		UTXOMap: maps.Clone(st.UTXOMap),
+	clone := &NamecoinState{
+		Domains:     maps.Clone(st.Domains),
+		Commitments: maps.Clone(st.Commitments),
+		UTXOMap:     make(map[string]map[string]types.UTXO, len(st.UTXOMap)),
+		txMap:       make(map[string]struct{}, len(st.txMap)),
+	}
+	for addr, utxos := range st.UTXOMap {
+		inner := make(map[string]types.UTXO, len(utxos))
+		for txID, utxo := range utxos {
+			inner[txID] = utxo
+		}
+		clone.UTXOMap[addr] = inner
 	}
 
-	return out
+	for id := range st.txMap {
+		clone.txMap[id] = struct{}{}
+	}
+
+	return clone
 }
 
 // ApplyTx implements minimal Namecoin semantics
 // We can harden this later (ownership checks, expires, coins, etc).
 func (st *NamecoinState) ApplyTx(txID string, tx *types.Tx) error {
 
-	if st.IsTxApplied(tx.From, txID) {
+	if st.IsTxApplied(txID) {
 		// tx has already been applied
 		return nil
 	}
+
+	log.Info().Msgf("Applying tx type: %s with ID: %s", tx.Type, txID)
 
 	// BurnUTXOs first making sure the user hasn't burned the same UTXOs already
 	// First transaction in Block is always Reward to ensure that miner gets reward even if user transaction is reverted
@@ -109,6 +126,8 @@ func (st *NamecoinState) ApplyTx(txID string, tx *types.Tx) error {
 	if err != nil {
 		return err
 	}
+
+	st.MarkAsApplied(txID)
 	return nil
 }
 
@@ -136,10 +155,16 @@ func (st *NamecoinState) ApplyBlock(blk *types.Block) error {
 }
 
 // IsTxApplied returns true if Tx is already in the state
-func (st *NamecoinState) IsTxApplied(from, txID string) bool {
+func (st *NamecoinState) IsTxApplied(txID string) bool {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
-	_, ok := st.UTXOMap[from][txID]
+	_, ok := st.txMap[txID]
 
 	return ok
+}
+
+func (st *NamecoinState) MarkAsApplied(txID string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.txMap[txID] = struct{}{}
 }

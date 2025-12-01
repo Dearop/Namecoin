@@ -81,9 +81,6 @@ func IsBlockComplexityValid(blk types.Block, target *big.Int) bool {
 	hash := blk.ComputeHash()
 
 	t := effectiveTarget(target)
-	if new(big.Int).SetBytes(hash[:]).Cmp(t) > 0 {
-		return false
-	}
 
-	return true
+	return new(big.Int).SetBytes(hash[:]).Cmp(t) <= 0
 }

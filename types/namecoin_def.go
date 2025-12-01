@@ -96,7 +96,33 @@ func (b *Block) Marshal() ([]byte, error) {
 
 // Unmarshal unmarshals data into this NamecoinBlock
 func (b *Block) Unmarshal(data []byte) error {
-	return json.Unmarshal(data, b)
+	var raw struct {
+		Header       string `json:"header"`
+		Transactions []Tx   `json:"transactions"`
+		Hash         string `json:"hash"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	headerBytes, err := hex.DecodeString(raw.Header)
+	if err != nil {
+		return err
+	}
+	var header BlockHeader
+	if err := json.Unmarshal(headerBytes, &header); err != nil {
+		return err
+	}
+	hashBytes, err := hex.DecodeString(raw.Hash)
+	if err != nil {
+		return err
+	}
+
+	b.Header = header
+	b.Transactions = raw.Transactions
+	b.Hash = hashBytes
+
+	return nil
 }
 
 // NamecoinTransactionMessage message for broadcasting UTXO across the nodes

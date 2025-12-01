@@ -3,8 +3,8 @@ package impl
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
-	"sync"
 	"time"
 
 	"go.dedis.ch/cs438/peer"
@@ -83,9 +83,14 @@ func (c *NamecoinConsensus) MineAndApply(stop <-chan struct{}, baseHeader *types
 	hdr := baseHeader
 	hdr.Nonce = nonce
 	hdr.Timestamp = ts
-	block := AssembleBlock(hdr, c.txBuffer, c.powCfg.PubKey)
+	// we need to ensure that the order of the transaction is not changed in case of block complexity is less than expected
+	// Requeuing the transaction and Draining them should preserve order otherwise
+	//Hash will be inconsistent between 2 Hash executions
+	pending, order, snapshot := c.txBuffer.Drain()
+	block := AssembleBlock(hdr, pending, c.powCfg.PubKey)
 	isComplexityValid := IsBlockComplexityValid(block, c.powCfg.Target)
 	if !isComplexityValid {
+		c.txBuffer.Requeue(order, snapshot)
 		return block, xerrors.Errorf("block complexity is not valid")
 	}
 
@@ -110,14 +115,19 @@ func validateConsensusDeps(cfg peer.PoWConfig, buffer *TxBuffer) error {
 	return nil
 }
 
-func AssembleBlock(h *types.BlockHeader, txBuffer *TxBuffer, minersPubKey string) types.Block {
+func AssembleBlock(h *types.BlockHeader, pending []types.Tx, minersPubKey string) types.Block {
 	rewardTx := types.Tx{
-		From:   minersPubKey,
-		Type:   RewardCommandName,
-		Amount: 1, //todo: replace with actual value
+		From:    minersPubKey,
+		Type:    RewardCommandName,
+		Amount:  1,
+		Payload: json.RawMessage(fmt.Sprintf(`{"height":%d}`, h.Height)), // to make every block unique
+		Outputs: []types.TxOutput{
+			{
+				To:     minersPubKey,
+				Amount: 1,
+			},
+		},
 	}
-
-	pending := txBuffer.Drain()
 
 	txs := append([]types.Tx{rewardTx}, pending...)
 
@@ -135,35 +145,4 @@ func AssembleBlock(h *types.BlockHeader, txBuffer *TxBuffer, minersPubKey string
 	block.Hash = block.ComputeHash()
 
 	return block
-}
-
-func NewTxBuffer() *TxBuffer {
-	return &TxBuffer{}
-}
-
-type TxBuffer struct {
-	mu  sync.Mutex
-	txs map[string]types.Tx
-}
-
-func (b *TxBuffer) Add(tx types.Tx, txID string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.txs[txID] = tx
-}
-
-func (b *TxBuffer) Drain() []types.Tx {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	txs := make([]types.Tx, 0, len(b.txs))
-	for _, tx := range b.txs {
-		txs = append(txs, tx)
-	}
-	return txs
-}
-
-func (b *TxBuffer) Remove(txID string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	delete(b.txs, txID)
 }

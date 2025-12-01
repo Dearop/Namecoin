@@ -36,19 +36,19 @@ func SerializeTransaction(tx *types.Tx) ([]byte, error) {
 
 //--------------------------------------------------
 // Domain Expiration
-
-// BlockContext is supplied by the chain when applying a block
-type BlockContext struct {
-	Height      uint64
-	Timestamp   int64
-	MinerPubKey string
-}
-
-// pruneExpired removes expired domains for the given height.
-func (st *NamecoinState) pruneExpired(height uint64) {
-	for name, rec := range st.Domains {
-		if rec.ExpiresAt != 0 && rec.ExpiresAt <= height {
-			delete(st.Domains, name)
-		}
-	}
-}
+// linter unused error
+//// BlockContext is supplied by the chain when applying a block
+//type BlockContext struct {
+//	Height      uint64
+//	Timestamp   int64
+//	MinerPubKey string
+//}
+//
+//// pruneExpired removes expired domains for the given height.
+//func (st *NamecoinState) pruneExpired(height uint64) {
+//	for name, rec := range st.Domains {
+//		if rec.ExpiresAt != 0 && rec.ExpiresAt <= height {
+//			delete(st.Domains, name)
+//		}
+//	}
+//}

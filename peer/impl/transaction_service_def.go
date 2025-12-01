@@ -7,7 +7,7 @@ import (
 // SignedTransaction is what the backend receives from the frontend wallet.
 // Model that is received from frontend.
 type SignedTransaction struct {
-	Type    string          `json:"type"`    // e.g. "name_new", "name_firstupdate", "name_update"
+	Type    string          `json:"type"`    // e.g. "name_new", "name_firstupdate", "name_update", "Reward"
 	From    string          `json:"from"`    // wallet address (public key hash / base58 / hex)
 	Amount  uint64          `json:"amount"`  // token fee
 	Payload json.RawMessage `json:"payload"` // raw payload, variant by type

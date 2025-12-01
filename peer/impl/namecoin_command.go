@@ -35,10 +35,15 @@ func (st *NamecoinState) ProcessCommandTransactionStateUpdate(txID string, tx *t
 				To:     value.To,
 				Amount: value.Amount,
 			}
+
 			err = st.AppendUTXO(utxo)
+			if err != nil {
+				return err
+			}
 		}
 	case RewardCommandName:
 		// On Reward - always 1 UTXO
+		// todo: when block mined, output is not actually created, Should it be or we can create it here based on the data?
 		utxo := types.UTXO{
 			TxID:   txID,
 			To:     tx.Outputs[0].To,
@@ -141,7 +146,7 @@ func (st *NamecoinState) ValidateCommand(tx *SignedTransaction) error {
 		storedCommit := st.GetCommitment(tx.From)
 
 		//todo: Update, to avoid collisions.
-		if HashString(p.Salt+p.Domain) != storedCommit {
+		if HashString(p.Domain+p.Salt) != storedCommit {
 			return fmt.Errorf("commitment mismatch for domain %s", p.Domain)
 		}
 

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"log"
+	"math/big"
 	"os"
 	"sort"
 	"strconv"
@@ -31,12 +32,13 @@ type NamecoinChain struct {
 	state      *NamecoinState
 	headHash   []byte
 	headHeight uint64
+	powTarget  *big.Int
 }
 
 func (c *NamecoinChain) HeadHash() []byte {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return append([]byte(nil), c.headHash...)
+	return cloneBytes(c.headHash)
 }
 
 func (c *NamecoinChain) HeadHeight() uint64 {
@@ -52,6 +54,14 @@ type loadedBlock struct {
 	Height uint64
 	Key    string
 	Raw    []byte
+}
+
+// cloneBytes returns a defensive copy of the provided slice.
+func cloneBytes(src []byte) []byte {
+	if len(src) == 0 {
+		return nil
+	}
+	return append([]byte(nil), src...)
 }
 
 // quality of life - warnf logs only if GLOG != "no"
@@ -102,15 +112,58 @@ func computeTxRoot(txs []types.Tx) ([]byte, error) {
 	return h.Sum(nil), nil
 }
 
-// ---- Core Chain Loader ----
+// decodeLoadedBlock unmarshals a stored block and ensures the header height
+// matches the key height (defaulting to the key height when unspecified).
+func decodeLoadedBlock(lb loadedBlock) (*types.Block, error) {
+	var blk types.Block
+	if err := blk.Unmarshal(lb.Raw); err != nil {
+		return nil, fmt.Errorf("cannot unmarshal: %w", err)
+	}
+
+	if blk.Header.Height == 0 {
+		blk.Header.Height = lb.Height
+	} else if blk.Header.Height != lb.Height {
+		return nil, fmt.Errorf("block key height %d != header height %d", lb.Height, blk.Header.Height)
+	}
+
+	return &blk, nil
+}
+
+// ensureNextBlockFollows validates that blk properly extends the provided head.
+// When headHash is nil, blk must be the genesis block.
+func ensureNextBlockFollows(currentHeadHeight uint64, currentHeadHash []byte, blk *types.Block) error {
+	if currentHeadHash == nil {
+		if blk.Header.Height != 0 {
+			return fmt.Errorf("invalid genesis height %d; expected 0", blk.Header.Height)
+		}
+		if len(blk.Header.PrevHash) != 0 {
+			return fmt.Errorf("genesis block must have empty prevHash")
+		}
+		return nil
+	}
+
+	expectedHeight := currentHeadHeight + 1
+	if blk.Header.Height != expectedHeight {
+		return fmt.Errorf("invalid height %d; expected %d", blk.Header.Height, expectedHeight)
+	}
+	if !bytes.Equal(blk.Header.PrevHash, currentHeadHash) {
+		return fmt.Errorf("prevHash mismatch")
+	}
+
+	return nil
+}
+
 // LoadNamecoinChain replays all Namecoin blocks from the blockchain store
 // and reconstructs local NamecoinState
 func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
+	if store == nil {
+		return nil, fmt.Errorf("nil blockchain store")
+	}
 
 	state := NewState()
 
 	// Read stored head hash - can be empty
-	storedHeadHash := store.Get(NamecoinLastBlockKey)
+	storedHeadHash := cloneBytes(store.Get(NamecoinLastBlockKey))
 
 	// Scan all Namecoin blocks
 	blocks := make([]loadedBlock, 0, store.Len())
@@ -128,7 +181,7 @@ func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
 		blocks = append(blocks, loadedBlock{
 			Height: h,
 			Key:    key,
-			Raw:    append([]byte(nil), val...),
+			Raw:    cloneBytes(val),
 		})
 		return true
 	})
@@ -170,10 +223,33 @@ func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
 	}, nil
 }
 
+// SetPowTarget stores the PoW target used when validating incoming blocks.
+func (c *NamecoinChain) SetPowTarget(target *big.Int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if target == nil {
+		c.powTarget = nil
+		return
+	}
+	c.powTarget = cloneBigInt(target)
+}
+
+func cloneBigInt(src *big.Int) *big.Int {
+	if src == nil {
+		return nil
+	}
+	return new(big.Int).Set(src)
+}
+
+func (c *NamecoinChain) powTargetSnapshot() *big.Int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return cloneBigInt(c.powTarget)
+}
+
 func ReplayBlocks(state *NamecoinState, blocks []loadedBlock, storedHeadHash []byte) ([]byte, bool, uint64) {
 	// replay vars
 	var (
-		prevHash   []byte
 		headHash   []byte
 		headHeight uint64
 		foundHead  bool
@@ -181,44 +257,26 @@ func ReplayBlocks(state *NamecoinState, blocks []loadedBlock, storedHeadHash []b
 
 	// Replay blocks in order
 	for _, lb := range blocks {
-		var blk types.Block
-		if err := blk.Unmarshal(lb.Raw); err != nil {
-			warnf("load namecoin chain: skipping block at height %d: cannot unmarshal: %v",
-				lb.Height, err)
+		blk, err := decodeLoadedBlock(lb)
+		if err != nil {
+			warnf("load namecoin chain: skipping block at height %d: %v", lb.Height, err)
 			continue
 		}
 
-		// Basic height sanity: header height should match key height if set
-		if blk.Header.Height != 0 && blk.Header.Height != lb.Height {
-			warnf("load namecoin chain: block key height %d != header height %d; skipping",
-				lb.Height, blk.Header.Height)
-			continue
-		}
-		if blk.Header.Height == 0 {
-			blk.Header.Height = lb.Height
-		}
-
-		// Basic prevHash linkage
-		if blk.Header.Height == 0 {
-			// Genesis prevHash should be empty
-			if len(blk.Header.PrevHash) != 0 {
-				warnf("load namecoin chain: genesis block with non-empty prevHash; continuing anyway")
-			}
-		} else if prevHash != nil && !bytes.Equal(blk.Header.PrevHash, prevHash) {
-			warnf("load namecoin chain: skipping block at height %d: prevHash mismatch", blk.Header.Height)
+		if err := ensureNextBlockFollows(headHeight, headHash, blk); err != nil {
+			warnf("load namecoin chain: skipping block at height %d: %v", lb.Height, err)
 			continue
 		}
 
 		// Apply block transactions to state
-		if err := state.ApplyBlock(&blk); err != nil {
+		if err := state.ApplyBlock(blk); err != nil {
 			warnf("namecoin: error applying block at height %d: %v", blk.Header.Height, err)
 			// for robustness, we keep going; bad blocks don't kill replay
 			continue
 		}
 
 		// Track head and linkage for the next iteration
-		prevHash = append([]byte(nil), blk.Hash...)
-		headHash = prevHash
+		headHash = cloneBytes(blk.Hash)
 		headHeight = blk.Header.Height
 
 		if storedHeadHash != nil && bytes.Equal(blk.Hash, storedHeadHash) {
@@ -230,8 +288,7 @@ func ReplayBlocks(state *NamecoinState, blocks []loadedBlock, storedHeadHash []b
 	return headHash, foundHead, headHeight
 }
 
-// ---- Core Validate Block ----
-// ValidateAndApply validates a candidate Namecoin block against the current
+// ValidateBlock validates a candidate Namecoin block against the current
 // chain head and state, without mutating the live state.
 //
 // Checks:
@@ -243,46 +300,6 @@ func ReplayBlocks(state *NamecoinState, blocks []loadedBlock, storedHeadHash []b
 // On success, it returns the resulting (cloned) state that includes the
 // block's effects. On failure, it returns a non-nil error and leaves
 // the live chain state untouched
-func (c *NamecoinChain) ValidateAndApply(currentHeadHeight uint64, currentHeadHash []byte, currentState *NamecoinState, blk *types.Block) error {
-	if blk == nil {
-		return fmt.Errorf("validate namecoin blk: nil block")
-	}
-
-	// Basic height / prevHash linkage
-	if currentHeadHash == nil {
-		// Empty chain: expect genesis block
-		if blk.Header.Height != 0 {
-			return fmt.Errorf("invalid genesis height %d; expected 0", blk.Header.Height)
-		}
-		if len(blk.Header.PrevHash) != 0 {
-			return fmt.Errorf("genesis block must have empty prevHash")
-		}
-	} else {
-		expectedHeight := currentHeadHeight + 1
-		if blk.Header.Height != expectedHeight {
-			return fmt.Errorf("invalid height %d; expected %d", blk.Header.Height, expectedHeight)
-		}
-		if !bytes.Equal(blk.Header.PrevHash, currentHeadHash) {
-			return fmt.Errorf("prevHash mismatch")
-		}
-	}
-
-	// txRoot consistency
-	computedRoot, err := computeTxRoot(blk.Transactions)
-	if err != nil {
-		return fmt.Errorf("failed to compute tx root: %w", err)
-	}
-	if !bytes.Equal(blk.Header.TxRoot, computedRoot) {
-		return fmt.Errorf("txRoot mismatch")
-	}
-
-	// Replay txs on a cloned state to ensure they all apply cleanly
-	if err = currentState.ApplyBlock(blk); err != nil {
-		return fmt.Errorf("block tx replay failed: %w", err)
-	}
-
-	return nil
-}
 
 func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
 	if blk == nil {
@@ -290,29 +307,39 @@ func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
 	}
 
 	// take snapshot of blockchain state
+	target := c.powTargetSnapshot()
 	c.mu.Lock()
 	currentHeadHeight := c.headHeight
-	currentHeadHash := append([]byte(nil), c.headHash...)
+	currentHeadHash := cloneBytes(c.headHash)
 	clonedState := c.state.Clone()
 	c.mu.Unlock()
 
 	// validate on state copy
-	err := c.ValidateAndApply(currentHeadHeight, currentHeadHash, clonedState, blk)
+	err := c.ValidateBlock(currentHeadHeight, currentHeadHash, clonedState, blk, target)
 	if err != nil {
+		return err
+	}
+
+	// try to apply on a state clone to ensure safety
+	if err = clonedState.ApplyBlock(blk); err != nil {
 		return err
 	}
 
 	// serialize block
 	data, err := blk.Marshal()
 	if err != nil {
-		return fmt.Errorf("failed to marshal block at height %d: %w", blk.Header.Height, err)
+		return err
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	err = c.ValidateAndApply(c.headHeight, c.headHash, c.state, blk)
+	err = c.ValidateBlock(c.headHeight, c.headHash, c.state, blk, c.powTarget)
 	if err != nil {
+		return err
+	}
+
+	if err = c.state.ApplyBlock(blk); err != nil {
 		return err
 	}
 
@@ -323,8 +350,44 @@ func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
 	// Update last-block pointer
 	c.store.Set(NamecoinLastBlockKey, blk.Hash)
 
-	c.headHash = append([]byte(nil), blk.Hash...)
+	c.headHash = cloneBytes(blk.Hash)
 	c.headHeight = blk.Header.Height
 
+	return nil
+}
+
+func (c *NamecoinChain) ValidateBlock(
+	currentHeadHeight uint64,
+	currentHeadHash []byte,
+	currentState *NamecoinState,
+	blk *types.Block,
+	target *big.Int) error {
+	if blk == nil {
+		return fmt.Errorf("validate namecoin blk: nil block")
+	}
+
+	if err := ensureNextBlockFollows(currentHeadHeight, currentHeadHash, blk); err != nil {
+		return err
+	}
+
+	computedRoot, err := computeTxRoot(blk.Transactions)
+	if err != nil {
+		return fmt.Errorf("failed to compute tx root: %w", err)
+	}
+	if !bytes.Equal(blk.Header.TxRoot, computedRoot) {
+		return fmt.Errorf("txRoot mismatch")
+	}
+
+	if err = validateWorkForTarget(blk, target); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateWorkForTarget(blk *types.Block, target *big.Int) error {
+	if !IsBlockComplexityValid(*blk, target) {
+		return fmt.Errorf("block hash above target")
+	}
 	return nil
 }

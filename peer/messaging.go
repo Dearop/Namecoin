@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"go.dedis.ch/cs438/transport"
-	"go.dedis.ch/cs438/types"
 )
 
 // Messaging defines the functions for the basic functionalities to exchange
@@ -27,9 +26,6 @@ type Messaging interface {
 	//
 	// - implemented in HW1
 	Broadcast(msg transport.Message) error
-
-	// BroadcastTransaction Broadcasts transaction message
-	BroadcastTransaction(message *types.NamecoinTransactionMessage) error
 
 	// AddPeer adds new known addresses to the node. It must update the
 	// routing table of the node. Adding ourself should have no effect.

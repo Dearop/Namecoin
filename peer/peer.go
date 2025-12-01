@@ -2,6 +2,7 @@ package peer
 
 import (
 	"time"
+
 	"go.dedis.ch/cs438/registry"
 	"go.dedis.ch/cs438/storage"
 	"go.dedis.ch/cs438/transport"
@@ -13,6 +14,7 @@ type Peer interface {
 	Service
 	Messaging
 	DataSharing
+	Namecoin
 }
 
 // Factory is the type of function we are using to create new instances of

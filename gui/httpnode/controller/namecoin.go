@@ -1,25 +1,21 @@
 package controller
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 
 	"github.com/rs/zerolog"
 	"go.dedis.ch/cs438/peer"
-	"go.dedis.ch/cs438/peer/impl"
-	"go.dedis.ch/cs438/types"
 )
 
-func NewNamecoinController(node peer.Peer, transactionService *impl.TransactionService, l *zerolog.Logger) Namecoin {
-	return Namecoin{node, transactionService, l}
+func NewNamecoinController(node peer.Peer, l *zerolog.Logger) Namecoin {
+	return Namecoin{node, l}
 }
 
 type Namecoin struct {
-	node               peer.Peer
-	transactionService *impl.TransactionService
-	log                *zerolog.Logger
+	node peer.Peer
+	log  *zerolog.Logger
 }
 
 func (n Namecoin) NewHandler() http.HandlerFunc {
@@ -41,40 +37,9 @@ func (n Namecoin) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var transaction impl.SignedTransaction
-	err = json.Unmarshal(buf, &transaction)
+	err = n.node.HandleNamecoinCommand(buf)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to unmarshal transaction: %v", err),
-			http.StatusInternalServerError)
-		return
-	}
-
-	err = n.transactionService.ValidateTransaction(&transaction)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to validate transaction: %v", err),
-			http.StatusBadRequest)
-		return
-	}
-
-	inputs, outputs, err := n.transactionService.VerifyBalance(transaction.TxID, transaction.From, transaction.Amount)
-
-	msg := types.NamecoinTransactionMessage{
-		TxID: transaction.TxID,
-		Tx: types.Tx{
-			From:    transaction.From,
-			Type:    transaction.Type,
-			Inputs:  inputs,
-			Outputs: outputs,
-			Amount:  transaction.Amount,
-			Payload: transaction.Payload,
-		},
-	}
-
-	err = n.node.BroadcastTransaction(&msg)
-
-	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to broadcast transaction: %v", err),
-			http.StatusInternalServerError)
-		return
+		n.log.Err(err)
+		http.Error(w, fmt.Sprintf("Error occured: %v", err), http.StatusBadRequest)
 	}
 }
