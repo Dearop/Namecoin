@@ -315,7 +315,7 @@ func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
 	c.mu.Unlock()
 
 	// validate on state copy
-	err := c.ValidateBlock(currentHeadHeight, currentHeadHash, clonedState, blk, target)
+	err := c.ValidateBlock(currentHeadHeight, currentHeadHash, blk, target)
 	if err != nil {
 		return err
 	}
@@ -334,7 +334,7 @@ func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	err = c.ValidateBlock(c.headHeight, c.headHash, c.state, blk, c.powTarget)
+	err = c.ValidateBlock(c.headHeight, c.headHash, blk, c.powTarget)
 	if err != nil {
 		return err
 	}
@@ -359,7 +359,6 @@ func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
 func (c *NamecoinChain) ValidateBlock(
 	currentHeadHeight uint64,
 	currentHeadHash []byte,
-	currentState *NamecoinState,
 	blk *types.Block,
 	target *big.Int) error {
 	if blk == nil {

@@ -13,6 +13,10 @@ import (
 	"go.dedis.ch/cs438/types"
 )
 
+func easyPowTarget() *big.Int {
+	return new(big.Int).Lsh(big.NewInt(1), 260)
+}
+
 func newTestChain(t *testing.T) (*impl.NamecoinChain, storage.Store) {
 	t.Helper()
 	p := inmemory.NewPersistency()
@@ -21,7 +25,7 @@ func newTestChain(t *testing.T) (*impl.NamecoinChain, storage.Store) {
 	require.NoError(t, err)
 	require.NotNil(t, chain)
 	require.NotNil(t, chain.State())
-	chain.SetPowTarget(new(big.Int).Lsh(big.NewInt(1), 260))
+	chain.SetPowTarget(easyPowTarget())
 	return chain, store
 }
 
@@ -125,20 +129,20 @@ func Test_Namecoin_ValidateBlock_GenesisValidAndInvalid(t *testing.T) {
 
 	genesis := mustBlock(t, 0, nil)
 
-	err := chain.ValidateBlock(chain.HeadHeight(), chain.HeadHash(), chain.State().Clone(), &genesis)
+	err := chain.ValidateBlock(chain.HeadHeight(), chain.HeadHash(), &genesis, easyPowTarget())
 	require.NoError(t, err)
 
 	t.Run("bad height", func(t *testing.T) {
 		bad := genesis
 		bad.Header.Height = 1
-		err := chain.ValidateBlock(0, nil, chain.State().Clone(), &bad)
+		err := chain.ValidateBlock(0, nil, &bad, easyPowTarget())
 		require.Error(t, err)
 	})
 
 	t.Run("non-empty prev hash", func(t *testing.T) {
 		bad := genesis
 		bad.Header.PrevHash = []byte("non-empty")
-		err := chain.ValidateBlock(0, nil, chain.State().Clone(), &bad)
+		err := chain.ValidateBlock(0, nil, &bad, easyPowTarget())
 		require.Error(t, err)
 	})
 }
@@ -150,27 +154,27 @@ func Test_Namecoin_ValidateBlock_TxRootAndPrevHashChecks(t *testing.T) {
 	require.NoError(t, chain.ApplyBlock(&genesis))
 
 	b1 := mustBlock(t, 1, chain.HeadHash())
-	require.NoError(t, chain.ValidateBlock(chain.HeadHeight(), chain.HeadHash(), chain.State().Clone(), &b1))
+	require.NoError(t, chain.ValidateBlock(chain.HeadHeight(), chain.HeadHash(), &b1, easyPowTarget()))
 
 	bBadHeight := b1
 	bBadHeight.Header.Height = 2
-	require.Error(t, chain.ValidateBlock(chain.HeadHeight(), chain.HeadHash(), chain.State().Clone(), &bBadHeight))
+	require.Error(t, chain.ValidateBlock(chain.HeadHeight(), chain.HeadHash(), &bBadHeight, easyPowTarget()))
 
 	bBadPrev := b1
 	bBadPrev.Header.PrevHash = []byte("wrong-prev")
-	require.Error(t, chain.ValidateBlock(chain.HeadHeight(), chain.HeadHash(), chain.State().Clone(), &bBadPrev))
+	require.Error(t, chain.ValidateBlock(chain.HeadHeight(), chain.HeadHash(), &bBadPrev, easyPowTarget()))
 
 	bBadRoot := b1
 	bBadRoot.Header.TxRoot = make([]byte, len(b1.Header.TxRoot))
-	require.Error(t, chain.ValidateBlock(chain.HeadHeight(), chain.HeadHash(), chain.State().Clone(), &bBadRoot))
+	require.Error(t, chain.ValidateBlock(chain.HeadHeight(), chain.HeadHash(), &bBadRoot, easyPowTarget()))
 }
 
 func Test_Namecoin_ValidateBlock_ErrorsOnNilInputs(t *testing.T) {
 	var nilChain *NamecoinChain
-	require.Error(t, nilChain.ValidateBlock(0, nil, impl.NewState(), nil))
+	require.Error(t, nilChain.ValidateBlock(0, nil, nil, easyPowTarget()))
 
 	chain, _ := newTestChain(t)
-	require.Error(t, chain.ValidateBlock(chain.HeadHeight(), chain.HeadHash(), chain.State().Clone(), nil))
+	require.Error(t, chain.ValidateBlock(chain.HeadHeight(), chain.HeadHash(), nil, easyPowTarget()))
 }
 
 // ---- ApplyBlock tests ----
@@ -220,6 +224,7 @@ func Test_Namecoin_LoadNamecoinChain_RestartRebuildsState(t *testing.T) {
 
 	chain1, err := impl.LoadNamecoinChain(store)
 	require.NoError(t, err)
+	chain1.SetPowTarget(easyPowTarget())
 
 	b0 := mustBlock(t, 0, nil)
 	require.NoError(t, chain1.ApplyBlock(&b0))
@@ -229,6 +234,7 @@ func Test_Namecoin_LoadNamecoinChain_RestartRebuildsState(t *testing.T) {
 
 	chain2, err := impl.LoadNamecoinChain(store)
 	require.NoError(t, err)
+	chain2.SetPowTarget(easyPowTarget())
 
 	require.Equal(t, chain1.HeadHeight(), chain2.HeadHeight())
 	require.Equal(t, chain1.HeadHash(), chain2.HeadHash())
