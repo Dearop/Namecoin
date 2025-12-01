@@ -3,6 +3,7 @@ package impl
 import (
 	"net"
 	"strings"
+	"sync"
 
 	"go.dedis.ch/cs438/types"
 )
@@ -16,12 +17,17 @@ type NamecoinDNS struct {
 	requestChan  chan types.DNSRequest
 	responseChan chan types.DNSResponse
 	reader       chainReader
+	mu           sync.RWMutex
+	startOnce    sync.Once
+	stop         chan struct{}
+	stopOnce     sync.Once
 }
 
 func NewNamecoinDNS() *NamecoinDNS {
 	return &NamecoinDNS{
 		requestChan:  make(chan types.DNSRequest, 16),
 		responseChan: make(chan types.DNSResponse, 16),
+		stop:         make(chan struct{}),
 	}
 }
 
@@ -37,19 +43,32 @@ func (dns *NamecoinDNS) Responses() <-chan types.DNSResponse {
 
 // Start begins processing requests using the node's Namecoin chain/state with locks held.
 func (dns *NamecoinDNS) Start(n *node) {
-	if n != nil {
-		dns.reader = n.namecoin
-	}
-	go func() {
-		for request := range dns.requestChan {
-			dns.responseChan <- dns.resolve(request)
+	dns.startOnce.Do(func() {
+		if n != nil {
+			dns.mu.Lock()
+			dns.reader = n.namecoin
+			dns.mu.Unlock()
 		}
-	}()
+		go func() {
+			for request := range dns.requestChan {
+				resp := dns.resolve(request)
+				select {
+				case dns.responseChan <- resp:
+				case <-dns.stop:
+					return
+				default:
+					// Drop to avoid blocking if no consumer.
+				}
+			}
+		}()
+	})
 }
 
 // BindReader allows tests or callers to inject a chain reader directly.
 func (dns *NamecoinDNS) BindReader(r chainReader) {
+	dns.mu.Lock()
 	dns.reader = r
+	dns.mu.Unlock()
 }
 
 func (dns *NamecoinDNS) resolve(request types.DNSRequest) types.DNSResponse {
@@ -58,11 +77,15 @@ func (dns *NamecoinDNS) resolve(request types.DNSRequest) types.DNSResponse {
 		Status: types.DNSStatusInvalid,
 	}
 
-	if dns.reader == nil {
+	dns.mu.RLock()
+	reader := dns.reader
+	dns.mu.RUnlock()
+
+	if reader == nil {
 		return resp
 	}
 
-	domains, height := dns.reader.SnapshotDomains()
+	domains, height := reader.SnapshotDomains()
 	rec, ok := domains[request.Domain]
 
 	if !ok {
@@ -101,4 +124,11 @@ func (dns *NamecoinDNS) resolve(request types.DNSRequest) types.DNSResponse {
 // Resolve performs a synchronous resolution using the bound node (if any).
 func (dns *NamecoinDNS) Resolve(domain string) types.DNSResponse {
 	return dns.resolve(types.DNSRequest{Domain: domain})
+}
+
+// Stop signals the resolver loop to exit.
+func (dns *NamecoinDNS) Stop() {
+	dns.stopOnce.Do(func() {
+		close(dns.stop)
+	})
 }
