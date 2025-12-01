@@ -2,7 +2,6 @@ name: namecoin_dns_server_test
 
 on:
   push
-  pull_request
 
 jobs:
   tests:
