@@ -12,7 +12,7 @@ func BuildUnsignedTxBytes(t *SignedTransaction) []byte {
 	data := map[string]interface{}{
 		"type":    t.Type,
 		"from":    t.From,
-		"fee":     t.Fee,
+		"amount":  t.Amount,
 		"payload": t.Payload,
 	}
 

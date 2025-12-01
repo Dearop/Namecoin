@@ -1,6 +1,7 @@
 package impl
 
 import (
+	"errors"
 	"log"
 	"os"
 	"strings"
@@ -28,6 +29,20 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 			node.routingTable[nodeAddr] = nodeAddr
 		}
 	}
+	consensus, err := NewNamecoinConsensus(conf.PoWConfig, NewTxBuffer())
+	// happens only if configuration is bad or "on a startup".
+	if err != nil {
+		panic(err)
+	}
+
+	namecoinChain, err := LoadNamecoinChain(conf.Storage.GetNamecoinStore())
+	// happens only if configuration is bad or "on a startup".
+	if err != nil {
+		panic(err)
+	}
+
+	node.namecoinChain = namecoinChain
+	node.namecoinConsensus = consensus
 	node.mu.Unlock()
 	return node
 }
@@ -72,17 +87,18 @@ type node struct {
 	tlcCount       map[uint]map[string]struct{}
 	tlcBlock       map[uint]types.BlockchainBlock
 	tlcBroadcasted map[uint]bool
-	// Namecoin chain
-	namecoin *NamecoinChain
+
+	// Namecoin
+	namecoinConsensus *NamecoinConsensus
+	namecoinChain     *NamecoinChain
+
+	// Miner
+	minerStopCh chan struct{}
+	minerWG     sync.WaitGroup
+
 	// Step completion waiters
 	stepWaitMu  sync.Mutex
 	stepWaiters map[uint][]chan struct{}
-}
-
-type pendingAck struct {
-	packet transport.Packet
-	dest   string
-	timer  *time.Timer
 }
 
 // Start implements peer.Service.
@@ -117,6 +133,11 @@ func (n *node) Start() error {
 	n.conf.MessageRegistry.RegisterMessageCallback(types.PaxosProposeMessage{}, n.handlePaxosPropose)
 	n.conf.MessageRegistry.RegisterMessageCallback(types.PaxosAcceptMessage{}, n.handlePaxosAccept)
 	n.conf.MessageRegistry.RegisterMessageCallback(types.TLCMessage{}, n.handleTLC)
+
+	//Namecoin handlers
+	n.conf.MessageRegistry.RegisterMessageCallback(types.NamecoinTransactionMessage{}, n.handleNamecoinTransactionMessage)
+	n.conf.MessageRegistry.RegisterMessageCallback(types.NamecoinBlockMessage{}, n.handleNamecoinBlockMessage)
+
 	n.wg.Add(1)
 	go n.listenLoop()
 
@@ -133,7 +154,103 @@ func (n *node) Start() error {
 		n.wg.Add(1)
 		go n.heartbeatLoop(n.conf.HeartbeatInterval)
 	}
+
+	// start miner
+	n.StartMiner()
 	return nil
+}
+
+// BroadcastTransaction implements Messaging.BroadcastTransaction
+func (n *node) BroadcastTransaction(message *types.NamecoinTransactionMessage) error {
+	msg, err := n.conf.MessageRegistry.MarshalMessage(message)
+	if err != nil {
+		return err
+	}
+
+	err = n.Broadcast(msg)
+	return err
+}
+
+type pendingAck struct {
+	packet transport.Packet
+	dest   string
+	timer  *time.Timer
+}
+
+func (n *node) StartMiner() {
+	n.mu.Lock()
+	if n.minerStopCh != nil {
+		// Miner already running
+		n.mu.Unlock()
+		return
+	}
+	n.minerStopCh = make(chan struct{})
+	n.minerWG.Add(1)
+	n.mu.Unlock()
+
+	go func() {
+		defer n.minerWG.Done()
+
+		for {
+			select {
+			case <-n.minerStopCh:
+				return
+
+			default:
+				// Build base header from current chain head
+				n.mu.RLock()
+				headHash := n.namecoinChain.HeadHash()
+				headHeight := n.namecoinChain.HeadHeight()
+				n.mu.RUnlock()
+
+				base := types.BlockHeader{
+					Height:    headHeight + 1,
+					PrevHash:  headHash,
+					Miner:     n.conf.PoWConfig.PubKey,
+					Timestamp: time.Now().Unix(),
+				}
+
+				// Mine block
+				block, err := n.namecoinConsensus.MineAndApply(n.minerStopCh, &base)
+				if err != nil {
+					if errors.Is(err, ErrMiningAborted) {
+						return // Stop mining
+					}
+					continue // Try again
+				}
+
+				// Broadcast mined block
+				msg := types.NamecoinBlockMessage{
+					Block: block,
+				}
+
+				wire, err := n.conf.MessageRegistry.MarshalMessage(msg)
+				if err == nil {
+					_ = n.Broadcast(wire)
+				}
+
+				// Apply block locally
+				if err := n.namecoinChain.ApplyBlock(&block); err != nil {
+					// should not happen; log but continue
+					log.Printf("Error applying mined block: %v", err)
+				}
+			}
+		}
+	}()
+}
+
+func (n *node) StopMiner() {
+	n.mu.Lock()
+	if n.minerStopCh != nil {
+		close(n.minerStopCh)
+	}
+	n.mu.Unlock()
+
+	n.minerWG.Wait()
+
+	n.mu.Lock()
+	n.minerStopCh = nil
+	n.mu.Unlock()
 }
 
 // acceptExpectedRumors processes expected rumors and returns those that were newly accepted.

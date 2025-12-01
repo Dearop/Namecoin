@@ -8,7 +8,7 @@ import (
 )
 
 func TestTokenWalletManagerChargeAndGet(t *testing.T) {
-	manager := impl.NewTokenWalletManager()
+	manager := impl.NewTokenWalletManager(nil)
 	const addr = "alice"
 
 	manager.SetBalance(addr, 100)
@@ -20,13 +20,13 @@ func TestTokenWalletManagerChargeAndGet(t *testing.T) {
 	if balance != 100 {
 		t.Fatalf("expected returned balance 100, got %d", balance)
 	}
-	if got := manager.GetBalance(addr); got != 60 {
+	if got := manager.VerifyBalance(addr); got != 60 {
 		t.Fatalf("expected balance to be deducted to 60, got %d", got)
 	}
 }
 
 func TestTokenWalletManagerChargeAndGetInsufficientFunds(t *testing.T) {
-	manager := impl.NewTokenWalletManager()
+	manager := impl.NewTokenWalletManager(nil)
 	const addr = "bob"
 
 	manager.SetBalance(addr, 5)
@@ -37,7 +37,7 @@ func TestTokenWalletManagerChargeAndGetInsufficientFunds(t *testing.T) {
 }
 
 func TestTokenWalletManagerVerifyOwnershipSuccess(t *testing.T) {
-	manager := impl.NewTokenWalletManager()
+	manager := impl.NewTokenWalletManager(nil)
 
 	publicKey := []byte{0x01, 0x02, 0x03}
 	from := hex.EncodeToString(impl.Hash(publicKey))
@@ -48,7 +48,7 @@ func TestTokenWalletManagerVerifyOwnershipSuccess(t *testing.T) {
 }
 
 func TestTokenWalletManagerVerifyOwnershipMismatch(t *testing.T) {
-	manager := impl.NewTokenWalletManager()
+	manager := impl.NewTokenWalletManager(nil)
 
 	publicKey := []byte{0x04, 0x05, 0x06}
 	from := "deadbeef"

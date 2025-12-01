@@ -3,58 +3,47 @@ package impl
 import (
 	"encoding/hex"
 	"fmt"
-	"sync"
+
+	"go.dedis.ch/cs438/types"
 )
 
-// TokenWalletManager implements ITokenWalletManager
-type TokenWalletManager struct {
-	// todo: replace balances with actual blockchain storage.
-	// todo: calculating balances should be done Bitcoin (UTXO) alike or Ethereum (state) alike?
-	balances map[string]uint64
-	mu       sync.RWMutex
+// TokenManager implements ITokenWalletManager
+type TokenManager struct {
+	state *NamecoinState
 }
 
-func NewTokenWalletManager() *TokenWalletManager {
-	// todo: replace balances with actual blockchain storage.
-	return &TokenWalletManager{balances: make(map[string]uint64)}
+func NewTokenWalletManager(state *NamecoinState) *TokenManager {
+	return &TokenManager{state: state}
 }
 
-// GetBalance returns the balance of the given address
-func (t *TokenWalletManager) GetBalance(from string) uint64 {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return t.balances[from]
-}
-
-// ChargeAndGet deducts the given amount from the balance of the given address
-func (t *TokenWalletManager) ChargeAndGet(from string, amount uint64) (uint64, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	balance := t.balances[from]
-	if balance < amount {
-		return 0, fmt.Errorf("insufficient funds")
+// VerifyBalance returns the balance of the given address
+func (t *TokenManager) VerifyBalance(txID, from string, amount uint64) ([]types.TxInput, types.TxOutput, error) {
+	inp, out, err := t.state.GetUTXOsToBurn(txID, from, amount)
+	if err != nil {
+		return make([]types.TxInput, 0), types.TxOutput{}, err
 	}
 
-	t.balances[from] = balance - amount
+	inputs := make([]types.TxInput, 0)
+	for _, value := range inp {
+		inputs = append(inputs, types.TxInput{
+			TxID: value,
+		})
+	}
 
-	return balance, nil
+	output := types.TxOutput{
+		To:     out.To,
+		Amount: out.Amount,
+	}
+
+	return inputs, output, nil
 }
 
 // VerifyOwnership verifies that the given public key matches the given address
-func (t *TokenWalletManager) VerifyOwnership(from string, publicKey []byte) error {
+func (t *TokenManager) VerifyOwnership(from string, publicKey []byte) error {
 	derivedAddr := hex.EncodeToString(Hash(publicKey))
 	if derivedAddr != from {
 		return fmt.Errorf("public key does not match sender address")
 	}
 
 	return nil
-}
-
-// SetBalance sets the balance of the given address
-func (t *TokenWalletManager) SetBalance(from string, amount uint64) uint64 {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.balances[from] = amount
-
-	return t.balances[from]
 }

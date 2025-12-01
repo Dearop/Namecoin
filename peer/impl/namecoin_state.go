@@ -1,66 +1,94 @@
 package impl
 
 import (
-	"errors"
+	"encoding/json"
 	"fmt"
 	"maps"
+	"strings"
 	"sync"
-	"time"
 
 	"go.dedis.ch/cs438/types"
+	"golang.org/x/xerrors"
 )
 
-const (
-	DefaultMaxPending          = 10_000
-	DefaultMaxPerSender        = 100
-	MaxNameLength              = 255
-	MaxValueLength             = 4 * 1024
-	MaxFeePerTx         uint64 = 1_000_000_000 // arbitrary sanity bound
-)
-
-// ---- State ----
-
-// State is the in-memory state rebuilt from the Namecoin chain
+// NamecoinState is the in-memory state rebuilt from the Namecoin chain
 type NamecoinState struct {
 	// Domain name -> record
 	Domains map[string]types.NameRecord
 
-	// Simple coin balances per address
-	Balances map[string]uint64
+	// Commitment -> hashed Domain and Salt
+	Commitments map[string]string
 
-	// Pending transactions that have not yet been included in any block
-	// (cleaned up during replay when we see them in a block)
-	Pending *PendingPool // map[string]*Tx
+	// Simple coin balances per address
+	UTXOMap map[string]map[string]types.UTXO
+
+	Transactions map[string]map[string]types.Tx
+
+	mu sync.RWMutex
+}
+
+func (c *NamecoinChain) State() *NamecoinState {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.state
 }
 
 // NewState creates an empty state with fresh maps and a pending pool
 func NewState() *NamecoinState {
 	return &NamecoinState{
-		Domains:  make(map[string]types.NameRecord),
-		Balances: make(map[string]types.Balance),
-		Pending:  NewPendingPool(DefaultMaxPending, DefaultMaxPerSender),
+		Domains:      make(map[string]types.NameRecord),
+		Commitments:  make(map[string]string),
+		UTXOMap:      make(map[string]map[string]types.UTXO),
+		Transactions: make(map[string]map[string]types.Tx),
 	}
 }
 
-func (s *NamecoinState) Clone() *NamecoinState {
-	if s == nil {
+func (st *NamecoinState) GetDomainOwner(domain string) string {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	res, ok := st.Domains[domain]
+
+	if !ok {
+		return ""
+	}
+
+	return res.Owner
+}
+
+func (st *NamecoinState) IsDomainExists(domain string) bool {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	_, ok := st.Domains[domain]
+	return ok
+}
+
+func (st *NamecoinState) GetCommitment(from string) string {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.Commitments[from]
+}
+
+func (st *NamecoinState) SetDomain(record types.NameRecord) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.Domains[record.Domain] = record
+}
+
+func (st *NamecoinState) SetCommitment(from, commitment string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.Commitments[from] = commitment
+}
+
+func (st *NamecoinState) Clone() *NamecoinState {
+	if st == nil {
 		return NewState()
 	}
 	out := &NamecoinState{
-		Domains:  maps.Clone(s.Domains),
-		Balances: maps.Clone(s.Balances),
+		Domains: maps.Clone(st.Domains),
+		UTXOMap: maps.Clone(st.UTXOMap),
 	}
 
-	// Clone pending pool (optional but keeps behaviour close to before).
-	if s.Pending != nil {
-		out.Pending = NewPendingPool(s.Pending.maxTotal, s.Pending.maxPerFrom)
-		for _, tx := range s.Pending.SnapshotPending() {
-			// Ignore errors here – pending pool is best-effort.
-			_ = out.Pending.Add(tx)
-		}
-	} else {
-		out.Pending = NewPendingPool(DefaultMaxPending, DefaultMaxPerSender)
-	}
 	return out
 }
 
@@ -84,18 +112,47 @@ func NewPendingPool(maxTotal, maxPerSender int) *PendingPool {
 	}
 }
 
+// -- helper
+func BuildTransactionID(tx *types.Tx) (string, error) {
+	b, err := SerializeTransaction(tx)
+
+	if err != nil {
+		return "", err
+	}
+
+	return HashHex(b), nil
+}
+
+// -- helper
+func SerializeTransaction(tx *types.Tx) ([]byte, error) {
+	data := map[string]interface{}{
+		"type":    tx.Type,
+		"from":    tx.From,
+		"amount":  tx.Amount,
+		"payload": tx.Payload,
+	}
+
+	b, err := json.Marshal(data)
+	if err != nil {
+		return make([]byte, 0), err
+	}
+
+	return b, err
+}
+
 // Add a tx if it passes basic anti-spam checks
 func (p *PendingPool) Add(tx *types.Tx) error {
-	if tx == nil || tx.ID == nil {
-		return errors.New("pending: nil tx or id")
+	txID, err := BuildTransactionID(tx)
+	if err != nil {
+		return err
 	}
-	id := string(tx.ID)
-	from := tx.Payload.From
+
+	from := tx.From
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if _, exists := p.byID[id]; exists {
+	if _, exists := p.byID[txID]; exists {
 		return nil // idempotent
 	}
 	if len(p.byID) >= p.maxTotal {
@@ -105,18 +162,7 @@ func (p *PendingPool) Add(tx *types.Tx) error {
 		return fmt.Errorf("pending: too many tx from %s", from)
 	}
 
-	// Guardrail size checks
-	if len(tx.Payload.Name) > MaxNameLength {
-		return fmt.Errorf("pending: name too long")
-	}
-	if len(tx.Payload.Value) > MaxValueLength {
-		return fmt.Errorf("pending: value too long")
-	}
-	if tx.Payload.Fee > MaxFeePerTx {
-		return fmt.Errorf("pending: fee too large")
-	}
-
-	p.byID[id] = tx
+	p.byID[txID] = tx
 	if from != "" {
 		p.perSender[from]++
 	}
@@ -124,21 +170,16 @@ func (p *PendingPool) Add(tx *types.Tx) error {
 }
 
 // Remove drops a tx from the pool by id
-func (p *PendingPool) Remove(id []byte) {
-	if id == nil {
-		return
-	}
-	key := string(id)
-
+func (p *PendingPool) Remove(txID string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	tx, ok := p.byID[key]
+	tx, ok := p.byID[txID]
 	if !ok {
 		return
 	}
-	delete(p.byID, key)
-	from := tx.Payload.From
+	delete(p.byID, txID)
+	from := tx.From
 	if from != "" {
 		if n := p.perSender[from]; n > 1 {
 			p.perSender[from] = n - 1
@@ -176,228 +217,192 @@ type BlockContext struct {
 	Miner     string // miner address from header
 }
 
-// Credit / Debit helpers.
-
-func (s *NamecoinState) credit(addr string, amount uint64) {
-	if addr == "" || amount == 0 {
-		return
-	}
-	s.Balances[addr] += amount
-}
-
-func (s *NamecoinState) debit(addr string, amount uint64) error {
-	if addr == "" {
-		return fmt.Errorf("missing address")
-	}
-	cur := s.Balances[addr]
-	if cur < amount {
-		return fmt.Errorf("insufficient balance: have %d, need %d", cur, amount)
-	}
-	s.Balances[addr] = cur - amount
-	return nil
-}
-
 // pruneExpired removes expired domains for the given height.
-func (s *NamecoinState) pruneExpired(height uint64) {
-	for name, rec := range s.Domains {
+func (st *NamecoinState) pruneExpired(height uint64) {
+	for name, rec := range st.Domains {
 		if rec.ExpiresAt != 0 && rec.ExpiresAt <= height {
-			delete(s.Domains, name)
+			delete(st.Domains, name)
 		}
 	}
 }
 
 // ---- Core Apply Tx ----
 
-// ApplyTx applies a single tx to the state under a given block context
-// ApplyTx validates ownership, fees, expiry, and updates domain/balance state
+// BurnUTXO applies a single tx to the state under a given block context
+// BurnUTXO validates ownership, fees, expiry, and updates domain/balance state
 // for each tx type. Balance debits/credits deferred to block reward/fees
-func (s *NamecoinState) ApplyTx(tx *types.Tx, ctx BlockContext) error {
-	if s == nil {
-		return fmt.Errorf("apply tx: nil NamecoinState")
-	}
-	if tx == nil || tx.ID == nil {
-		return fmt.Errorf("apply tx: nil tx")
-	}
 
-	p := tx.Payload
-	op := p.Op
+func (st *NamecoinState) BurnUTXO(from string, txIDs []string) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
 
-	// Very basic timestamp sanity (optional).
-	if ctx.Timestamp > 0 {
-		now := time.Now().Unix()
-		if ctx.Timestamp > now+MaxClockSkewSecs {
-			return fmt.Errorf("apply tx: block timestamp too far in future")
-		}
-	}
-
-	// Apply fees first (except coinbase)
-	if op != "coinbase" && p.Fee > 0 {
-		if p.Fee < MinTxFee {
-			return fmt.Errorf("fee below minimum")
-		}
-		if err := s.debit(p.From, p.Fee); err != nil {
-			return fmt.Errorf("fee debit failed: %w", err)
-		}
-	}
-
-	// Prune expired domains before applying name ops
-	s.pruneExpired(ctx.Height)
-
-	switch op {
-
-	case "coinbase":
-		// Block subsidy + fees will be handled at block level; here we assume
-		// this payload just transfers Amount to Miner or To
-		if p.Amount == 0 {
-			return nil
-		}
-		target := p.To
-		if target == "" {
-			target = ctx.Miner
-		}
-		if target == "" {
-			return fmt.Errorf("coinbase without target address")
-		}
-		s.credit(target, p.Amount)
-		return nil
-
-	case "pay":
-		if p.Name != "" {
-			return fmt.Errorf("pay must not carry name")
-		}
-		if p.Amount == 0 {
-			return fmt.Errorf("pay with zero amount")
-		}
-		if err := s.debit(p.From, p.Amount); err != nil {
-			return fmt.Errorf("pay debit failed: %w", err)
-		}
-		s.credit(p.To, p.Amount)
-		return nil
-
-	case "register":
-		// Simple name_new/commit stand-in:
-		// - name must not exist (or must be expired)
-		// TODO: add commit logic
-		if p.Name == "" {
-			return fmt.Errorf("register without name")
-		}
-		if rec, ok := s.Domains[p.Name]; ok && rec.ExpiresAt == 0 || rec.ExpiresAt > ctx.Height {
-			return fmt.Errorf("name %s already registered", p.Name)
-		}
-		s.Domains[p.Name] = types.NameRecord{
-			Owner:     p.From,
-			Value:     p.Value,
-			ExpiresAt: ctx.Height + DomainTTLBlocks,
-		}
-		return nil
-
-	case "firstupdate":
-		// TODO: In real Namecoin this reveals a commit
-		if p.Name == "" {
-			return fmt.Errorf("firstupdate without name")
-		}
-		rec, ok := s.Domains[p.Name]
-		if !ok {
-			return fmt.Errorf("firstupdate for unknown name %s", p.Name)
-		}
-		if rec.Owner != p.From {
-			return fmt.Errorf("firstupdate: not owner")
+	for _, txID := range txIDs {
+		// burn UTXOs corresponding to TxID
+		if _, ok := st.UTXOMap[from][txID]; !ok {
+			return xerrors.Errorf("burn txID %s not found", from)
 		}
 
-		// Update value and refresh expiry
-		rec.Value = p.Value
-		rec.ExpiresAt = ctx.Height + DomainTTLBlocks
-		s.Domains[p.Name] = rec
-		return nil
-
-	case "update":
-		if p.Name == "" {
-			return fmt.Errorf("update without name")
-		}
-		rec, ok := s.Domains[p.Name]
-		if !ok {
-			return fmt.Errorf("update non-existent name %s", p.Name)
-		}
-		if rec.ExpiresAt != 0 && rec.ExpiresAt <= ctx.Height {
-			return fmt.Errorf("update on expired name %s", p.Name)
-		}
-		if rec.Owner != p.From {
-			return fmt.Errorf("update: not owner")
-		}
-		rec.Value = p.Value
-		// Expand expiry on update
-		rec.ExpiresAt = ctx.Height + DomainTTLBlocks
-		s.Domains[p.Name] = rec
-		return nil
-
-	case "transfer":
-		if p.Name == "" {
-			return fmt.Errorf("transfer without name")
-		}
-		if p.To == "" {
-			return fmt.Errorf("transfer without recipient")
-		}
-		rec, ok := s.Domains[p.Name]
-		if !ok {
-			return fmt.Errorf("transfer non-existent name %s", p.Name)
-		}
-		if rec.ExpiresAt != 0 && rec.ExpiresAt <= ctx.Height {
-			return fmt.Errorf("transfer on expired name %s", p.Name)
-		}
-		if rec.Owner != p.From {
-			return fmt.Errorf("transfer: not owner")
-		}
-		rec.Owner = p.To
-		s.Domains[p.Name] = rec
-		return nil
-
-	default:
-		// Unknown op: treat as invalid
-		return fmt.Errorf("unknown op %q", op)
-	}
-}
-
-// ApplyBlock applies all txs in a block to the state
-// - Validates each tx via ApplyTx
-// - Aggregates fees and optional block subsidy to the miner
-func (s *NamecoinState) ApplyBlock(b *types.Block) error {
-	if s == nil {
-		return fmt.Errorf("apply block: nil state")
-	}
-	if b == nil {
-		return fmt.Errorf("apply block: nil block")
-	}
-
-	ctx := BlockContext{
-		Height:    b.Header.Height,
-		Timestamp: b.Header.Timestamp,
-		Miner:     b.Header.Miner,
-	}
-
-	var totalFees uint64
-	for i := range b.Transactions {
-		tx := &b.Transactions[i]
-		p := tx.Payload
-
-		// Track fees for miner, except coinbase
-		if p.Op != "coinbase" {
-			totalFees += p.Fee
-		}
-
-		if err := s.ApplyTx(tx, ctx); err != nil {
-			return fmt.Errorf("block %d tx %d failed: %w", b.Header.Height, i, err)
-		}
-
-		// Remove from pending pool
-		if s.Pending != nil && tx.ID != nil {
-			s.Pending.Remove(tx.ID)
-		}
-	}
-
-	// Reward miner: basic subsidy + totalFees
-	if b.Header.Miner != "" {
-		s.credit(b.Header.Miner, BlockSubsidyBase+totalFees)
+		delete(st.UTXOMap[from], txID)
 	}
 
 	return nil
+}
+
+func (st *NamecoinState) AppendUTXO(utxo types.UTXO) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	if _, ok := st.UTXOMap[utxo.To][utxo.TxID]; ok {
+		return xerrors.New("tx already exists")
+	}
+
+	st.UTXOMap[utxo.To][utxo.TxID] = utxo
+	return nil
+
+}
+
+// GetUTXOsToBurn returns utxo IDs to burn and leftover UTXO.
+func (st *NamecoinState) GetUTXOsToBurn(txID, from string, amount uint64) ([]string, *types.UTXO, error) {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	userUTXOs := st.UTXOMap[from]
+	UTXOsToBurn := make([]string, 0)
+
+	// deduct until we burn enough UTXOs to pay
+	for key, utxo := range userUTXOs {
+		amount -= utxo.Amount
+		UTXOsToBurn = append(UTXOsToBurn, key)
+
+		if amount <= 0 {
+			break
+		}
+	}
+
+	// if amount still > 0 means that the user has not enough UTXOs to burn, revert
+	if amount > 0 {
+		return make([]string, 0), nil, xerrors.New("insufficient funds")
+	}
+
+	leftOver := 0 - amount
+
+	leftOverUTXO := types.UTXO{
+		TxID:   txID,
+		To:     from,
+		Amount: leftOver,
+	}
+
+	// safe to return transactionIDS because we create only one UTXO per transaction
+	// example, miner A mined a block; transaction is created - as a result, UTXO with corresponding txID is created.
+	return UTXOsToBurn, &leftOverUTXO, nil
+}
+
+var (
+	NameNewCommandName         = NameNew{}.Name()
+	NameFirstUpdateCommandName = NameFirstUpdate{}.Name()
+	NameUpdateCommandName      = NameUpdate{}.Name()
+	RewardCommandName          = Reward{}.Name()
+)
+
+// ApplyTx implements minimal Namecoin semantics
+// We can harden this later (ownership checks, expires, coins, etc).
+func (st *NamecoinState) ApplyTx(txID string, tx *types.Tx) error {
+
+	if st.IsTxApplied(tx.From, txID) {
+		// tx has already been applied
+		return nil
+	}
+
+	switch tx.Type {
+	case NameNewCommandName:
+		cmd, err := ResolveNameCoinCommand[NameNew](tx.Type, tx.Payload)
+
+		if err != nil {
+			return err
+		}
+
+		// we don't reveal name on the initial domain creation, look at project description
+		st.SetCommitment(tx.From, cmd.Commitment)
+	case NameFirstUpdateCommandName:
+
+		cmd, err := ResolveNameCoinCommand[NameFirstUpdate](tx.Type, tx.Payload)
+		if err != nil {
+			return err
+		}
+
+		if st.IsDomainExists(cmd.Domain) {
+			return xerrors.New("Domain already exists")
+		}
+
+		st.SetDomain(types.NameRecord{
+			Owner:     tx.From,
+			IP:        cmd.IP,
+			Domain:    cmd.Domain,
+			Salt:      cmd.Salt,
+			ExpiresAt: 0,
+		})
+	case NameUpdateCommandName:
+		cmd, err := ResolveNameCoinCommand[NameUpdate](tx.Type, tx.Payload)
+		if err != nil {
+			return err
+		}
+
+		// rec is copy, changing it without a lock, then updating with lock.
+		rec, ok := st.Domains[cmd.Domain]
+		if !ok {
+			return fmt.Errorf("updating non-existent domain %s", cmd.Domain)
+		}
+
+		// update only if the value is set. If value equals "", no updates have been made
+		if len(strings.TrimSpace(cmd.Domain)) != 0 {
+			rec.Domain = cmd.Domain
+		}
+		if len(strings.TrimSpace(cmd.IP)) != 0 {
+			rec.IP = cmd.IP
+		}
+
+		st.SetDomain(rec)
+
+	case RewardCommandName:
+		// nothing to verify specifically.
+	default:
+		// Unknown op: treat as no-op
+		//todo: remove difference between Namecoin block and other, it should be one block that contains different transactions.
+		warnf("namecoin: unknown tx op %q in tx %s", tx.Type, txID)
+	}
+
+	switch tx.Type {
+	case NameNewCommandName, NameFirstUpdateCommandName, NameUpdateCommandName:
+		txIDs := make([]string, len(tx.Inputs))
+		for i, value := range tx.Inputs {
+			txIDs[i] = value.TxID
+		}
+
+		err := st.BurnUTXO(tx.From, txIDs)
+		if err != nil {
+			return err
+		}
+	case RewardCommandName:
+		utxo := types.UTXO{
+			TxID:   txID,
+			To:     tx.Output.To,
+			Amount: tx.Output.Amount,
+		}
+
+		// save UTXO that rewards miner
+		err := st.AppendUTXO(utxo)
+
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (st *NamecoinState) IsTxApplied(from, txID string) bool {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	_, ok := st.UTXOMap[from][txID]
+
+	return ok
 }

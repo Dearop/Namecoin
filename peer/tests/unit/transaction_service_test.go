@@ -12,7 +12,7 @@ import (
 )
 
 func TestTransactionServiceApplyTransaction(t *testing.T) {
-	state := impl.NewState()
+	state := impl.Tmp()
 	service := impl.NewTransactionService(state)
 	const addr = "carol"
 	fundAddress(service, addr, 200)
@@ -40,7 +40,7 @@ func TestTransactionServiceApplyTransaction(t *testing.T) {
 		t.Fatalf("unexpected stored transaction %+v", stored)
 	}
 
-	if updated := service.TokenManager.GetBalance(addr); updated != 170 {
+	if updated := service.TokenManager.VerifyBalance(addr); updated != 170 {
 		t.Fatalf("expected balance deducted to 170, got %d", updated)
 	}
 }
@@ -129,7 +129,7 @@ func buildSignedTransaction(t *testing.T, publicKey ed25519.PublicKey, privateKe
 	tx := impl.SignedTransaction{
 		Type:      txType,
 		From:      hex.EncodeToString(impl.Hash(publicKey)),
-		Fee:       fee,
+		Amount:    fee,
 		Payload:   json.RawMessage(payloadBytes),
 		PublicKey: hex.EncodeToString(publicKey),
 	}

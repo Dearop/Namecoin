@@ -162,6 +162,48 @@ func (e EmptyMessage) HTML() string {
 	return "{∅}"
 }
 
+//---------------------------------------------------------------
+// NamecoinBlockMessage
+
+// NewEmpty implements types.Message
+func (u NamecoinBlockMessage) NewEmpty() Message { return &NamecoinBlockMessage{} }
+
+// Name implements types.Message.
+func (u NamecoinBlockMessage) Name() string {
+	return "NamecoinBlock"
+}
+
+// String implements types.Message.
+func (u NamecoinBlockMessage) String() string {
+	return "{∅}"
+}
+
+// HTML implements types.Message.
+func (u NamecoinBlockMessage) HTML() string {
+	return "{∅}"
+}
+
+//---------------------------------------------------------------
+// NamecoinTransactionMessage
+
+// NewEmpty implements types.Message
+func (u NamecoinTransactionMessage) NewEmpty() Message { return &NamecoinTransactionMessage{} }
+
+// Name implements types.Message.
+func (u NamecoinTransactionMessage) Name() string {
+	return "NamecoinTransaction"
+}
+
+// String implements types.Message.
+func (u NamecoinTransactionMessage) String() string {
+	return "{∅}"
+}
+
+// HTML implements types.Message.
+func (u NamecoinTransactionMessage) HTML() string {
+	return "{∅}"
+}
+
 // -----------------------------------------------------------------------------
 // PrivateMessage
 

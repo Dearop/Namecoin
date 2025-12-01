@@ -69,7 +69,7 @@ func NewHTTPNode(node peer.Peer, conf peer.Configuration, transactionService *im
 	servicectrl := controller.NewServiceCtrl(node, &log)
 	datasharingctrl := controller.NewDataSharing(node, &log)
 	blockchain := controller.NewBlockchain(conf, &log)
-	namecoin := controller.NewNamecoinController(transactionService, &log)
+	namecoin := controller.NewNamecoinController(node, transactionService, &log)
 
 	mux.Handle("/messaging/peers", http.HandlerFunc(messagingctrl.PeerHandler()))
 	mux.Handle("/messaging/routing", http.HandlerFunc(messagingctrl.RoutingHandler()))
@@ -97,9 +97,7 @@ func NewHTTPNode(node peer.Peer, conf peer.Configuration, transactionService *im
 
 	mux.Handle("/blockchain", http.HandlerFunc(blockchain.BlockchainHandler()))
 
-	mux.Handle("/namecoin/new", http.HandlerFunc(namecoin.NewHandler()))
-	mux.Handle("/namecoin/firstUpdate", http.HandlerFunc(namecoin.FirstUpdateHandler()))
-	mux.Handle("/namecoin/update", http.HandlerFunc(namecoin.UpdateHandler()))
+	mux.Handle("/namecoin/handle", http.HandlerFunc(namecoin.NewHandler()))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not authorized", http.StatusBadGateway)

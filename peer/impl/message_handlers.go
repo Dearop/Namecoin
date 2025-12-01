@@ -69,6 +69,47 @@ func (n *node) handleRumorsMessage(m types.Message, pkt transport.Packet) error 
 	return nil
 }
 
+// handleNamecoinTransactionMessage processes transaction message broadcasted by peers
+func (n *node) handleNamecoinTransactionMessage(message types.Message, packet transport.Packet) error {
+	msg, ok := message.(*types.NamecoinTransactionMessage)
+	if !ok {
+		return xerrors.Errorf("unexpected message type")
+	}
+
+	n.namecoinConsensus.txBuffer.Add(msg.Tx, msg.TxID)
+	return nil
+}
+
+// handleNamecoinBlockMessage processes block message broadcasted by peers
+func (n *node) handleNamecoinBlockMessage(message types.Message, packet transport.Packet) error {
+	msg, ok := message.(*types.NamecoinBlockMessage)
+	if !ok {
+		return xerrors.Errorf("unexpected message type")
+	}
+
+	n.StopMiner()
+
+	// remove tx from txBuffer.
+	for _, val := range msg.Block.Transactions {
+		txID, err := BuildTransactionID(&val)
+		if err != nil {
+			return err
+		}
+
+		n.namecoinConsensus.txBuffer.Remove(txID)
+	}
+
+	err := n.namecoinChain.ApplyBlock(&msg.Block)
+
+	n.StartMiner()
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // handlePrivateMessage processes private messages intended for this node.
 // It checks if the destination is in the recipients set and processes the embedded message.
 func (n *node) handlePrivateMessage(m types.Message, pkt transport.Packet) error {

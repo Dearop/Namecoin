@@ -21,11 +21,15 @@ type NameFirstUpdate struct {
 
 type NameUpdate struct {
 	Domain string `json:"domain"` // Registered domain
-	IP     string `json:"ip"`     // New IP address
+	IP     string `json:"ip"`     // Handle IP address
+}
+
+// Reward is a transaction type for rewarding a Miner. No payload here.
+type Reward struct {
 }
 
 type CommandType interface {
-	NameNew | NameFirstUpdate | NameUpdate
+	NameNew | NameFirstUpdate | NameUpdate | Reward
 }
 
 func ResolveNameCoinCommand[T CommandType](command string, payload json.RawMessage) (T, error) {
@@ -51,6 +55,9 @@ func ResolveNameCoinCommand[T CommandType](command string, payload json.RawMessa
 		}
 
 		return any(updateName).(T), nil
+	case Reward{}.Name():
+		// todo: no payload to verify.
+		return any(Reward{}).(T), nil
 	default:
 		var zero T
 		return zero, fmt.Errorf("unknown command: %s", command)
@@ -70,4 +77,8 @@ func (n NameFirstUpdate) Name() string {
 // Name implements NameCoinCommand
 func (n NameUpdate) Name() string {
 	return reflect.TypeOf(&NameUpdate{}).Elem().Name()
+}
+
+func (r Reward) Name() string {
+	return reflect.TypeOf(&Reward{}).Elem().Name()
 }

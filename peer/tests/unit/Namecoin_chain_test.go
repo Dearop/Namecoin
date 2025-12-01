@@ -66,7 +66,7 @@ func Test_Namecoin_LoadNamecoinChain_SingleBlock(t *testing.T) {
 		ID: []byte("tx1"),
 		Payload: types.TxPayload{
 			From:  "addr1",
-			Op:    "register",
+			Type:  "register",
 			Name:  "example.bit",
 			Value: "1.2.3.4",
 		},
@@ -97,7 +97,7 @@ func Test_Namecoin_LoadNamecoinChain_MultipleBlocksAndPrevHashMismatch(t *testin
 		ID: []byte("tx0"),
 		Payload: types.TxPayload{
 			From:  "addr1",
-			Op:    "register",
+			Type:  "register",
 			Name:  "example.bit",
 			Value: "value0",
 		},
@@ -110,7 +110,7 @@ func Test_Namecoin_LoadNamecoinChain_MultipleBlocksAndPrevHashMismatch(t *testin
 		ID: []byte("tx1"),
 		Payload: types.TxPayload{
 			From:  "addr1",
-			Op:    "update",
+			Type:  "update",
 			Name:  "example.bit",
 			Value: "value1",
 		},
@@ -138,7 +138,7 @@ func Test_Namecoin_LoadNamecoinChain_RespectsStoredHeadHash(t *testing.T) {
 		ID: []byte("tx0"),
 		Payload: types.TxPayload{
 			From:  "addr1",
-			Op:    "register",
+			Type:  "register",
 			Name:  "d.bit",
 			Value: "value0",
 		},
@@ -151,7 +151,7 @@ func Test_Namecoin_LoadNamecoinChain_RespectsStoredHeadHash(t *testing.T) {
 		ID: []byte("tx1"),
 		Payload: types.TxPayload{
 			From:  "addr1",
-			Op:    "update",
+			Type:  "update",
 			Name:  "d.bit",
 			Value: "value1",
 		},
@@ -187,7 +187,7 @@ func Test_Namecoin_LoadNamecoinChain_StoredHeadNotFoundUpdatesPointer(t *testing
 		ID: []byte("tx0"),
 		Payload: types.TxPayload{
 			From:  "addr1",
-			Op:    "register",
+			Type:  "register",
 			Name:  "fallback.bit",
 			Value: "v0",
 		},
@@ -200,7 +200,7 @@ func Test_Namecoin_LoadNamecoinChain_StoredHeadNotFoundUpdatesPointer(t *testing
 		ID: []byte("tx1"),
 		Payload: types.TxPayload{
 			From:  "addr1",
-			Op:    "update",
+			Type:  "update",
 			Name:  "fallback.bit",
 			Value: "v1",
 		},
@@ -227,7 +227,7 @@ func Test_Namecoin_ApplyNamecoinTx_RegisterUpdateTransferFlow(t *testing.T) {
 		ID: []byte("tx-register"),
 		Payload: types.TxPayload{
 			From:  "owner1",
-			Op:    "register",
+			Type:  "register",
 			Name:  "flow.bit",
 			Value: "ip1",
 		},
@@ -242,7 +242,7 @@ func Test_Namecoin_ApplyNamecoinTx_RegisterUpdateTransferFlow(t *testing.T) {
 		ID: []byte("tx-update"),
 		Payload: types.TxPayload{
 			From:  "owner1",
-			Op:    "update",
+			Type:  "update",
 			Name:  "flow.bit",
 			Value: "ip2",
 		},
@@ -255,7 +255,7 @@ func Test_Namecoin_ApplyNamecoinTx_RegisterUpdateTransferFlow(t *testing.T) {
 		Payload: types.TxPayload{
 			From: "owner1",
 			To:   "owner2",
-			Op:   "transfer",
+			Type: "transfer",
 			Name: "flow.bit",
 		},
 	}
@@ -273,7 +273,7 @@ func Test_Namecoin_ApplyNamecoinBlock_SkipsInvalidTxsButContinues(t *testing.T) 
 		ID: []byte("tx-bad"),
 		Payload: types.TxPayload{
 			From:  "addr",
-			Op:    "update",
+			Type:  "update",
 			Name:  "ghost.bit",
 			Value: "noop",
 		},
@@ -292,7 +292,7 @@ func Test_Namecoin_ApplyNamecoinBlock_SkipsInvalidTxsButContinues(t *testing.T) 
 	require.Error(t, ApplyNamecoinBlock(state, nil))
 }
 
-// --- ValidateBlock tests ---
+// --- ValidateAndApply tests ---
 
 func Test_Namecoin_ValidateBlock_GenesisValidAndInvalid(t *testing.T) {
 	chain, _ := newTestChain(t)
@@ -301,18 +301,18 @@ func Test_Namecoin_ValidateBlock_GenesisValidAndInvalid(t *testing.T) {
 		ID: []byte("txg"),
 		Payload: types.TxPayload{
 			From:  "addr1",
-			Op:    "register",
+			Type:  "register",
 			Name:  "g.bit",
 			Value: "1.2.3.4",
 		},
 	}
 	genesis := mustBlock(t, 0, nil, tx)
 
-	newState, err := chain.ValidateBlock(&genesis)
+	newState, err := chain.ValidateAndApply(&genesis)
 	require.NoError(t, err)
 
 	_, okLive := chain.State().Domains["g.bit"]
-	require.False(t, okLive, "ValidateBlock must not mutate live state")
+	require.False(t, okLive, "ValidateAndApply must not mutate live state")
 
 	rec, okClone := newState.Domains["g.bit"]
 	require.True(t, okClone)
@@ -331,7 +331,7 @@ func Test_Namecoin_ValidateBlock_GenesisValidAndInvalid(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			invalid := genesis
 			tc.mutate(&invalid)
-			_, err := chain.ValidateBlock(&invalid)
+			_, err := chain.ValidateAndApply(&invalid)
 			require.Error(t, err)
 		})
 	}
@@ -344,7 +344,7 @@ func Test_Namecoin_ValidateBlock_TxRootAndPrevHashChecks(t *testing.T) {
 		ID: []byte("tx0"),
 		Payload: types.TxPayload{
 			From:  "addr1",
-			Op:    "register",
+			Type:  "register",
 			Name:  "x.bit",
 			Value: "value0",
 		},
@@ -356,39 +356,39 @@ func Test_Namecoin_ValidateBlock_TxRootAndPrevHashChecks(t *testing.T) {
 		ID: []byte("tx1"),
 		Payload: types.TxPayload{
 			From:  "addr1",
-			Op:    "update",
+			Type:  "update",
 			Name:  "x.bit",
 			Value: "value1",
 		},
 	}
 	b1 := mustBlock(t, 1, genesis.Header.Hash, tx1)
 
-	_, err := chain.ValidateBlock(&b1)
+	_, err := chain.ValidateAndApply(&b1)
 	require.NoError(t, err)
 
 	bBadHeight := b1
 	bBadHeight.Header.Height = 2
-	_, err = chain.ValidateBlock(&bBadHeight)
+	_, err = chain.ValidateAndApply(&bBadHeight)
 	require.Error(t, err)
 
 	bBadPrev := b1
 	bBadPrev.Header.PrevHash = []byte("wrong-prev")
-	_, err = chain.ValidateBlock(&bBadPrev)
+	_, err = chain.ValidateAndApply(&bBadPrev)
 	require.Error(t, err)
 
 	bBadRoot := b1
 	bBadRoot.Header.TxRoot = make([]byte, len(b1.Header.TxRoot))
-	_, err = chain.ValidateBlock(&bBadRoot)
+	_, err = chain.ValidateAndApply(&bBadRoot)
 	require.Error(t, err)
 }
 
 func Test_Namecoin_ValidateBlock_ErrorsOnNilInputs(t *testing.T) {
 	var nilChain *NamecoinChain
-	_, err := nilChain.ValidateBlock(&types.Block{})
+	_, err := nilChain.ValidateAndApply(&types.Block{})
 	require.Error(t, err)
 
 	chain, _ := newTestChain(t)
-	_, err = chain.ValidateBlock(nil)
+	_, err = chain.ValidateAndApply(nil)
 	require.Error(t, err)
 }
 
@@ -401,7 +401,7 @@ func Test_Namecoin_ApplyBlock_PersistsBlockAndUpdatesState(t *testing.T) {
 		ID: []byte("txg"),
 		Payload: types.TxPayload{
 			From:  "addr1",
-			Op:    "register",
+			Type:  "register",
 			Name:  "z.bit",
 			Value: "1.2.3.4",
 		},
@@ -435,7 +435,7 @@ func Test_Namecoin_ApplyBlock_DropsPendingTxs(t *testing.T) {
 		ID: []byte("tx0"),
 		Payload: types.TxPayload{
 			From:  "addr1",
-			Op:    "register",
+			Type:  "register",
 			Name:  "p.bit",
 			Value: "v0",
 		},
@@ -447,7 +447,7 @@ func Test_Namecoin_ApplyBlock_DropsPendingTxs(t *testing.T) {
 		ID: []byte("tx1"),
 		Payload: types.TxPayload{
 			From:  "addr1",
-			Op:    "update",
+			Type:  "update",
 			Name:  "p.bit",
 			Value: "v1",
 		},
@@ -473,7 +473,7 @@ func Test_Namecoin_ApplyBlock_InvalidBlockDoesNotMutateStateOrStore(t *testing.T
 		ID: []byte("tx0"),
 		Payload: types.TxPayload{
 			From:  "addr1",
-			Op:    "register",
+			Type:  "register",
 			Name:  "safe.bit",
 			Value: "v0",
 		},
@@ -488,7 +488,7 @@ func Test_Namecoin_ApplyBlock_InvalidBlockDoesNotMutateStateOrStore(t *testing.T
 		ID: []byte("tx1"),
 		Payload: types.TxPayload{
 			From:  "addr1",
-			Op:    "update",
+			Type:  "update",
 			Name:  "safe.bit",
 			Value: "v1",
 		},
@@ -529,7 +529,7 @@ func Test_Namecoin_LoadNamecoinChain_RestartRebuildsState(t *testing.T) {
 		ID: []byte("tx0"),
 		Payload: types.TxPayload{
 			From:  "addr1",
-			Op:    "register",
+			Type:  "register",
 			Name:  "restart.bit",
 			Value: "v0",
 		},
@@ -541,7 +541,7 @@ func Test_Namecoin_LoadNamecoinChain_RestartRebuildsState(t *testing.T) {
 		ID: []byte("tx1"),
 		Payload: types.TxPayload{
 			From:  "addr1",
-			Op:    "update",
+			Type:  "update",
 			Name:  "restart.bit",
 			Value: "v1",
 		},

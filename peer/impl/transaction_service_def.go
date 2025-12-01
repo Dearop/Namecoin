@@ -20,11 +20,10 @@ type ITransactionService interface {
 type SignedTransaction struct {
 	Type    string          `json:"type"`    // e.g. "name_new", "name_firstupdate", "name_update"
 	From    string          `json:"from"`    // wallet address (public key hash / base58 / hex)
-	Fee     uint64          `json:"fee"`     // token fee
+	Amount  uint64          `json:"amount"`  // token fee
 	Payload json.RawMessage `json:"payload"` // raw payload, variant by type
 
 	// Non-hash-related properties
-	PublicKey string `json:"publicKey"` // Users Public Key
 	TxID      string `json:"txId"`      // hash of unsigned transaction data
 	Signature string `json:"signature"` // signature of txHash
 }

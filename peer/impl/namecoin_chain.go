@@ -3,7 +3,6 @@ package impl
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -32,13 +31,6 @@ type NamecoinChain struct {
 	state      *NamecoinState
 	headHash   []byte
 	headHeight uint64
-}
-
-// TODO: move these and NamecoinChain struct into a separate package
-func (c *NamecoinChain) State() *NamecoinState {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.state
 }
 
 func (c *NamecoinChain) HeadHash() []byte {
@@ -80,10 +72,12 @@ func parseNamecoinBlockHeight(key string) (uint64, error) {
 	if !strings.HasPrefix(key, NamecoinBlockPrefix) {
 		return 0, fmt.Errorf("not a namecoin block key")
 	}
+
 	suffix := strings.TrimPrefix(key, NamecoinBlockPrefix)
 	if len(suffix) == 0 {
 		return 0, fmt.Errorf("invalid namecoin block key length %d", len(key))
 	}
+
 	h, err := strconv.ParseUint(suffix, 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("invalid height suffix %q: %w", suffix, err)
@@ -97,94 +91,35 @@ func parseNamecoinBlockHeight(key string) (uint64, error) {
 func computeTxRoot(txs []types.Tx) ([]byte, error) {
 	h := sha256.New()
 	for i := range txs {
-		b, err := json.Marshal(txs[i])
+		b, err := SerializeTransaction(&txs[i])
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal tx %d for root: %w", i, err)
 		}
-		if _, err := h.Write(b); err != nil {
+		if _, err = h.Write(b); err != nil {
 			return nil, fmt.Errorf("failed to hash tx %d: %w", i, err)
 		}
 	}
 	return h.Sum(nil), nil
 }
 
-// ApplyNamecoinTx implements minimal Namecoin semantics
-// We can harden this later (ownership checks, expiries, coins, etc).
-func ApplyNamecoinTx(st *NamecoinState, transaction *types.Tx) error {
-	if st == nil {
-		return fmt.Errorf("apply namecoin tx: nil state")
-	}
-	if transaction == nil || transaction.ID == nil {
-		return fmt.Errorf("apply namecoin tx: nil tx")
-	}
-	// TODO: add payload validation
-	id := transaction.ID
-	tx := transaction.Payload
-
-	switch tx.Op {
-	case "register":
-		// Simple MVP semantics:
-		// - overwrites any existing record for this name
-		// - assigns ownership to tx.From
-		if tx.Name == "" {
-			return fmt.Errorf("register tx without name")
-		}
-		st.Domains[tx.Name] = types.NameRecord{
-			Owner:     tx.From,
-			Value:     tx.Value,
-			ExpiresAt: 0,
-		}
-	case "update":
-		if tx.Name == "" {
-			return fmt.Errorf("update tx without name")
-		}
-		rec, ok := st.Domains[tx.Name]
-		if !ok {
-			return fmt.Errorf("update non-existent name %s", tx.Name)
-		}
-		// NOTE: no ownership checks
-		rec.Value = tx.Value
-		st.Domains[tx.Name] = rec
-	case "transfer":
-		// NOTE: only domain ownership transfer, no coins
-		if tx.Name == "" {
-			return fmt.Errorf("transfer tx without name")
-		}
-		rec, ok := st.Domains[tx.Name]
-		if !ok {
-			return fmt.Errorf("transfer non-existent name %s", tx.Name)
-		}
-		rec.Owner = tx.To
-		st.Domains[tx.Name] = rec
-
-	// TODO: Add "pay", "coinbase", etc. later
-
-	default:
-		// Unknown op: treat as no-op
-		warnf("namecoin: unknown tx op %q in tx %s", tx.Op, id)
-	}
-	return nil
-}
-
 // ApplyNamecoinBlock applies all txs and prunes included pending txs
-// NOTE: kept simple for now but later we can refactor into
+// NOTE: kept simple for now, but later we can refactor into
 // dedicated modules (e.g., domain, coin, mempool)
 func ApplyNamecoinBlock(st *NamecoinState, blk *types.Block) error {
-	if st == nil {
-		return fmt.Errorf("apply namecoin block: nil state")
-	}
 	if blk == nil {
 		return fmt.Errorf("apply namecoin block: nil block")
 	}
 	for i := range blk.Transactions {
 		tx := &blk.Transactions[i]
-		if err := ApplyNamecoinTx(st, tx); err != nil {
+		txID, err := BuildTransactionID(tx)
+		if err != nil {
+			return err
+		}
+
+		if err = st.ApplyTx(txID, tx); err != nil {
 			// for robustness, we log and continue
 			warnf("namecoin: failed to apply tx %s at height %d: %v",
-				tx.ID, blk.Header.Height, err)
-		}
-		if st.Pending != nil && tx.ID != nil {
-			st.Pending.Remove(tx.ID)
+				txID, blk.Header.Height, err)
 		}
 	}
 	return nil
@@ -194,9 +129,6 @@ func ApplyNamecoinBlock(st *NamecoinState, blk *types.Block) error {
 // LoadNamecoinChain replays all Namecoin blocks from the blockchain store
 // and reconstructs local NamecoinState
 func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
-	if store == nil {
-		return nil, fmt.Errorf("nil blockchain store")
-	}
 
 	state := NewState()
 
@@ -204,16 +136,18 @@ func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
 	storedHeadHash := store.Get(NamecoinLastBlockKey)
 
 	// Scan all Namecoin blocks
-	var blocks []loadedBlock
+	blocks := make([]loadedBlock, 0, store.Len())
 	store.ForEach(func(key string, val []byte) bool {
 		if !strings.HasPrefix(key, NamecoinBlockPrefix) {
 			return true
 		}
+
 		h, err := parseNamecoinBlockHeight(key)
 		if err != nil {
 			warnf("load namecoin chain: skipping malformed block key %q: %v", key, err)
 			return true
 		}
+
 		blocks = append(blocks, loadedBlock{
 			Height: h,
 			Key:    key,
@@ -222,8 +156,8 @@ func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
 		return true
 	})
 
+	// Nothing to replay.
 	if len(blocks) == 0 {
-		// Nothing to replay.
 		return &NamecoinChain{
 			store:      store,
 			state:      state,
@@ -278,16 +212,16 @@ func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
 		// Apply block transactions to state
 		if err := ApplyNamecoinBlock(state, &blk); err != nil {
 			warnf("namecoin: error applying block at height %d: %v", blk.Header.Height, err)
-			// for robustness, we keep going; bad blocks dont kill replay
+			// for robustness, we keep going; bad blocks don't kill replay
 			continue
 		}
 
 		// Track head and linkage for the next iteration
-		prevHash = append([]byte(nil), blk.Header.Hash...)
+		prevHash = append([]byte(nil), blk.Hash...)
 		headHash = prevHash
 		headHeight = blk.Header.Height
 
-		if storedHeadHash != nil && bytes.Equal(blk.Header.Hash, storedHeadHash) {
+		if storedHeadHash != nil && bytes.Equal(blk.Hash, storedHeadHash) {
 			foundHead = true
 			break
 		}
@@ -313,7 +247,7 @@ func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
 }
 
 // ---- Core Validate Block ----
-// ValidateBlock validates a candidate Namecoin block against the current
+// ValidateAndApply validates a candidate Namecoin block against the current
 // chain head and state, without mutating the live state.
 //
 // Checks:
@@ -325,61 +259,50 @@ func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
 // On success, it returns the resulting (cloned) state that includes the
 // block's effects. On failure, it returns a non-nil error and leaves
 // the live chain state untouched
-func (c *NamecoinChain) ValidateBlock(blk *types.Block) (*NamecoinState, error) {
-	if c == nil {
-		return nil, fmt.Errorf("validate namecoin blk: nil NamecoinChain")
-	}
+func (c *NamecoinChain) ValidateAndApply(currentHeadHeight uint64, currentHeadHash []byte, currentState *NamecoinState, blk *types.Block) error {
 	if blk == nil {
-		return nil, fmt.Errorf("validate namecoin blk: nil block")
+		return fmt.Errorf("validate namecoin blk: nil block")
 	}
-
-	// Snapshot current head and state
-	c.mu.RLock()
-	currentHeadHash := append([]byte(nil), c.headHash...)
-	currentHeadHeight := c.headHeight
-	currentState := c.state
-	c.mu.RUnlock()
 
 	// Basic height / prevHash linkage
 	if currentHeadHash == nil {
 		// Empty chain: expect genesis block
 		if blk.Header.Height != 0 {
-			return nil, fmt.Errorf("invalid genesis height %d; expected 0", blk.Header.Height)
+			return fmt.Errorf("invalid genesis height %d; expected 0", blk.Header.Height)
 		}
 		if len(blk.Header.PrevHash) != 0 {
-			return nil, fmt.Errorf("genesis block must have empty prevHash")
+			return fmt.Errorf("genesis block must have empty prevHash")
 		}
 	} else {
 		expectedHeight := currentHeadHeight + 1
 		if blk.Header.Height != expectedHeight {
-			return nil, fmt.Errorf("invalid height %d; expected %d", blk.Header.Height, expectedHeight)
+			return fmt.Errorf("invalid height %d; expected %d", blk.Header.Height, expectedHeight)
 		}
 		if !bytes.Equal(blk.Header.PrevHash, currentHeadHash) {
-			return nil, fmt.Errorf("prevHash mismatch")
+			return fmt.Errorf("prevHash mismatch")
 		}
 	}
 
 	// txRoot consistency
 	computedRoot, err := computeTxRoot(blk.Transactions)
 	if err != nil {
-		return nil, fmt.Errorf("failed to compute tx root: %w", err)
+		return fmt.Errorf("failed to compute tx root: %w", err)
 	}
 	if !bytes.Equal(blk.Header.TxRoot, computedRoot) {
-		return nil, fmt.Errorf("txRoot mismatch")
+		return fmt.Errorf("txRoot mismatch")
 	}
 
 	// Replay txs on a cloned state to ensure they all apply cleanly
-	tmp := currentState.Clone()
-	if err := ApplyNamecoinBlock(tmp, blk); err != nil {
-		return nil, fmt.Errorf("block tx replay failed: %w", err)
+	if err = ApplyNamecoinBlock(currentState, blk); err != nil {
+		return fmt.Errorf("block tx replay failed: %w", err)
 	}
 
-	return tmp, nil
+	return nil
 }
 
 // ---- Core Apply Block ----
 // ApplyBlock validates and then applies a block:
-//  1. ValidateBlock(block) – if it fails, return error, no state/store changes.
+//  1. ValidateAndApply(block) – if it fails, return error, no state/store changes.
 //  2. Persist the block under NamecoinBlockPrefix + height.
 //  3. Update NamecoinLastBlockKey to block.Header.Hash.
 //  4. Commit the validated state to the chain (including pruning pending txs).
@@ -387,26 +310,35 @@ func (c *NamecoinChain) ValidateBlock(blk *types.Block) (*NamecoinState, error) 
 // If any persistence step fails, the in-memory state/head is NOT updated,
 // so there is no partial commit at the logical chain level.
 func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
-	if c == nil {
-		return fmt.Errorf("nil NamecoinChain")
-	}
 	if blk == nil {
 		return fmt.Errorf("nil block")
 	}
-	if c.store == nil {
-		return fmt.Errorf("nil blockchain store")
-	}
 
-	// validate
-	newState, err := c.ValidateBlock(blk)
+	// take snapshot of blockchain state
+	c.mu.Lock()
+	currentHeadHeight := c.headHeight
+	currentHeadHash := append([]byte(nil), c.headHash...)
+	clonedState := c.state.Clone()
+	c.mu.Unlock()
+
+	// validate on state copy
+	err := c.ValidateAndApply(currentHeadHeight, currentHeadHash, clonedState, blk)
 	if err != nil {
 		return err
 	}
 
-	// serialise block
+	// serialize block
 	data, err := blk.Marshal()
 	if err != nil {
 		return fmt.Errorf("failed to marshal block at height %d: %w", blk.Header.Height, err)
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	err = c.ValidateAndApply(c.headHeight, c.headHash, c.state, blk)
+	if err != nil {
+		return err
 	}
 
 	// Persist block to block store
@@ -414,14 +346,10 @@ func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
 	c.store.Set(blockKey, data)
 
 	// Update last-block pointer
-	c.store.Set(NamecoinLastBlockKey, blk.Header.Hash)
+	c.store.Set(NamecoinLastBlockKey, blk.Hash)
 
-	// Commit validated state + head into memory
-	c.mu.Lock()
-	c.state = newState
-	c.headHash = append([]byte(nil), blk.Header.Hash...)
+	c.headHash = append([]byte(nil), blk.Hash...)
 	c.headHeight = blk.Header.Height
-	c.mu.Unlock()
 
 	return nil
 }
