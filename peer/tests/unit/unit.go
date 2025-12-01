@@ -18,7 +18,7 @@ type NamecoinState = impl.NamecoinState
 
 var LoadNamecoinChain = impl.LoadNamecoinChain
 var NewNamecoinState = impl.NewState
-var ApplyNamecoinBlock = impl.ApplyNamecoinBlock
+var ApplyNamecoinBlock = impl.ApplyBlockToState
 
 // Isolation prefixes for Namecoin in the blockchain store
 var (

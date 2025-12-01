@@ -92,7 +92,7 @@ type node struct {
 	namecoinConsensus *NamecoinConsensus
 	namecoinChain     *NamecoinChain
 
-	// Miner
+	// MinerPubKey
 	minerStopCh chan struct{}
 	minerWG     sync.WaitGroup
 
@@ -180,7 +180,7 @@ type pendingAck struct {
 func (n *node) StartMiner() {
 	n.mu.Lock()
 	if n.minerStopCh != nil {
-		// Miner already running
+		// MinerPubKey already running
 		n.mu.Unlock()
 		return
 	}
@@ -197,43 +197,12 @@ func (n *node) StartMiner() {
 				return
 
 			default:
-				// Build base header from current chain head
-				n.mu.RLock()
-				headHash := n.namecoinChain.HeadHash()
-				headHeight := n.namecoinChain.HeadHeight()
-				n.mu.RUnlock()
-
-				base := types.BlockHeader{
-					Height:    headHeight + 1,
-					PrevHash:  headHash,
-					Miner:     n.conf.PoWConfig.PubKey,
-					Timestamp: time.Now().Unix(),
+				err := n.MinerDoWork()
+				if errors.Is(err, ErrMiningAborted) {
+					break
 				}
 
-				// Mine block
-				block, err := n.namecoinConsensus.MineAndApply(n.minerStopCh, &base)
-				if err != nil {
-					if errors.Is(err, ErrMiningAborted) {
-						return // Stop mining
-					}
-					continue // Try again
-				}
-
-				// Broadcast mined block
-				msg := types.NamecoinBlockMessage{
-					Block: block,
-				}
-
-				wire, err := n.conf.MessageRegistry.MarshalMessage(msg)
-				if err == nil {
-					_ = n.Broadcast(wire)
-				}
-
-				// Apply block locally
-				if err := n.namecoinChain.ApplyBlock(&block); err != nil {
-					// should not happen; log but continue
-					log.Printf("Error applying mined block: %v", err)
-				}
+				continue
 			}
 		}
 	}()
@@ -251,6 +220,49 @@ func (n *node) StopMiner() {
 	n.mu.Lock()
 	n.minerStopCh = nil
 	n.mu.Unlock()
+}
+
+func (n *node) MinerDoWork() error {
+	// Build base header from current chain head
+	n.mu.RLock()
+	headHash := n.namecoinChain.HeadHash()
+	headHeight := n.namecoinChain.HeadHeight()
+	n.mu.RUnlock()
+
+	base := types.BlockHeader{
+		Height:    headHeight + 1,
+		PrevHash:  headHash,
+		Miner:     n.conf.PoWConfig.PubKey,
+		Timestamp: time.Now().Unix(),
+	}
+
+	// Mine block
+	block, err := n.namecoinConsensus.MineAndApply(n.minerStopCh, &base)
+	if err != nil {
+		return err
+	}
+
+	// Broadcast mined block
+	msg := types.NamecoinBlockMessage{
+		Block: block,
+	}
+
+	wire, err := n.conf.MessageRegistry.MarshalMessage(msg)
+	if err != nil {
+		return err
+	}
+
+	err = n.Broadcast(wire)
+	if err != nil {
+		return err
+	}
+	// Apply block locally
+	if err = n.namecoinChain.ApplyBlock(&block); err != nil {
+		// should not happen; log but continue
+		log.Printf("Error applying mined block: %v", err)
+	}
+
+	return nil
 }
 
 // acceptExpectedRumors processes expected rumors and returns those that were newly accepted.

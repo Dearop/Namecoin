@@ -6,7 +6,7 @@ import (
 	"reflect"
 )
 
-type NameCoinCommand interface {
+type NamecoinCommand interface {
 	Name() string
 }
 type NameNew struct {
@@ -24,7 +24,7 @@ type NameUpdate struct {
 	IP     string `json:"ip"`     // Handle IP address
 }
 
-// Reward is a transaction type for rewarding a Miner. No payload here.
+// Reward is a transaction type for rewarding a MinerPubKey. No payload here.
 type Reward struct {
 }
 
@@ -64,21 +64,22 @@ func ResolveNameCoinCommand[T CommandType](command string, payload json.RawMessa
 	}
 }
 
-// Name implements NameCoinCommand
+// Name implements NamecoinCommand
 func (n NameNew) Name() string {
 	return reflect.TypeOf(&NameNew{}).Elem().Name()
 }
 
-// Name implements NameCoinCommand
+// Name implements NamecoinCommand
 func (n NameFirstUpdate) Name() string {
 	return reflect.TypeOf(&NameFirstUpdate{}).Elem().Name()
 }
 
-// Name implements NameCoinCommand
+// Name implements NamecoinCommand
 func (n NameUpdate) Name() string {
 	return reflect.TypeOf(&NameUpdate{}).Elem().Name()
 }
 
+// Name implements NamecoinCommand
 func (r Reward) Name() string {
 	return reflect.TypeOf(&Reward{}).Elem().Name()
 }

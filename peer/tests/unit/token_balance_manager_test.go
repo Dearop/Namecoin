@@ -7,8 +7,8 @@ import (
 	"go.dedis.ch/cs438/peer/impl"
 )
 
-func TestTokenWalletManagerChargeAndGet(t *testing.T) {
-	manager := impl.NewTokenWalletManager(nil)
+func TestTokenBalanceManagerChargeAndGet(t *testing.T) {
+	manager := impl.NewBalanceManager(nil)
 	const addr = "alice"
 
 	manager.SetBalance(addr, 100)
@@ -25,8 +25,8 @@ func TestTokenWalletManagerChargeAndGet(t *testing.T) {
 	}
 }
 
-func TestTokenWalletManagerChargeAndGetInsufficientFunds(t *testing.T) {
-	manager := impl.NewTokenWalletManager(nil)
+func TestTokenBalanceManagerChargeAndGetInsufficientFunds(t *testing.T) {
+	manager := impl.NewBalanceManager(nil)
 	const addr = "bob"
 
 	manager.SetBalance(addr, 5)
@@ -36,8 +36,8 @@ func TestTokenWalletManagerChargeAndGetInsufficientFunds(t *testing.T) {
 	}
 }
 
-func TestTokenWalletManagerVerifyOwnershipSuccess(t *testing.T) {
-	manager := impl.NewTokenWalletManager(nil)
+func TestTokenBalanceManagerVerifyOwnershipSuccess(t *testing.T) {
+	manager := impl.NewBalanceManager(nil)
 
 	publicKey := []byte{0x01, 0x02, 0x03}
 	from := hex.EncodeToString(impl.Hash(publicKey))
@@ -47,8 +47,8 @@ func TestTokenWalletManagerVerifyOwnershipSuccess(t *testing.T) {
 	}
 }
 
-func TestTokenWalletManagerVerifyOwnershipMismatch(t *testing.T) {
-	manager := impl.NewTokenWalletManager(nil)
+func TestTokenBalanceManagerVerifyOwnershipMismatch(t *testing.T) {
+	manager := impl.NewBalanceManager(nil)
 
 	publicKey := []byte{0x04, 0x05, 0x06}
 	from := "deadbeef"

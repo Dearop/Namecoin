@@ -28,11 +28,13 @@ type TxOutput struct {
 type Tx struct {
 	From string
 	Type string
+
 	// UTXOs inputs/outputs
 	Inputs []TxInput
 
 	// we can produce at MAX one UTXO to corresponding transaction
-	Output TxOutput
+	// stored as array for simplicity
+	Outputs []TxOutput
 
 	Amount  uint64
 	Payload json.RawMessage

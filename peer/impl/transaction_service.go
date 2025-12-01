@@ -9,13 +9,13 @@ import (
 // NewTransactionService creates a new TransactionService instance.
 func NewTransactionService(blockchain *NamecoinState) *TransactionService {
 	return &TransactionService{
-		TokenManager: NewTokenWalletManager(blockchain),
+		TokenManager: NewBalanceManager(blockchain),
 		state:        blockchain}
 }
 
 // TransactionService implements ITransactionService
 type TransactionService struct {
-	TokenManager *TokenManager
+	TokenManager *BalanceManager
 	state        *NamecoinState
 }
 
@@ -49,12 +49,12 @@ func (t *TransactionService) ValidateTransaction(tx *SignedTransaction) error {
 	return nil
 }
 
-func (t *TransactionService) VerifyBalance(txID, from string, amount uint64) ([]types.TxInput, types.TxOutput, error) {
-	// 5. Check user balance use TokenManager
+func (t *TransactionService) VerifyBalance(txID, from string, amount uint64) ([]types.TxInput, []types.TxOutput, error) {
+	// 5. Check user balance use BalanceManager
 	// generating UTXOs to burn and one for leftovers
 	inputs, output, err := t.TokenManager.VerifyBalance(txID, from, amount)
 	if err != nil {
-		return make([]types.TxInput, 0), types.TxOutput{}, err
+		return make([]types.TxInput, 0), make([]types.TxOutput, 0), err
 	}
 
 	return inputs, output, nil

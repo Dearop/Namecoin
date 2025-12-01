@@ -56,7 +56,7 @@ func (n Namecoin) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inputs, output, err := n.transactionService.VerifyBalance(transaction.TxID, transaction.From, transaction.Amount)
+	inputs, outputs, err := n.transactionService.VerifyBalance(transaction.TxID, transaction.From, transaction.Amount)
 
 	msg := types.NamecoinTransactionMessage{
 		TxID: transaction.TxID,
@@ -64,7 +64,7 @@ func (n Namecoin) Handle(w http.ResponseWriter, r *http.Request) {
 			From:    transaction.From,
 			Type:    transaction.Type,
 			Inputs:  inputs,
-			Output:  output,
+			Outputs: outputs,
 			Amount:  transaction.Amount,
 			Payload: transaction.Payload,
 		},

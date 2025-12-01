@@ -102,29 +102,6 @@ func computeTxRoot(txs []types.Tx) ([]byte, error) {
 	return h.Sum(nil), nil
 }
 
-// ApplyNamecoinBlock applies all txs and prunes included pending txs
-// NOTE: kept simple for now, but later we can refactor into
-// dedicated modules (e.g., domain, coin, mempool)
-func ApplyNamecoinBlock(st *NamecoinState, blk *types.Block) error {
-	if blk == nil {
-		return fmt.Errorf("apply namecoin block: nil block")
-	}
-	for i := range blk.Transactions {
-		tx := &blk.Transactions[i]
-		txID, err := BuildTransactionID(tx)
-		if err != nil {
-			return err
-		}
-
-		if err = st.ApplyTx(txID, tx); err != nil {
-			// for robustness, we log and continue
-			warnf("namecoin: failed to apply tx %s at height %d: %v",
-				txID, blk.Header.Height, err)
-		}
-	}
-	return nil
-}
-
 // ---- Core Chain Loader ----
 // LoadNamecoinChain replays all Namecoin blocks from the blockchain store
 // and reconstructs local NamecoinState
@@ -171,6 +148,29 @@ func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
 		return blocks[i].Height < blocks[j].Height
 	})
 
+	// replay
+	headHash, foundHead, headHeight := ReplayBlocks(state, blocks, storedHeadHash)
+
+	// If we had a stored head but never encountered it, we use the
+	// last valid block we replayed and overwrite NamecoinLastBlockKey below
+	if storedHeadHash != nil && !foundHead {
+		warnf("namecoin: stored head hash not found in chain; using last valid block at height %d", headHeight)
+	}
+
+	// Persist the new head hash
+	if headHash != nil {
+		store.Set(NamecoinLastBlockKey, headHash)
+	}
+
+	return &NamecoinChain{
+		store:      store,
+		state:      state,
+		headHash:   headHash,
+		headHeight: headHeight,
+	}, nil
+}
+
+func ReplayBlocks(state *NamecoinState, blocks []loadedBlock, storedHeadHash []byte) ([]byte, bool, uint64) {
 	// replay vars
 	var (
 		prevHash   []byte
@@ -210,7 +210,7 @@ func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
 		}
 
 		// Apply block transactions to state
-		if err := ApplyNamecoinBlock(state, &blk); err != nil {
+		if err := ApplyBlockToState(state, &blk); err != nil {
 			warnf("namecoin: error applying block at height %d: %v", blk.Header.Height, err)
 			// for robustness, we keep going; bad blocks don't kill replay
 			continue
@@ -227,23 +227,7 @@ func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
 		}
 	}
 
-	// If we had a stored head but never encountered it, we use the
-	// last valid block we replayed and overwrite NamecoinLastBlockKey below
-	if storedHeadHash != nil && !foundHead {
-		warnf("namecoin: stored head hash not found in chain; using last valid block at height %d", headHeight)
-	}
-
-	// Persist the new head hash
-	if headHash != nil {
-		store.Set(NamecoinLastBlockKey, headHash)
-	}
-
-	return &NamecoinChain{
-		store:      store,
-		state:      state,
-		headHash:   headHash,
-		headHeight: headHeight,
-	}, nil
+	return headHash, foundHead, headHeight
 }
 
 // ---- Core Validate Block ----
@@ -293,22 +277,13 @@ func (c *NamecoinChain) ValidateAndApply(currentHeadHeight uint64, currentHeadHa
 	}
 
 	// Replay txs on a cloned state to ensure they all apply cleanly
-	if err = ApplyNamecoinBlock(currentState, blk); err != nil {
+	if err = ApplyBlockToState(currentState, blk); err != nil {
 		return fmt.Errorf("block tx replay failed: %w", err)
 	}
 
 	return nil
 }
 
-// ---- Core Apply Block ----
-// ApplyBlock validates and then applies a block:
-//  1. ValidateAndApply(block) – if it fails, return error, no state/store changes.
-//  2. Persist the block under NamecoinBlockPrefix + height.
-//  3. Update NamecoinLastBlockKey to block.Header.Hash.
-//  4. Commit the validated state to the chain (including pruning pending txs).
-//
-// If any persistence step fails, the in-memory state/head is NOT updated,
-// so there is no partial commit at the logical chain level.
 func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
 	if blk == nil {
 		return fmt.Errorf("nil block")
