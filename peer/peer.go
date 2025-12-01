@@ -35,6 +35,10 @@ type Configuration struct {
 	// Namecoin PoW parameters.
 	PoWConfig PoWConfig
 
+	// EnableMiner toggles the background PoW miner. When false, the node will
+	// skip starting the miner loop (useful for tests).
+	EnableMiner bool
+
 	// HeartbeatInterval is the interval at which a rumor with an EmptyMessage
 	// is sent. At startup a rumor with EmptyMessage should always be sent. Note
 	// that sending a rumor is expensive as it involve the

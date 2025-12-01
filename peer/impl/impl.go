@@ -161,8 +161,9 @@ func (n *node) Start() error {
 		go n.heartbeatLoop(n.conf.HeartbeatInterval)
 	}
 
-	// start miner
-	n.StartMiner()
+	if n.conf.EnableMiner {
+		n.StartMiner()
+	}
 	return nil
 }
 

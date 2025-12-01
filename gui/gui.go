@@ -224,6 +224,7 @@ func start(c *urfave.Context) error {
 		},
 		PaxosID:            paxosID,
 		PaxosProposerRetry: c.Duration("paxosproposerretry"),
+		EnableMiner:        true,
 
 		PoWConfig: peer.PoWConfig{
 			Target:     new(big.Int).Lsh(big.NewInt(1), 252), //set to 253 for testing purposes to mine block faster
