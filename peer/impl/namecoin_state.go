@@ -168,3 +168,28 @@ func (st *NamecoinState) MarkAsApplied(txID string) {
 	defer st.mu.Unlock()
 	st.txMap[txID] = struct{}{}
 }
+
+func (st *NamecoinState) ProcessCommandTransactionStateUpdate(txID string, tx *types.Tx) error {
+	cmd, err := ResolveCommand(tx.Type, tx.Payload)
+	if err != nil {
+		return err
+	}
+	return cmd.ProcessTxState(st, txID, tx)
+}
+
+func (st *NamecoinState) ProcessCommandStateUpdate(tx *types.Tx) error {
+	cmd, err := ResolveCommand(tx.Type, tx.Payload)
+	if err != nil {
+		return err
+	}
+	return cmd.ProcessState(st, tx)
+}
+
+// ValidateCommand verifies the payload of a transaction based on its type
+func (st *NamecoinState) ValidateCommand(tx *SignedTransaction) error {
+	cmd, err := ResolveCommand(tx.Type, tx.Payload)
+	if err != nil {
+		return err
+	}
+	return cmd.Validate(st, tx)
+}

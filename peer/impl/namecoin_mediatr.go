@@ -3,83 +3,70 @@ package impl
 import (
 	"encoding/json"
 	"fmt"
-	"reflect"
+
+	"go.dedis.ch/cs438/types"
+)
+
+var (
+	RewardCommandName          = Reward{}.Name()
+	NameNewCommandName         = NameNew{}.Name()
+	NameFirstUpdateCommandName = NameFirstUpdate{}.Name()
+	NameUpdateCommandName      = NameUpdate{}.Name()
 )
 
 type NamecoinCommand interface {
 	Name() string
-}
-type NameNew struct {
-	Commitment string `json:"commitment"` // H(salt + domain)
-}
-
-type NameFirstUpdate struct {
-	Domain string `json:"domain"` // The real domain name being registered
-	Salt   string `json:"salt"`   // Must match the original commitment
-	IP     string `json:"ip"`     // IP address the user wants to bind
-}
-
-type NameUpdate struct {
-	Domain string `json:"domain"` // Registered domain
-	IP     string `json:"ip"`     // Handle IP address
-}
-
-// Reward is a transaction type for rewarding a MinerPubKey. No payload here.
-type Reward struct {
+	ProcessState(st *NamecoinState, tx *types.Tx) error
+	ProcessTxState(st *NamecoinState, txID string, tx *types.Tx) error
+	Validate(st *NamecoinState, tx *SignedTransaction) error
 }
 
 type CommandType interface {
 	NameNew | NameFirstUpdate | NameUpdate | Reward
 }
 
-func ResolveNameCoinCommand[T CommandType](command string, payload json.RawMessage) (T, error) {
+func ResolveCommand(command string, payload json.RawMessage) (NamecoinCommand, error) {
 	switch command {
-	case NameNew{}.Name():
-		var nameNew NameNew
-		if err := json.Unmarshal(payload, &nameNew); err != nil {
-			return any(nameNew).(T), fmt.Errorf("invalid NameNew payload: %w", err)
-		}
-
-		return any(nameNew).(T), nil
-	case NameFirstUpdate{}.Name():
-		var firstUpdate NameFirstUpdate
-		if err := json.Unmarshal(payload, &firstUpdate); err != nil {
-			return any(firstUpdate).(T), fmt.Errorf("invalid NameFirstUpdate payload: %w", err)
-		}
-
-		return any(firstUpdate).(T), nil
-	case NameUpdate{}.Name():
-		var updateName NameUpdate
-		if err := json.Unmarshal(payload, &updateName); err != nil {
-			return any(updateName).(T), fmt.Errorf("invalid NameUpdate payload: %w", err)
-		}
-
-		return any(updateName).(T), nil
-	case Reward{}.Name():
-		// todo: no payload to verify.
-		return any(Reward{}).(T), nil
-	default:
-		var zero T
-		return zero, fmt.Errorf("unknown command: %s", command)
+	case NameNewCommandName:
+		var cmd NameNew
+		return cmd, json.Unmarshal(payload, &cmd)
+	case NameFirstUpdateCommandName:
+		var cmd NameFirstUpdate
+		return cmd, json.Unmarshal(payload, &cmd)
+	case NameUpdateCommandName:
+		var cmd NameUpdate
+		return cmd, json.Unmarshal(payload, &cmd)
+	case RewardCommandName:
+		var cmd Reward
+		return cmd, nil
 	}
+	return nil, fmt.Errorf("unknown command %s", command)
 }
 
-// Name implements NamecoinCommand
-func (n NameNew) Name() string {
-	return reflect.TypeOf(&NameNew{}).Elem().Name()
-}
+func ProcessTxStateGeneric(st *NamecoinState, txID string, tx *types.Tx) error {
+	txIDs := make([]string, len(tx.Inputs))
+	for i, value := range tx.Inputs {
+		txIDs[i] = value.TxID
+	}
 
-// Name implements NamecoinCommand
-func (n NameFirstUpdate) Name() string {
-	return reflect.TypeOf(&NameFirstUpdate{}).Elem().Name()
-}
+	err := st.BurnUTXO(tx.From, txIDs)
+	if err != nil {
+		return err
+	}
 
-// Name implements NamecoinCommand
-func (n NameUpdate) Name() string {
-	return reflect.TypeOf(&NameUpdate{}).Elem().Name()
-}
+	// 1 or 0 UTXOs
+	for _, value := range tx.Outputs {
+		utxo := types.UTXO{
+			TxID:   txID,
+			To:     value.To,
+			Amount: value.Amount,
+		}
 
-// Name implements NamecoinCommand
-func (r Reward) Name() string {
-	return reflect.TypeOf(&Reward{}).Elem().Name()
+		err = st.AppendUTXO(utxo)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
