@@ -8,11 +8,11 @@ import (
 	"fmt"
 )
 
-func BuildUnsignedTxBytes(t *SignedTransaction) []byte {
+func (t *SignedTransaction) SerializeTransaction() []byte {
 	data := map[string]interface{}{
 		"type":    t.Type,
 		"from":    t.From,
-		"fee":     t.Fee,
+		"amount":  t.Amount,
 		"payload": t.Payload,
 	}
 

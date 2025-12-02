@@ -1,403 +1,195 @@
 package impl
 
 import (
-	"errors"
 	"fmt"
 	"maps"
 	"sync"
-	"time"
 
+	"github.com/rs/zerolog/log"
 	"go.dedis.ch/cs438/types"
 )
 
-const (
-	DefaultMaxPending          = 10_000
-	DefaultMaxPerSender        = 100
-	MaxNameLength              = 255
-	MaxValueLength             = 4 * 1024
-	MaxFeePerTx         uint64 = 1_000_000_000 // arbitrary sanity bound
-)
-
-// ---- State ----
-
-// State is the in-memory state rebuilt from the Namecoin chain
+// NamecoinState is the in-memory state rebuilt from the Namecoin chain
 type NamecoinState struct {
 	// Domain name -> record
 	Domains map[string]types.NameRecord
 
-	// Simple coin balances per address
-	Balances map[string]uint64
+	// Commitment -> hashed Domain and Salt
+	Commitments map[string]string
 
-	// Pending transactions that have not yet been included in any block
-	// (cleaned up during replay when we see them in a block)
-	Pending *PendingPool // map[string]*Tx
+	// Simple coin balances per address
+	UTXOMap map[string]map[string]types.UTXO
+
+	// To deduplicate transactions. Subject to discuss, but now suggest as a temp solution
+	txMap map[string]struct{}
+
+	mu sync.RWMutex
+}
+
+func (c *NamecoinChain) State() *NamecoinState {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.state
 }
 
 // NewState creates an empty state with fresh maps and a pending pool
 func NewState() *NamecoinState {
 	return &NamecoinState{
-		Domains:  make(map[string]types.NameRecord),
-		Balances: make(map[string]types.Balance),
-		Pending:  NewPendingPool(DefaultMaxPending, DefaultMaxPerSender),
+		Domains:     make(map[string]types.NameRecord),
+		Commitments: make(map[string]string),
+		UTXOMap:     make(map[string]map[string]types.UTXO),
+		txMap:       make(map[string]struct{}),
 	}
 }
 
-func (s *NamecoinState) Clone() *NamecoinState {
-	if s == nil {
+func (st *NamecoinState) GetDomainOwner(domain string) string {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	res, ok := st.Domains[domain]
+
+	if !ok {
+		return ""
+	}
+
+	return res.Owner
+}
+
+func (st *NamecoinState) IsDomainExists(domain string) bool {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	_, ok := st.Domains[domain]
+	return ok
+}
+
+func (st *NamecoinState) GetCommitment(from string) string {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.Commitments[from]
+}
+
+func (st *NamecoinState) SetDomain(record types.NameRecord) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.Domains[record.Domain] = record
+}
+
+func (st *NamecoinState) SetCommitment(from, commitment string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.Commitments[from] = commitment
+}
+
+func (st *NamecoinState) Clone() *NamecoinState {
+	if st == nil {
 		return NewState()
 	}
-	out := &NamecoinState{
-		Domains:  maps.Clone(s.Domains),
-		Balances: maps.Clone(s.Balances),
+	clone := &NamecoinState{
+		Domains:     maps.Clone(st.Domains),
+		Commitments: maps.Clone(st.Commitments),
+		UTXOMap:     make(map[string]map[string]types.UTXO, len(st.UTXOMap)),
+		txMap:       make(map[string]struct{}, len(st.txMap)),
 	}
-
-	// Clone pending pool (optional but keeps behaviour close to before).
-	if s.Pending != nil {
-		out.Pending = NewPendingPool(s.Pending.maxTotal, s.Pending.maxPerFrom)
-		for _, tx := range s.Pending.SnapshotPending() {
-			// Ignore errors here – pending pool is best-effort.
-			_ = out.Pending.Add(tx)
+	for addr, utxos := range st.UTXOMap {
+		inner := make(map[string]types.UTXO, len(utxos))
+		for txID, utxo := range utxos {
+			inner[txID] = utxo
 		}
-	} else {
-		out.Pending = NewPendingPool(DefaultMaxPending, DefaultMaxPerSender)
+		clone.UTXOMap[addr] = inner
 	}
-	return out
+
+	for id := range st.txMap {
+		clone.txMap[id] = struct{}{}
+	}
+
+	return clone
 }
 
-// ---- Pending Pool ----
+// ApplyTx implements minimal Namecoin semantics
+// We can harden this later (ownership checks, expires, coins, etc).
+func (st *NamecoinState) ApplyTx(txID string, tx *types.Tx) error {
 
-// PendingPool is a bounded mempool with per-sender limits
-type PendingPool struct {
-	mu         sync.Mutex
-	byID       map[string]*types.Tx
-	perSender  map[string]int
-	maxTotal   int
-	maxPerFrom int
+	if st.IsTxApplied(txID) {
+		// tx has already been applied
+		return nil
+	}
+
+	log.Info().Msgf("Applying tx type: %s with ID: %s", tx.Type, txID)
+
+	// BurnUTXOs first making sure the user hasn't burned the same UTXOs already
+	// First transaction in Block is always Reward to ensure that miner gets reward even if user transaction is reverted
+	err := st.ProcessCommandTransactionStateUpdate(txID, tx)
+	if err != nil {
+		return err
+	}
+
+	err = st.ProcessCommandStateUpdate(tx)
+	if err != nil {
+		return err
+	}
+
+	st.MarkAsApplied(txID)
+	return nil
 }
 
-func NewPendingPool(maxTotal, maxPerSender int) *PendingPool {
-	return &PendingPool{
-		byID:       make(map[string]*types.Tx),
-		perSender:  make(map[string]int),
-		maxTotal:   maxTotal,
-		maxPerFrom: maxPerSender,
+// ApplyBlock applies all txs and prunes included pending txs
+// NOTE: kept simple for now, but later we can refactor into
+// dedicated modules (e.g., domain, coin, mempool)
+func (st *NamecoinState) ApplyBlock(blk *types.Block) error {
+	if blk == nil {
+		return fmt.Errorf("apply namecoin block: nil block")
 	}
-}
+	for i := range blk.Transactions {
+		tx := &blk.Transactions[i]
+		txID, err := BuildTransactionID(tx)
+		if err != nil {
+			return err
+		}
 
-// Add a tx if it passes basic anti-spam checks
-func (p *PendingPool) Add(tx *types.Tx) error {
-	if tx == nil || tx.ID == nil {
-		return errors.New("pending: nil tx or id")
-	}
-	id := string(tx.ID)
-	from := tx.Payload.From
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if _, exists := p.byID[id]; exists {
-		return nil // idempotent
-	}
-	if len(p.byID) >= p.maxTotal {
-		return fmt.Errorf("pending: full (max %d)", p.maxTotal)
-	}
-	if from != "" && p.perSender[from] >= p.maxPerFrom {
-		return fmt.Errorf("pending: too many tx from %s", from)
-	}
-
-	// Guardrail size checks
-	if len(tx.Payload.Name) > MaxNameLength {
-		return fmt.Errorf("pending: name too long")
-	}
-	if len(tx.Payload.Value) > MaxValueLength {
-		return fmt.Errorf("pending: value too long")
-	}
-	if tx.Payload.Fee > MaxFeePerTx {
-		return fmt.Errorf("pending: fee too large")
-	}
-
-	p.byID[id] = tx
-	if from != "" {
-		p.perSender[from]++
+		if err = st.ApplyTx(txID, tx); err != nil {
+			// for robustness, we log and continue
+			warnf("namecoin: failed to apply tx %s at height %d: %v",
+				txID, blk.Header.Height, err)
+		}
 	}
 	return nil
 }
 
-// Remove drops a tx from the pool by id
-func (p *PendingPool) Remove(id []byte) {
-	if id == nil {
-		return
-	}
-	key := string(id)
+// IsTxApplied returns true if Tx is already in the state
+func (st *NamecoinState) IsTxApplied(txID string) bool {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	_, ok := st.txMap[txID]
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	tx, ok := p.byID[key]
-	if !ok {
-		return
-	}
-	delete(p.byID, key)
-	from := tx.Payload.From
-	if from != "" {
-		if n := p.perSender[from]; n > 1 {
-			p.perSender[from] = n - 1
-		} else {
-			delete(p.perSender, from)
-		}
-	}
+	return ok
 }
 
-// SnapshotPending returns a shallow copy of all pending tx for iteration
-func (p *PendingPool) SnapshotPending() []*types.Tx {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	out := make([]*types.Tx, 0, len(p.byID))
-	for _, tx := range p.byID {
-		out = append(out, tx)
-	}
-	return out
+func (st *NamecoinState) MarkAsApplied(txID string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.txMap[txID] = struct{}{}
 }
 
-// ---- Helpers ----
-
-const (
-	DomainTTLBlocks  uint64 = 36_000
-	BlockSubsidyBase uint64 = 50 * 1e8
-	MinTxFee         uint64 = 1e4
-	MaxClockSkewSecs        = 2 * 60
-)
-
-// BlockContext is supplied by the chain when applying a block
-type BlockContext struct {
-	Height    uint64
-	Timestamp int64  // unix seconds
-	Miner     string // miner address from header
+func (st *NamecoinState) ProcessCommandTransactionStateUpdate(txID string, tx *types.Tx) error {
+	cmd, err := ResolveCommand(tx.Type, tx.Payload)
+	if err != nil {
+		return err
+	}
+	return cmd.ProcessTxState(st, txID, tx)
 }
 
-// Credit / Debit helpers.
-
-func (s *NamecoinState) credit(addr string, amount uint64) {
-	if addr == "" || amount == 0 {
-		return
+func (st *NamecoinState) ProcessCommandStateUpdate(tx *types.Tx) error {
+	cmd, err := ResolveCommand(tx.Type, tx.Payload)
+	if err != nil {
+		return err
 	}
-	s.Balances[addr] += amount
+	return cmd.ProcessState(st, tx)
 }
 
-func (s *NamecoinState) debit(addr string, amount uint64) error {
-	if addr == "" {
-		return fmt.Errorf("missing address")
+// ValidateCommand verifies the payload of a transaction based on its type
+func (st *NamecoinState) ValidateCommand(tx *SignedTransaction) error {
+	cmd, err := ResolveCommand(tx.Type, tx.Payload)
+	if err != nil {
+		return err
 	}
-	cur := s.Balances[addr]
-	if cur < amount {
-		return fmt.Errorf("insufficient balance: have %d, need %d", cur, amount)
-	}
-	s.Balances[addr] = cur - amount
-	return nil
-}
-
-// pruneExpired removes expired domains for the given height.
-func (s *NamecoinState) pruneExpired(height uint64) {
-	for name, rec := range s.Domains {
-		if rec.ExpiresAt != 0 && rec.ExpiresAt <= height {
-			delete(s.Domains, name)
-		}
-	}
-}
-
-// ---- Core Apply Tx ----
-
-// ApplyTx applies a single tx to the state under a given block context
-// ApplyTx validates ownership, fees, expiry, and updates domain/balance state
-// for each tx type. Balance debits/credits deferred to block reward/fees
-func (s *NamecoinState) ApplyTx(tx *types.Tx, ctx BlockContext) error {
-	if s == nil {
-		return fmt.Errorf("apply tx: nil NamecoinState")
-	}
-	if tx == nil || tx.ID == nil {
-		return fmt.Errorf("apply tx: nil tx")
-	}
-
-	p := tx.Payload
-	op := p.Op
-
-	// Very basic timestamp sanity (optional).
-	if ctx.Timestamp > 0 {
-		now := time.Now().Unix()
-		if ctx.Timestamp > now+MaxClockSkewSecs {
-			return fmt.Errorf("apply tx: block timestamp too far in future")
-		}
-	}
-
-	// Apply fees first (except coinbase)
-	if op != "coinbase" && p.Fee > 0 {
-		if p.Fee < MinTxFee {
-			return fmt.Errorf("fee below minimum")
-		}
-		if err := s.debit(p.From, p.Fee); err != nil {
-			return fmt.Errorf("fee debit failed: %w", err)
-		}
-	}
-
-	// Prune expired domains before applying name ops
-	s.pruneExpired(ctx.Height)
-
-	switch op {
-
-	case "coinbase":
-		// Block subsidy + fees will be handled at block level; here we assume
-		// this payload just transfers Amount to Miner or To
-		if p.Amount == 0 {
-			return nil
-		}
-		target := p.To
-		if target == "" {
-			target = ctx.Miner
-		}
-		if target == "" {
-			return fmt.Errorf("coinbase without target address")
-		}
-		s.credit(target, p.Amount)
-		return nil
-
-	case "pay":
-		if p.Name != "" {
-			return fmt.Errorf("pay must not carry name")
-		}
-		if p.Amount == 0 {
-			return fmt.Errorf("pay with zero amount")
-		}
-		if err := s.debit(p.From, p.Amount); err != nil {
-			return fmt.Errorf("pay debit failed: %w", err)
-		}
-		s.credit(p.To, p.Amount)
-		return nil
-
-	case "register":
-		// Simple name_new/commit stand-in:
-		// - name must not exist (or must be expired)
-		// TODO: add commit logic
-		if p.Name == "" {
-			return fmt.Errorf("register without name")
-		}
-		if rec, ok := s.Domains[p.Name]; ok && rec.ExpiresAt == 0 || rec.ExpiresAt > ctx.Height {
-			return fmt.Errorf("name %s already registered", p.Name)
-		}
-		s.Domains[p.Name] = types.NameRecord{
-			Owner:     p.From,
-			Value:     p.Value,
-			ExpiresAt: ctx.Height + DomainTTLBlocks,
-		}
-		return nil
-
-	case "firstupdate":
-		// TODO: In real Namecoin this reveals a commit
-		if p.Name == "" {
-			return fmt.Errorf("firstupdate without name")
-		}
-		rec, ok := s.Domains[p.Name]
-		if !ok {
-			return fmt.Errorf("firstupdate for unknown name %s", p.Name)
-		}
-		if rec.Owner != p.From {
-			return fmt.Errorf("firstupdate: not owner")
-		}
-
-		// Update value and refresh expiry
-		rec.Value = p.Value
-		rec.ExpiresAt = ctx.Height + DomainTTLBlocks
-		s.Domains[p.Name] = rec
-		return nil
-
-	case "update":
-		if p.Name == "" {
-			return fmt.Errorf("update without name")
-		}
-		rec, ok := s.Domains[p.Name]
-		if !ok {
-			return fmt.Errorf("update non-existent name %s", p.Name)
-		}
-		if rec.ExpiresAt != 0 && rec.ExpiresAt <= ctx.Height {
-			return fmt.Errorf("update on expired name %s", p.Name)
-		}
-		if rec.Owner != p.From {
-			return fmt.Errorf("update: not owner")
-		}
-		rec.Value = p.Value
-		// Expand expiry on update
-		rec.ExpiresAt = ctx.Height + DomainTTLBlocks
-		s.Domains[p.Name] = rec
-		return nil
-
-	case "transfer":
-		if p.Name == "" {
-			return fmt.Errorf("transfer without name")
-		}
-		if p.To == "" {
-			return fmt.Errorf("transfer without recipient")
-		}
-		rec, ok := s.Domains[p.Name]
-		if !ok {
-			return fmt.Errorf("transfer non-existent name %s", p.Name)
-		}
-		if rec.ExpiresAt != 0 && rec.ExpiresAt <= ctx.Height {
-			return fmt.Errorf("transfer on expired name %s", p.Name)
-		}
-		if rec.Owner != p.From {
-			return fmt.Errorf("transfer: not owner")
-		}
-		rec.Owner = p.To
-		s.Domains[p.Name] = rec
-		return nil
-
-	default:
-		// Unknown op: treat as invalid
-		return fmt.Errorf("unknown op %q", op)
-	}
-}
-
-// ApplyBlock applies all txs in a block to the state
-// - Validates each tx via ApplyTx
-// - Aggregates fees and optional block subsidy to the miner
-func (s *NamecoinState) ApplyBlock(b *types.Block) error {
-	if s == nil {
-		return fmt.Errorf("apply block: nil state")
-	}
-	if b == nil {
-		return fmt.Errorf("apply block: nil block")
-	}
-
-	ctx := BlockContext{
-		Height:    b.Header.Height,
-		Timestamp: b.Header.Timestamp,
-		Miner:     b.Header.Miner,
-	}
-
-	var totalFees uint64
-	for i := range b.Transactions {
-		tx := &b.Transactions[i]
-		p := tx.Payload
-
-		// Track fees for miner, except coinbase
-		if p.Op != "coinbase" {
-			totalFees += p.Fee
-		}
-
-		if err := s.ApplyTx(tx, ctx); err != nil {
-			return fmt.Errorf("block %d tx %d failed: %w", b.Header.Height, i, err)
-		}
-
-		// Remove from pending pool
-		if s.Pending != nil && tx.ID != nil {
-			s.Pending.Remove(tx.ID)
-		}
-	}
-
-	// Reward miner: basic subsidy + totalFees
-	if b.Header.Miner != "" {
-		s.credit(b.Header.Miner, BlockSubsidyBase+totalFees)
-	}
-
-	return nil
+	return cmd.Validate(st, tx)
 }
