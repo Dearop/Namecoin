@@ -104,6 +104,17 @@ func (st *NamecoinState) Clone() *NamecoinState {
 	return clone
 }
 
+// SnapshotDomains returns a shallow copy of the domain map for safe read-only use.
+func (st *NamecoinState) SnapshotDomains() map[string]types.NameRecord {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	out := make(map[string]types.NameRecord, len(st.Domains))
+	for k, v := range st.Domains {
+		out[k] = v
+	}
+	return out
+}
+
 // ApplyTx implements minimal Namecoin semantics
 // We can harden this later (ownership checks, expires, coins, etc).
 func (st *NamecoinState) ApplyTx(txID string, tx *types.Tx) error {

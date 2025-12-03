@@ -39,7 +39,7 @@ func (n NameUpdate) ProcessState(st *NamecoinState, _ *types.Tx) error {
 		rec.Domain = n.Domain
 	}
 	if len(strings.TrimSpace(n.IP)) != 0 {
-		rec.IP = n.IP
+		rec.Value = n.IP
 	}
 
 	st.SetDomain(rec)

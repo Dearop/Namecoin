@@ -46,7 +46,7 @@ func (dns *NamecoinDNS) Start(n *node) {
 	dns.startOnce.Do(func() {
 		if n != nil {
 			dns.mu.Lock()
-			dns.reader = n.namecoin
+			dns.reader = n.NamecoinChain
 			dns.mu.Unlock()
 		}
 		go func() {
