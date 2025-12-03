@@ -98,7 +98,7 @@ func (dns *NamecoinDNS) resolve(request types.DNSRequest) types.DNSResponse {
 		return resp
 	}
 	// Add Time to Live granularity to the response
-	value := strings.TrimSpace(rec.Value)
+	value := strings.TrimSpace(rec.IP)
 	if value == "" {
 		resp.Status = types.DNSStatusInvalid
 		return resp

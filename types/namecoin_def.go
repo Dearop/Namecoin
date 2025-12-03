@@ -62,7 +62,7 @@ type Block struct {
 
 type NameRecord struct {
 	Owner  string
-	Value  string
+	IP     string
 	Domain string
 	Salt   string
 

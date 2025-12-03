@@ -38,7 +38,7 @@ func (n NameFirstUpdate) ProcessState(st *NamecoinState, tx *types.Tx) error {
 
 	st.SetDomain(types.NameRecord{
 		Owner:     tx.From,
-		Value:     n.IP,
+		IP:        n.IP,
 		Domain:    n.Domain,
 		Salt:      n.Salt,
 		ExpiresAt: 0, // todo: Add expiration

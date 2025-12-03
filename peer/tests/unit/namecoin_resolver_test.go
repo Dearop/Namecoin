@@ -34,7 +34,7 @@ func TestNamecoinDNS_NXDomainExpired(t *testing.T) {
 	dns := impl.NewNamecoinDNS()
 	dns.BindReader(stubChainReader{
 		domains: map[string]types.NameRecord{
-			"expired.bit": {Value: "1.2.3.4", ExpiresAt: 3},
+			"expired.bit": {IP: "1.2.3.4", ExpiresAt: 3},
 		},
 		height: 5,
 	})
@@ -47,7 +47,7 @@ func TestNamecoinDNS_IPSuccess(t *testing.T) {
 	dns := impl.NewNamecoinDNS()
 	dns.BindReader(stubChainReader{
 		domains: map[string]types.NameRecord{
-			"live.bit": {Value: "1.2.3.4", ExpiresAt: 20},
+			"live.bit": {IP: "1.2.3.4", ExpiresAt: 20},
 		},
 		height: 10,
 	})
@@ -63,7 +63,7 @@ func TestNamecoinDNS_TXTSuccess(t *testing.T) {
 	dns := impl.NewNamecoinDNS()
 	dns.BindReader(stubChainReader{
 		domains: map[string]types.NameRecord{
-			"text.bit": {Value: "hello world", ExpiresAt: 15},
+			"text.bit": {IP: "hello world", ExpiresAt: 15},
 		},
 		height: 10,
 	})
@@ -79,7 +79,7 @@ func TestNamecoinDNS_InvalidEmptyValue(t *testing.T) {
 	dns := impl.NewNamecoinDNS()
 	dns.BindReader(stubChainReader{
 		domains: map[string]types.NameRecord{
-			"empty.bit": {Value: "   ", ExpiresAt: 42},
+			"empty.bit": {IP: "   ", ExpiresAt: 42},
 		},
 		height: 1,
 	})
