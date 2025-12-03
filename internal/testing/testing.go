@@ -19,6 +19,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.dedis.ch/cs438/peer"
+	"go.dedis.ch/cs438/peer/impl"
 	"go.dedis.ch/cs438/registry"
 	"go.dedis.ch/cs438/registry/standard"
 
@@ -153,6 +154,8 @@ type configTemplate struct {
 
 	powCfg      peer.PoWConfig
 	enableMiner bool
+
+	dnsAddr string
 }
 
 func newConfigTemplate() configTemplate {
@@ -315,6 +318,12 @@ func WithEnableMiner(enabled bool) Option {
 	}
 }
 
+func WithDNSAddr(addr string) Option {
+	return func(ct *configTemplate) {
+		ct.dnsAddr = addr
+	}
+}
+
 // NewTestNode returns a new test node.
 func NewTestNode(t require.TestingT, f peer.Factory, trans transport.Transport,
 	addr string, opts ...Option) TestNode {
@@ -344,6 +353,7 @@ func NewTestNode(t require.TestingT, f peer.Factory, trans transport.Transport,
 	config.PaxosProposerRetry = template.paxosProposerRetry
 	config.PoWConfig = template.powCfg
 	config.EnableMiner = template.enableMiner
+	config.DNSAddr = template.dnsAddr
 
 	node := f(config)
 
@@ -371,6 +381,26 @@ type TestNode struct {
 	config peer.Configuration
 	socket transport.ClosableSocket
 	t      require.TestingT
+}
+
+// NamecoinChainState exposes the underlying Namecoin chain when available.
+func (t TestNode) NamecoinChainState() *impl.NamecoinChain {
+	if n, ok := t.Peer.(interface {
+		NamecoinChainState() *impl.NamecoinChain
+	}); ok {
+		return n.NamecoinChainState()
+	}
+	return nil
+}
+
+// DNSServerAddr exposes the bound DNS server address when available.
+func (t TestNode) DNSServerAddr() string {
+	if n, ok := t.Peer.(interface {
+		DNSServerAddr() string
+	}); ok {
+		return n.DNSServerAddr()
+	}
+	return ""
 }
 
 // GetAddr returns the node's socket address

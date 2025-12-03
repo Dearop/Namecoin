@@ -130,5 +130,6 @@ func (dns *NamecoinDNS) Resolve(domain string) types.DNSResponse {
 func (dns *NamecoinDNS) Stop() {
 	dns.stopOnce.Do(func() {
 		close(dns.stop)
+		close(dns.requestChan)
 	})
 }

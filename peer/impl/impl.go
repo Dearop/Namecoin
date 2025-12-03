@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.dedis.ch/cs438/peer"
+	"go.dedis.ch/cs438/peer/dns"
 	"go.dedis.ch/cs438/transport"
 	"go.dedis.ch/cs438/types"
 	"golang.org/x/xerrors"
@@ -48,6 +49,8 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 	node.NamecoinChain = namecoinChain
 	node.namecoinConsensus = consensus
 	node.transactionService = transactionService
+	node.namecoinDNS = NewNamecoinDNS()
+	node.namecoinDNS.Start(node)
 	node.mu.Unlock()
 	return node
 }
@@ -97,6 +100,8 @@ type node struct {
 	namecoinConsensus  *NamecoinConsensus
 	NamecoinChain      *NamecoinChain
 	transactionService *TransactionService
+	namecoinDNS        *NamecoinDNS
+	dnsServer          *dns.Server
 
 	// MinerPubKey
 	minerStopCh chan struct{}
@@ -164,7 +169,37 @@ func (n *node) Start() error {
 	if n.conf.EnableMiner {
 		n.StartMiner()
 	}
+
+	// Start DNS server if configured.
+	if addr := strings.TrimSpace(n.conf.DNSAddr); addr != "" && n.namecoinDNS != nil {
+		srv, err := dns.ListenAndServe(addr, n.namecoinDNS)
+		if err != nil {
+			return err
+		}
+		n.dnsServer = srv
+	}
 	return nil
+}
+
+// ResolveDomain resolves a Namecoin domain using the live Namecoin chain state.
+func (n *node) ResolveDomain(domain string) types.DNSResponse {
+	if n.namecoinDNS == nil {
+		return types.DNSResponse{Domain: domain, Status: types.DNSStatusInvalid}
+	}
+	return n.namecoinDNS.Resolve(strings.ToLower(strings.TrimSpace(domain)))
+}
+
+// NamecoinChainState returns the underlying Namecoin chain (testing helper).
+func (n *node) NamecoinChainState() *NamecoinChain {
+	return n.NamecoinChain
+}
+
+// DNSServerAddr returns the bound DNS server address (testing helper).
+func (n *node) DNSServerAddr() string {
+	if n.dnsServer == nil {
+		return ""
+	}
+	return n.dnsServer.Addr()
 }
 
 func (n *node) HandleNamecoinCommand(buf []byte) error {
@@ -490,6 +525,14 @@ func (n *node) listenLoop() {
 func (n *node) Stop() error {
 	if err := n.validateNode(false); err != nil {
 		return err
+	}
+	// Stop DNS server first to avoid new work during shutdown.
+	if n.dnsServer != nil {
+		_ = n.dnsServer.Close()
+		n.dnsServer = nil
+	}
+	if n.namecoinDNS != nil {
+		n.namecoinDNS.Stop()
 	}
 	select {
 	case <-n.stopCh:

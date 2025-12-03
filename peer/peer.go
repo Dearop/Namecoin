@@ -64,6 +64,10 @@ type Configuration struct {
 	// Default: 8192
 	ChunkSize uint
 
+	// DNSAddr, when non-empty, starts a UDP DNS server bound to this address
+	// using the Namecoin resolver (e.g., "127.0.0.1:5354"). Empty disables it.
+	DNSAddr string
+
 	// Backoff parameters used for DataRequests.
 	// Default: {2s 2 5}
 	BackoffDataRequest Backoff
