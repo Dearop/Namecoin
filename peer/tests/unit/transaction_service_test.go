@@ -11,47 +11,11 @@ import (
 	"go.dedis.ch/cs438/types"
 )
 
-func TestTransactionServiceApplyTransaction(t *testing.T) {
-	state := impl.NewTmpState()
-	service := impl.NewTransactionService(state)
-	const addr = "carol"
-	fundAddress(service, addr, 200)
-
-	tx := types.Tx{
-		Payload: types.TxPayload{
-			From: addr,
-			Op:   "custom",
-			Fee:  30,
-		},
-	}
-
-	balance, err := service.ApplyTransaction("tx-1", tx)
-	if err != nil {
-		t.Fatalf("ApplyTransaction returned error: %v", err)
-	}
-	if balance != 200 {
-		t.Fatalf("expected balance before charge to be 200, got %d", balance)
-	}
-
-	stored := state.GetTransaction("tx-1")
-	if stored == nil {
-		t.Fatalf("expected transaction to be stored")
-	}
-	if stored.Payload.From != tx.Payload.From || stored.Payload.Fee != tx.Payload.Fee || stored.Payload.Op != tx.Payload.Op {
-		t.Fatalf("unexpected stored transaction %+v", stored)
-	}
-
-	if updated := service.TokenManager.GetBalance(addr); updated != 170 {
-		t.Fatalf("expected balance deducted to 170, got %d", updated)
-	}
-}
-
 func TestTransactionServiceValidateTransactionSignatureMismatch(t *testing.T) {
-	service := impl.NewTransactionService(impl.NewTmpState())
+	service := impl.NewTransactionService(impl.NewState())
 	pub, priv := mustMakeKeyPair(t)
 
 	tx := buildSignedTransaction(t, pub, priv, impl.NameNew{}.Name(), 2, impl.NameNew{Commitment: "commitment"})
-	fundAddress(service, tx.From, 5)
 	tx.Signature = "deadbeef"
 
 	if err := service.ValidateTransaction(&tx); err == nil {
@@ -60,19 +24,17 @@ func TestTransactionServiceValidateTransactionSignatureMismatch(t *testing.T) {
 }
 
 func TestTransactionServiceValidateTransactionSignatureMatch(t *testing.T) {
-	service := impl.NewTransactionService(impl.NewTmpState())
+	service := impl.NewTransactionService(impl.NewState())
 	pub, priv := mustMakeKeyPair(t)
 
 	tx := buildSignedTransaction(t, pub, priv, impl.NameNew{}.Name(), 2, impl.NameNew{Commitment: "commitment"})
-	fundAddress(service, tx.From, 5)
-
 	if err := service.ValidateTransaction(&tx); err != nil {
-		t.Fatalf("expected validation to success due to signature match")
+		t.Fatalf("expected validation to succeed, got %v", err)
 	}
 }
 
 func TestTransactionServiceValidateTransactionFirstUpdateCommitmentMismatch(t *testing.T) {
-	state := impl.NewTmpState()
+	state := impl.NewState()
 	service := impl.NewTransactionService(state)
 	pub, priv := mustMakeKeyPair(t)
 
@@ -83,17 +45,15 @@ func TestTransactionServiceValidateTransactionFirstUpdateCommitmentMismatch(t *t
 	}
 
 	tx := buildSignedTransaction(t, pub, priv, impl.NameFirstUpdate{}.Name(), 3, payload)
-	fundAddress(service, tx.From, 5)
-
-	state.Commitments[tx.From] = "different"
+	state.Commitments[tx.From] = impl.HashString("different")
 
 	if err := service.ValidateTransaction(&tx); err == nil {
-		t.Fatalf("expected validation to fail when commitment mismatch occurs")
+		t.Fatalf("expected validation to fail when commitment does not match")
 	}
 }
 
 func TestTransactionServiceValidateTransactionNameUpdateWrongOwner(t *testing.T) {
-	state := impl.NewTmpState()
+	state := impl.NewState()
 	service := impl.NewTransactionService(state)
 	pub, priv := mustMakeKeyPair(t)
 	payload := impl.NameUpdate{
@@ -101,12 +61,44 @@ func TestTransactionServiceValidateTransactionNameUpdateWrongOwner(t *testing.T)
 		IP:     "192.0.2.1",
 	}
 
+	state.Domains[payload.Domain] = types.NameRecord{Owner: "other-owner"}
 	tx := buildSignedTransaction(t, pub, priv, impl.NameUpdate{}.Name(), 1, payload)
-	fundAddress(service, tx.From, 3)
-	state.DomainOwners[payload.Domain] = "other-owner"
 
 	if err := service.ValidateTransaction(&tx); err == nil {
-		t.Fatalf("expected validation to fail when sender is not domain owner")
+		t.Fatalf("expected validation to fail when sender does not own the domain")
+	}
+}
+
+func TestTransactionServiceVerifyBalanceInsufficientFunds(t *testing.T) {
+	service := impl.NewTransactionService(impl.NewState())
+
+	if _, _, err := service.VerifyBalance("tx-1", "carol", 10); err == nil {
+		t.Fatalf("expected insufficient funds error")
+	}
+}
+
+func TestTransactionServiceVerifyBalanceReturnsInputsAndOutputs(t *testing.T) {
+	state := impl.NewState()
+	state.UTXOMap["carol"] = map[string]types.UTXO{
+		"utxo-1": {TxID: "tx-2", To: "carol", Amount: 10},
+	}
+	service := impl.NewTransactionService(state)
+
+	inputs, outputs, err := service.VerifyBalance("tx-2", "carol", 6)
+	if err != nil {
+		t.Fatalf("expected verify balance to succeed, got %v", err)
+	}
+
+	if len(inputs) != 1 || inputs[0].TxID != "utxo-1" {
+		t.Fatalf("unexpected inputs returned: %+v", inputs)
+	}
+
+	if len(outputs) != 1 {
+		t.Fatalf("expected single leftover UTXO, got %d", len(outputs))
+	}
+
+	if outputs[0].To != "carol" || outputs[0].Amount != 4 {
+		t.Fatalf("unexpected leftover output %+v", outputs[0])
 	}
 }
 
@@ -119,7 +111,7 @@ func mustMakeKeyPair(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey) {
 	return pub, priv
 }
 
-func buildSignedTransaction(t *testing.T, publicKey ed25519.PublicKey, privateKey ed25519.PrivateKey, txType string, fee uint64, payload interface{}) impl.SignedTransaction {
+func buildSignedTransaction(t *testing.T, publicKey ed25519.PublicKey, privateKey ed25519.PrivateKey, txType string, amount uint64, payload interface{}) impl.SignedTransaction {
 	t.Helper()
 
 	payloadBytes, err := json.Marshal(payload)
@@ -128,21 +120,16 @@ func buildSignedTransaction(t *testing.T, publicKey ed25519.PublicKey, privateKe
 	}
 
 	tx := impl.SignedTransaction{
-		Type:      txType,
-		From:      hex.EncodeToString(impl.Hash(publicKey)),
-		Fee:       fee,
-		Payload:   json.RawMessage(payloadBytes),
-		PublicKey: hex.EncodeToString(publicKey),
+		Type:    txType,
+		From:    hex.EncodeToString(publicKey),
+		Amount:  amount,
+		Payload: json.RawMessage(payloadBytes),
 	}
 
-	unsignedBytes := impl.BuildUnsignedTxBytes(&tx)
+	unsignedBytes := tx.SerializeTransaction()
 	tx.TxID = impl.HashHex(unsignedBytes)
 
 	sig := ed25519.Sign(privateKey, impl.Hash(unsignedBytes))
 	tx.Signature = hex.EncodeToString(sig)
 	return tx
-}
-
-func fundAddress(service *impl.TransactionService, addr string, balance uint64) {
-	service.TokenManager.SetBalance(addr, balance)
 }

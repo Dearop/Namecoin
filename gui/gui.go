@@ -3,6 +3,7 @@ package main
 
 import (
 	"fmt"
+	"math/big"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -223,12 +224,20 @@ func start(c *urfave.Context) error {
 		},
 		PaxosID:            paxosID,
 		PaxosProposerRetry: c.Duration("paxosproposerretry"),
+		EnableMiner:        true,
+
+		PoWConfig: peer.PoWConfig{
+			Target:     new(big.Int).Lsh(big.NewInt(1), 252), //set to 253 for testing purposes to mine block faster
+			MaxNonce:   0,
+			TimeSource: nil,
+			PubKey:     "27227b017ac2a11885743f6a84e435d44e338bf2082340c73893afa81b4c86dc", // randomly generated
+			// equal PK 38ba78b01c71c3c9cfaf73c2755026bf1c365f66c00ae3f30b012869ff3d8fb527227b017ac2a11885743f6a84e435d44e338bf2082340c73893afa81b4c86dc
+		},
 	}
 
 	node := peerFactory(conf)
-	transactionService := impl.NewTransactionService(impl.NewTmpState())
 
-	httpnode := httpnode.NewHTTPNode(node, conf, transactionService)
+	httpnode := httpnode.NewHTTPNode(node, conf)
 
 	notify := make(chan os.Signal, 1)
 	signal.Notify(notify,

@@ -1,6 +1,8 @@
 package impl
 
 import (
+	"encoding/json"
+	"errors"
 	"log"
 	"os"
 	"strings"
@@ -28,6 +30,24 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 			node.routingTable[nodeAddr] = nodeAddr
 		}
 	}
+	consensus, err := NewNamecoinConsensus(conf.PoWConfig, NewTxBuffer())
+	// happens only if configuration is bad or "on a startup".
+	if err != nil {
+		panic(err)
+	}
+
+	namecoinChain, err := LoadNamecoinChain(conf.Storage.GetNamecoinStore())
+	// happens only if configuration is bad or "on a startup".
+	if err != nil {
+		panic(err)
+	}
+	namecoinChain.SetPowTarget(conf.PoWConfig.Target)
+
+	transactionService := NewTransactionService(namecoinChain.state)
+
+	node.NamecoinChain = namecoinChain
+	node.namecoinConsensus = consensus
+	node.transactionService = transactionService
 	node.mu.Unlock()
 	return node
 }
@@ -72,17 +92,19 @@ type node struct {
 	tlcCount       map[uint]map[string]struct{}
 	tlcBlock       map[uint]types.BlockchainBlock
 	tlcBroadcasted map[uint]bool
-	// Namecoin chain
-	namecoin *NamecoinChain
+
+	// Namecoin
+	namecoinConsensus  *NamecoinConsensus
+	NamecoinChain      *NamecoinChain
+	transactionService *TransactionService
+
+	// MinerPubKey
+	minerStopCh chan struct{}
+	minerWG     sync.WaitGroup
+
 	// Step completion waiters
 	stepWaitMu  sync.Mutex
 	stepWaiters map[uint][]chan struct{}
-}
-
-type pendingAck struct {
-	packet transport.Packet
-	dest   string
-	timer  *time.Timer
 }
 
 // Start implements peer.Service.
@@ -117,6 +139,11 @@ func (n *node) Start() error {
 	n.conf.MessageRegistry.RegisterMessageCallback(types.PaxosProposeMessage{}, n.handlePaxosPropose)
 	n.conf.MessageRegistry.RegisterMessageCallback(types.PaxosAcceptMessage{}, n.handlePaxosAccept)
 	n.conf.MessageRegistry.RegisterMessageCallback(types.TLCMessage{}, n.handleTLC)
+
+	//Namecoin handlers
+	n.conf.MessageRegistry.RegisterMessageCallback(types.NamecoinTransactionMessage{}, n.handleNamecoinTransactionMessage)
+	n.conf.MessageRegistry.RegisterMessageCallback(types.NamecoinBlockMessage{}, n.handleNamecoinBlockMessage)
+
 	n.wg.Add(1)
 	go n.listenLoop()
 
@@ -133,6 +160,152 @@ func (n *node) Start() error {
 		n.wg.Add(1)
 		go n.heartbeatLoop(n.conf.HeartbeatInterval)
 	}
+
+	if n.conf.EnableMiner {
+		n.StartMiner()
+	}
+	return nil
+}
+
+func (n *node) HandleNamecoinCommand(buf []byte) error {
+	var transaction SignedTransaction
+	err := json.Unmarshal(buf, &transaction)
+	if err != nil {
+		return err
+	}
+
+	err = n.transactionService.ValidateTransaction(&transaction)
+	if err != nil {
+		return err
+	}
+
+	inputs, outputs, err := n.transactionService.VerifyBalance(transaction.TxID, transaction.From, transaction.Amount)
+	if err != nil {
+		return err
+	}
+
+	msg := types.NamecoinTransactionMessage{
+		TxID: transaction.TxID,
+		Tx: types.Tx{
+			From:    transaction.From,
+			Type:    transaction.Type,
+			Inputs:  inputs,
+			Outputs: outputs,
+			Amount:  transaction.Amount,
+			Payload: transaction.Payload,
+		},
+	}
+
+	marshaled, err := n.conf.MessageRegistry.MarshalMessage(msg)
+	if err != nil {
+		return err
+	}
+
+	err = n.Broadcast(marshaled)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type pendingAck struct {
+	packet transport.Packet
+	dest   string
+	timer  *time.Timer
+}
+
+func (n *node) StartMiner() {
+	n.mu.Lock()
+	if n.minerStopCh != nil {
+		// MinerPubKey already running
+		n.mu.Unlock()
+		return
+	}
+	n.minerStopCh = make(chan struct{})
+	n.minerWG.Add(1)
+	n.mu.Unlock()
+
+	go func() {
+		defer n.minerWG.Done()
+
+		for {
+			select {
+			case <-n.minerStopCh:
+				return
+
+			default:
+				err := n.MinerDoWork()
+				if errors.Is(err, ErrMiningAborted) {
+					break
+				}
+
+				continue
+			}
+		}
+	}()
+}
+
+func (n *node) StopMiner() {
+	n.mu.Lock()
+	if n.minerStopCh != nil {
+		close(n.minerStopCh)
+	}
+	n.mu.Unlock()
+
+	n.minerWG.Wait()
+
+	n.mu.Lock()
+	n.minerStopCh = nil
+	n.mu.Unlock()
+}
+
+func (n *node) MinerDoWork() error {
+	// Build base header from current chain head
+	n.mu.RLock()
+	headHash := n.NamecoinChain.HeadHash()
+	headHeight := n.NamecoinChain.HeadHeight()
+	n.mu.RUnlock()
+
+	nextHeight := headHeight + 1
+	if headHash == nil {
+		nextHeight = 0
+	}
+	base := types.BlockHeader{
+		Height:    nextHeight,
+		PrevHash:  headHash,
+		Miner:     n.conf.PoWConfig.PubKey,
+		Timestamp: time.Now().Unix(),
+	}
+
+	// Mine block
+	block, err := n.namecoinConsensus.MineAndApply(n.minerStopCh, &base)
+	if err != nil {
+		return err
+	}
+
+	log.Printf("Mined block: %v", block)
+
+	// Broadcast mined block
+	msg := types.NamecoinBlockMessage{
+		Block: block,
+	}
+
+	wire, err := n.conf.MessageRegistry.MarshalMessage(msg)
+	if err != nil {
+		return err
+	}
+
+	err = n.broadcastWithOptions(wire, true)
+	if err != nil {
+		return err
+	}
+	// Apply block locally
+	if err = n.NamecoinChain.ApplyBlock(&block); err != nil {
+		// should not happen; log but continue
+		log.Printf("Error applying mined block: %v", err)
+	}
+
 	return nil
 }
 

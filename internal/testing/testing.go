@@ -11,6 +11,7 @@ import (
 	"fmt"
 
 	"io"
+	"math/big"
 	"math/rand"
 
 	"strconv"
@@ -149,9 +150,13 @@ type configTemplate struct {
 	paxosThreshold     func(uint) int
 	paxosID            uint
 	paxosProposerRetry time.Duration
+
+	powCfg      peer.PoWConfig
+	enableMiner bool
 }
 
 func newConfigTemplate() configTemplate {
+	defaultTarget := new(big.Int).Lsh(big.NewInt(1), 252)
 	return configTemplate{
 		withWatcher: false,
 		autoStart:   true,
@@ -183,6 +188,12 @@ func newConfigTemplate() configTemplate {
 		},
 		paxosID:            0,
 		paxosProposerRetry: time.Second * 5,
+		powCfg: peer.PoWConfig{
+			Target:   defaultTarget,
+			MaxNonce: 0,
+			PubKey:   "test-miner",
+		},
+		enableMiner: false,
 	}
 }
 
@@ -292,6 +303,18 @@ func WithPaxosProposerRetry(d time.Duration) Option {
 	}
 }
 
+func WithPoWConfig(cfg peer.PoWConfig) Option {
+	return func(ct *configTemplate) {
+		ct.powCfg = cfg
+	}
+}
+
+func WithEnableMiner(enabled bool) Option {
+	return func(ct *configTemplate) {
+		ct.enableMiner = enabled
+	}
+}
+
 // NewTestNode returns a new test node.
 func NewTestNode(t require.TestingT, f peer.Factory, trans transport.Transport,
 	addr string, opts ...Option) TestNode {
@@ -319,6 +342,8 @@ func NewTestNode(t require.TestingT, f peer.Factory, trans transport.Transport,
 	config.PaxosThreshold = template.paxosThreshold
 	config.PaxosID = template.paxosID
 	config.PaxosProposerRetry = template.paxosProposerRetry
+	config.PoWConfig = template.powCfg
+	config.EnableMiner = template.enableMiner
 
 	node := f(config)
 

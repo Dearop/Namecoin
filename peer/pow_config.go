@@ -14,4 +14,5 @@ type PoWConfig struct {
 	MaxNonce uint64
 	// TimeSource lets tests inject a deterministic clock; defaults to time.Now.
 	TimeSource func() time.Time
+	PubKey     string
 }

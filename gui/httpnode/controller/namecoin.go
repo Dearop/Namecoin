@@ -1,58 +1,35 @@
 package controller
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 
 	"github.com/rs/zerolog"
-	"go.dedis.ch/cs438/peer/impl"
+	"go.dedis.ch/cs438/peer"
 )
 
-func NewNamecoinController(transactionService *impl.TransactionService, l *zerolog.Logger) Namecoin {
-	return Namecoin{transactionService, l}
+func NewNamecoinController(node peer.Peer, l *zerolog.Logger) Namecoin {
+	return Namecoin{node, l}
 }
 
 type Namecoin struct {
-	transactionService *impl.TransactionService
-	log                *zerolog.Logger
+	node peer.Peer
+	log  *zerolog.Logger
 }
 
 func (n Namecoin) NewHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
-			n.New(w, r)
+			n.Handle(w, r)
 		default:
 			http.Error(w, "forbidden method", http.StatusMethodNotAllowed)
 		}
 	}
 }
 
-func (n Namecoin) FirstUpdateHandler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			n.FirstUpdate(w, r)
-		default:
-			http.Error(w, "forbidden method", http.StatusMethodNotAllowed)
-		}
-	}
-}
-
-func (n Namecoin) UpdateHandler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			n.Update(w, r)
-		default:
-			http.Error(w, "forbidden method", http.StatusMethodNotAllowed)
-		}
-	}
-}
-
-func (n Namecoin) New(w http.ResponseWriter, r *http.Request) {
+func (n Namecoin) Handle(w http.ResponseWriter, r *http.Request) {
 	buf, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to read body: %v", err),
@@ -60,30 +37,9 @@ func (n Namecoin) New(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var transaction impl.SignedTransaction
-	err = json.Unmarshal(buf, &transaction)
+	err = n.node.HandleNamecoinCommand(buf)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to unmarshal transaction: %v", err),
-			http.StatusInternalServerError)
-		return
+		n.log.Err(err)
+		http.Error(w, fmt.Sprintf("Error occured: %v", err), http.StatusBadRequest)
 	}
-
-	err = n.transactionService.ValidateTransaction(&transaction)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to validate transaction: %v", err),
-			http.StatusBadRequest)
-		return
-	}
-
-	// todo: Send transaction to consensus, etc...
-}
-
-func (n Namecoin) FirstUpdate(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "Not implemented",
-		http.StatusInternalServerError)
-}
-
-func (n Namecoin) Update(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "Not implemented",
-		http.StatusInternalServerError)
 }
