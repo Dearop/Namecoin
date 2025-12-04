@@ -23,7 +23,7 @@ func (n NameFirstUpdate) Name() string {
 func (n NameFirstUpdate) Validate(st *NamecoinState, tx *SignedTransaction) error {
 	// Must match earlier commitment
 	storedCommit := st.GetCommitment(tx.From)
-	//todo: Update, to avoid collisions.
+	//TODO: Update, to avoid collisions.
 	if HashString(n.Domain+n.Salt) != storedCommit {
 		return fmt.Errorf("commitment mismatch for domain %s", n.Domain)
 	}
@@ -42,6 +42,7 @@ func (n NameFirstUpdate) ProcessState(st *NamecoinState, tx *types.Tx) error {
 		st.removeFromExpiryLocked(n.Domain, rec.ExpiresAt)
 		st.mu.Unlock()
 	} else if ok {
+		// TODO: Bubble error up to caller to send message to frontend.
 		return xerrors.New("domain already exists")
 	}
 
