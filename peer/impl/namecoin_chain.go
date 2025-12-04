@@ -54,7 +54,7 @@ func (c *NamecoinChain) SnapshotDomains() (map[string]types.NameRecord, uint64) 
 	if c.state == nil {
 		return nil, c.headHeight
 	}
-	return c.state.SnapshotDomains(), c.headHeight
+	return c.state.SnapshotDomains()
 }
 
 // ---- Helper utils ----

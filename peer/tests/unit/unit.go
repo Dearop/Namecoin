@@ -18,6 +18,7 @@ type NamecoinState = impl.NamecoinState
 
 var LoadNamecoinChain = impl.LoadNamecoinChain
 var NewNamecoinState = impl.NewState
+var SnapshotDomainsMap = (*impl.NamecoinState).SnapshotDomainsMap
 
 var (
 	NamecoinBlockPrefix = impl.NamecoinBlockPrefix
