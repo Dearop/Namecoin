@@ -47,6 +47,16 @@ func (c *NamecoinChain) HeadHeight() uint64 {
 	return c.headHeight
 }
 
+// SnapshotDomains returns a copy of the current domains map along with the chain height.
+func (c *NamecoinChain) SnapshotDomains() (map[string]types.NameRecord, uint64) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.state == nil {
+		return nil, c.headHeight
+	}
+	return c.state.SnapshotDomains(), c.headHeight
+}
+
 // ---- Helper utils ----
 // loadedBlock is used only during chain replay to sort blocks by height and
 // keep both the key and raw bytes on hand
