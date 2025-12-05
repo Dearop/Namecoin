@@ -5,6 +5,10 @@ import (
 	"strings"
 )
 
+var (
+	Empty = "{∅}"
+)
+
 // -----------------------------------------------------------------------------
 // ChatMessage
 
@@ -154,12 +158,54 @@ func (e EmptyMessage) Name() string {
 
 // String implements types.Message.
 func (e EmptyMessage) String() string {
-	return "{∅}"
+	return Empty
 }
 
 // HTML implements types.Message.
 func (e EmptyMessage) HTML() string {
-	return "{∅}"
+	return Empty
+}
+
+//---------------------------------------------------------------
+// NamecoinBlockMessage
+
+// NewEmpty implements types.Message
+func (u NamecoinBlockMessage) NewEmpty() Message { return &NamecoinBlockMessage{} }
+
+// Name implements types.Message.
+func (u NamecoinBlockMessage) Name() string {
+	return "NamecoinBlock"
+}
+
+// String implements types.Message.
+func (u NamecoinBlockMessage) String() string {
+	return Empty
+}
+
+// HTML implements types.Message.
+func (u NamecoinBlockMessage) HTML() string {
+	return Empty
+}
+
+//---------------------------------------------------------------
+// NamecoinTransactionMessage
+
+// NewEmpty implements types.Message
+func (u NamecoinTransactionMessage) NewEmpty() Message { return &NamecoinTransactionMessage{} }
+
+// Name implements types.Message.
+func (u NamecoinTransactionMessage) Name() string {
+	return "NamecoinTransaction"
+}
+
+// String implements types.Message.
+func (u NamecoinTransactionMessage) String() string {
+	return Empty
+}
+
+// HTML implements types.Message.
+func (u NamecoinTransactionMessage) HTML() string {
+	return Empty
 }
 
 // -----------------------------------------------------------------------------

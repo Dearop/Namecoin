@@ -1,6 +1,8 @@
 package impl
 
 import (
+	"encoding/json"
+	"errors"
 	"log"
 	"os"
 	"strings"
@@ -8,6 +10,7 @@ import (
 	"time"
 
 	"go.dedis.ch/cs438/peer"
+	"go.dedis.ch/cs438/peer/dns"
 	"go.dedis.ch/cs438/transport"
 	"go.dedis.ch/cs438/types"
 	"golang.org/x/xerrors"
@@ -28,6 +31,26 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 			node.routingTable[nodeAddr] = nodeAddr
 		}
 	}
+	consensus, err := NewNamecoinConsensus(conf.PoWConfig, NewTxBuffer())
+	// happens only if configuration is bad or "on a startup".
+	if err != nil {
+		panic(err)
+	}
+
+	namecoinChain, err := LoadNamecoinChain(conf.Storage.GetNamecoinStore())
+	// happens only if configuration is bad or "on a startup".
+	if err != nil {
+		panic(err)
+	}
+	namecoinChain.SetPowTarget(conf.PoWConfig.Target)
+
+	transactionService := NewTransactionService(namecoinChain.state)
+
+	node.NamecoinChain = namecoinChain
+	node.namecoinConsensus = consensus
+	node.transactionService = transactionService
+	node.namecoinDNS = NewNamecoinDNS()
+	node.namecoinDNS.Start(node)
 	node.mu.Unlock()
 	return node
 }
@@ -72,15 +95,21 @@ type node struct {
 	tlcCount       map[uint]map[string]struct{}
 	tlcBlock       map[uint]types.BlockchainBlock
 	tlcBroadcasted map[uint]bool
+
+	// Namecoin
+	namecoinConsensus  *NamecoinConsensus
+	NamecoinChain      *NamecoinChain
+	transactionService *TransactionService
+	namecoinDNS        *NamecoinDNS
+	dnsServer          *dns.Server
+
+	// MinerPubKey
+	minerStopCh chan struct{}
+	minerWG     sync.WaitGroup
+
 	// Step completion waiters
 	stepWaitMu  sync.Mutex
 	stepWaiters map[uint][]chan struct{}
-}
-
-type pendingAck struct {
-	packet transport.Packet
-	dest   string
-	timer  *time.Timer
 }
 
 // Start implements peer.Service.
@@ -115,6 +144,11 @@ func (n *node) Start() error {
 	n.conf.MessageRegistry.RegisterMessageCallback(types.PaxosProposeMessage{}, n.handlePaxosPropose)
 	n.conf.MessageRegistry.RegisterMessageCallback(types.PaxosAcceptMessage{}, n.handlePaxosAccept)
 	n.conf.MessageRegistry.RegisterMessageCallback(types.TLCMessage{}, n.handleTLC)
+
+	//Namecoin handlers
+	n.conf.MessageRegistry.RegisterMessageCallback(types.NamecoinTransactionMessage{}, n.handleNamecoinTransactionMessage)
+	n.conf.MessageRegistry.RegisterMessageCallback(types.NamecoinBlockMessage{}, n.handleNamecoinBlockMessage)
+
 	n.wg.Add(1)
 	go n.listenLoop()
 
@@ -131,6 +165,182 @@ func (n *node) Start() error {
 		n.wg.Add(1)
 		go n.heartbeatLoop(n.conf.HeartbeatInterval)
 	}
+
+	if n.conf.EnableMiner {
+		n.StartMiner()
+	}
+
+	// Start DNS server if configured.
+	if addr := strings.TrimSpace(n.conf.DNSAddr); addr != "" && n.namecoinDNS != nil {
+		srv, err := dns.ListenAndServe(addr, n.namecoinDNS)
+		if err != nil {
+			return err
+		}
+		n.dnsServer = srv
+	}
+	return nil
+}
+
+// ResolveDomain resolves a Namecoin domain using the live Namecoin chain state.
+func (n *node) ResolveDomain(domain string) types.DNSResponse {
+	if n.namecoinDNS == nil {
+		return types.DNSResponse{Domain: domain, Status: types.DNSStatusInvalid}
+	}
+	return n.namecoinDNS.Resolve(strings.ToLower(strings.TrimSpace(domain)))
+}
+
+// NamecoinChainState returns the underlying Namecoin chain (testing helper).
+func (n *node) NamecoinChainState() *NamecoinChain {
+	return n.NamecoinChain
+}
+
+// DNSServerAddr returns the bound DNS server address (testing helper).
+func (n *node) DNSServerAddr() string {
+	if n.dnsServer == nil {
+		return ""
+	}
+	return n.dnsServer.Addr()
+}
+
+func (n *node) HandleNamecoinCommand(buf []byte) error {
+	var transaction SignedTransaction
+	err := json.Unmarshal(buf, &transaction)
+	if err != nil {
+		return err
+	}
+
+	err = n.transactionService.ValidateTransaction(&transaction)
+	if err != nil {
+		return err
+	}
+
+	inputs, outputs, err := n.transactionService.VerifyBalance(transaction.TxID, transaction.From, transaction.Amount)
+	if err != nil {
+		return err
+	}
+
+	msg := types.NamecoinTransactionMessage{
+		TxID: transaction.TxID,
+		Tx: types.Tx{
+			From:    transaction.From,
+			Type:    transaction.Type,
+			Inputs:  inputs,
+			Outputs: outputs,
+			Amount:  transaction.Amount,
+			Payload: transaction.Payload,
+		},
+	}
+
+	marshaled, err := n.conf.MessageRegistry.MarshalMessage(msg)
+	if err != nil {
+		return err
+	}
+
+	err = n.Broadcast(marshaled)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type pendingAck struct {
+	packet transport.Packet
+	dest   string
+	timer  *time.Timer
+}
+
+func (n *node) StartMiner() {
+	n.mu.Lock()
+	if n.minerStopCh != nil {
+		// MinerPubKey already running
+		n.mu.Unlock()
+		return
+	}
+	n.minerStopCh = make(chan struct{})
+	n.minerWG.Add(1)
+	n.mu.Unlock()
+
+	go func() {
+		defer n.minerWG.Done()
+
+		for {
+			select {
+			case <-n.minerStopCh:
+				return
+
+			default:
+				err := n.MinerDoWork()
+				if errors.Is(err, ErrMiningAborted) {
+					break
+				}
+
+				continue
+			}
+		}
+	}()
+}
+
+func (n *node) StopMiner() {
+	n.mu.Lock()
+	if n.minerStopCh != nil {
+		close(n.minerStopCh)
+	}
+	n.mu.Unlock()
+
+	n.minerWG.Wait()
+
+	n.mu.Lock()
+	n.minerStopCh = nil
+	n.mu.Unlock()
+}
+
+func (n *node) MinerDoWork() error {
+	// Build base header from current chain head
+	n.mu.RLock()
+	headHash := n.NamecoinChain.HeadHash()
+	headHeight := n.NamecoinChain.HeadHeight()
+	n.mu.RUnlock()
+
+	nextHeight := headHeight + 1
+	if headHash == nil {
+		nextHeight = 0
+	}
+	base := types.BlockHeader{
+		Height:    nextHeight,
+		PrevHash:  headHash,
+		Miner:     n.conf.PoWConfig.PubKey,
+		Timestamp: time.Now().Unix(),
+	}
+
+	// Mine block
+	block, err := n.namecoinConsensus.MineAndApply(n.minerStopCh, &base)
+	if err != nil {
+		return err
+	}
+
+	log.Printf("Mined block: %v", block)
+
+	// Broadcast mined block
+	msg := types.NamecoinBlockMessage{
+		Block: block,
+	}
+
+	wire, err := n.conf.MessageRegistry.MarshalMessage(msg)
+	if err != nil {
+		return err
+	}
+
+	err = n.broadcastWithOptions(wire, true)
+	if err != nil {
+		return err
+	}
+	// Apply block locally
+	if err = n.NamecoinChain.ApplyBlock(&block); err != nil {
+		// should not happen; log but continue
+		log.Printf("Error applying mined block: %v", err)
+	}
+
 	return nil
 }
 
@@ -315,6 +525,14 @@ func (n *node) listenLoop() {
 func (n *node) Stop() error {
 	if err := n.validateNode(false); err != nil {
 		return err
+	}
+	// Stop DNS server first to avoid new work during shutdown.
+	if n.dnsServer != nil {
+		_ = n.dnsServer.Close()
+		n.dnsServer = nil
+	}
+	if n.namecoinDNS != nil {
+		n.namecoinDNS.Stop()
 	}
 	select {
 	case <-n.stopCh:

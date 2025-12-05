@@ -1,16 +1,41 @@
 package types
 
-import "encoding/json"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+)
+
+type UTXO struct {
+	TxID   string
+	To     string
+	Amount uint64
+}
+
+type TxInput struct {
+	TxID string
+}
+
+type TxOutput struct {
+	To     string
+	Amount uint64
+}
 
 // Tx is a generic on-chain transaction container. Concrete Namecoin
 // operations (such as name_new, name_firstupdate, name_update, etc.) will be
 // implemented using this basic form for inclusion in blocks.
-// txID - is a transaction hash constructed with these properties. No need to store it here
-// because storage itself will refer to this transaction by using txID as a key.
 type Tx struct {
-	Type    string
-	From    string
-	Fee     uint64
+	From string
+	Type string
+
+	// UTXOs inputs/outputs
+	Inputs []TxInput
+
+	// we can produce at MAX one UTXO to corresponding transaction
+	// stored as an array for simplicity
+	Outputs []TxOutput
+
+	Amount  uint64
 	Payload json.RawMessage
 }
 
@@ -23,7 +48,7 @@ type BlockHeader struct {
 	TxRoot     []byte
 	Timestamp  int64
 	Nonce      uint64
-	Miner      string
+	Miner      string // coinbase address
 	Difficulty []byte
 }
 
@@ -31,4 +56,114 @@ type BlockHeader struct {
 type Block struct {
 	Header       BlockHeader
 	Transactions []Tx
+
+	Hash []byte
+}
+
+type NameRecord struct {
+	Owner  string
+	IP     string
+	Domain string
+	Salt   string
+
+	ExpiresAt uint64 // block height; 0 if never expires
+}
+
+// Serialisation
+// Marshal marshals the NamecoinBlock into bytes for the blockchain store
+
+func (b *Block) Marshal() ([]byte, error) {
+	// Serialize the header using the custom method to respect determinism
+	headerBytes := b.Header.SerializeHeader()
+	headerHex := hex.EncodeToString(headerBytes)
+
+	// Marshal transactions normally
+	txData := b.Transactions
+
+	// Marshal hash as hex string too
+	hashHex := hex.EncodeToString(b.Hash)
+
+	// Create JSON structure
+	data := map[string]interface{}{
+		"header":       headerHex,
+		"transactions": txData,
+		"hash":         hashHex,
+	}
+
+	return json.Marshal(data)
+}
+
+// Unmarshal unmarshals data into this NamecoinBlock
+func (b *Block) Unmarshal(data []byte) error {
+	var raw struct {
+		Header       string `json:"header"`
+		Transactions []Tx   `json:"transactions"`
+		Hash         string `json:"hash"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	headerBytes, err := hex.DecodeString(raw.Header)
+	if err != nil {
+		return err
+	}
+	var header BlockHeader
+	if err := json.Unmarshal(headerBytes, &header); err != nil {
+		return err
+	}
+	hashBytes, err := hex.DecodeString(raw.Hash)
+	if err != nil {
+		return err
+	}
+
+	b.Header = header
+	b.Transactions = raw.Transactions
+	b.Hash = hashBytes
+
+	return nil
+}
+
+// NamecoinTransactionMessage message for broadcasting UTXO across the nodes
+type NamecoinTransactionMessage struct {
+	Tx   Tx
+	TxID string
+}
+
+type NamecoinBlockMessage struct {
+	Block Block
+}
+
+func (b *Block) ComputeHash() []byte {
+	headerBytes := b.Header.SerializeHeader()
+	h := sha256.Sum256(headerBytes)
+	return h[:]
+}
+
+func (h *BlockHeader) SerializeHeader() []byte {
+	data := map[string]interface{}{
+		"height":     h.Height,
+		"prevHash":   h.PrevHash,
+		"txRoot":     h.TxRoot,
+		"timestamp":  h.Timestamp,
+		"nonce":      h.Nonce,
+		"miner":      h.Miner,
+		"difficulty": h.Difficulty,
+	}
+
+	b, _ := json.Marshal(data)
+	return b
+}
+
+func (h *BlockHeader) SerializeBase() []byte {
+	data := map[string]interface{}{
+		"height":     h.Height,
+		"prevHash":   h.PrevHash,
+		"txRoot":     h.TxRoot,
+		"miner":      h.Miner,
+		"difficulty": h.Difficulty,
+	}
+
+	b, _ := json.Marshal(data)
+	return b
 }

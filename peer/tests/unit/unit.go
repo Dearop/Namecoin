@@ -12,3 +12,17 @@ var peerFac peer.Factory = impl.NewPeer
 
 var channelFac transport.Factory = channel.NewTransport
 var udpFac transport.Factory = udp.NewUDP
+
+type NamecoinChain = impl.NamecoinChain
+type NamecoinState = impl.NamecoinState
+
+var LoadNamecoinChain = impl.LoadNamecoinChain
+var NewNamecoinState = impl.NewState
+
+var (
+	NamecoinBlockPrefix = impl.NamecoinBlockPrefix
+
+	// NamecoinLastBlockKey stores the hash of the last applied Namecoin block
+	// at the time of the last successful replay
+	NamecoinLastBlockKey = impl.NamecoinLastBlockKey
+)

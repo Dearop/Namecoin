@@ -14,6 +14,7 @@ type Peer interface {
 	Service
 	Messaging
 	DataSharing
+	Namecoin
 }
 
 // Factory is the type of function we are using to create new instances of
@@ -33,6 +34,10 @@ type Configuration struct {
 
 	// Namecoin PoW parameters.
 	PoWConfig PoWConfig
+
+	// EnableMiner toggles the background PoW miner. When false, the node will
+	// skip starting the miner loop (useful for tests).
+	EnableMiner bool
 
 	// HeartbeatInterval is the interval at which a rumor with an EmptyMessage
 	// is sent. At startup a rumor with EmptyMessage should always be sent. Note
@@ -58,6 +63,10 @@ type Configuration struct {
 	// ChunkSize defines the size of chunks when storing data.
 	// Default: 8192
 	ChunkSize uint
+
+	// DNSAddr, when non-empty, starts a UDP DNS server bound to this address
+	// using the Namecoin resolver (e.g., "127.0.0.1:5354"). Empty disables it.
+	DNSAddr string
 
 	// Backoff parameters used for DataRequests.
 	// Default: {2s 2 5}
