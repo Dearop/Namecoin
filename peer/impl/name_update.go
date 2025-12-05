@@ -11,7 +11,7 @@ import (
 type NameUpdate struct {
 	Domain string `json:"domain"` // Registered domain
 	IP     string `json:"ip"`     // Handle IP address
-	TTL    uint64 `json:"ttl,omitempty"`
+	TTL    uint64 `json:"ttl"`    // TTL override; if zero, state default is used
 }
 
 // Name implements NamecoinCommand
