@@ -165,19 +165,22 @@ async function handleSubmit() {
     const hashedDomain = await hashDomainWithSalt(domainName.value, salt);
     
     const transaction = await buildTransaction({
-      type: 'domain',
-      domainName: domainName.value,
-      salt: salt,
-      hashedDomain: hashedDomain,
+      type: 'NameNew',
       walletID: walletID.value,
-      fee: 10
+      fee: 1,
+      payload: {
+        commitment: hashedDomain
+      }
     });
     
-    const txHash = await hashTransaction(transaction);
+    // Compute transaction ID before signing
+    const completeTx = await computeTransactionID(transaction);
+    
+    const txHash = await hashTransaction(completeTx);
     const signature = await generateTransactionSignature(txHash, wallet.value.privateKey);
     
     status.value = 'Sending transaction to network...';
-    const response = await sendTransaction(transaction, signature);
+    const response = await sendTransaction(completeTx, signature);
     
     if (response.success) {
       lastTxId.value = response.txID;

@@ -35,7 +35,8 @@ export function hexToBytes(hex) {
   return bytes;
 }
 
-export function generateRandomSalt(length = 32) {
+export function generateRandomSalt() {
+  length = 16
   const bytes = new Uint8Array(length);
   crypto.getRandomValues(bytes);
   return bytesToHex(bytes);
@@ -46,7 +47,7 @@ export async function generateHash(domain, salt) {
 }
 
 export function generateSalt() {
-  return generateRandomSalt(16);
+  return generateRandomSalt();
 }
 
 export async function hashTxData(txData) {
@@ -54,8 +55,18 @@ export async function hashTxData(txData) {
 }
 
 export async function generateTxID(params) {
-  const { type, sourceID, fee, payload } = params;
-  const payloadString = typeof payload === 'string' ? payload : canonicalize(payload);
-  const txDataString = `${type}|${sourceID}|${fee}|${payloadString}`;
-  return await sha256(txDataString);
+  const { type, from, amount, payload } = params;
+  // Match backend's serialization format (SerializeTransaction in namecoin_state_helper.go)
+  const txData = {
+    type: type,
+    from: from,
+    amount: amount,
+    payload: payload
+  };
+  const canonical = canonicalize(txData);
+  console.log('[DEBUG] Frontend generateTxID - canonical:', canonical);
+  // Use canonicalize to match Go's json.Marshal behavior
+  const txId = await sha256(canonical);
+  console.log('[DEBUG] Frontend generateTxID - computed txId:', txId);
+  return txId;
 }

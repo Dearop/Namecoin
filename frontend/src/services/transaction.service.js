@@ -1,24 +1,27 @@
 import { generateTxID } from '../utils/hash.js';
+import canonicalize from 'canonicalize';
 
 export async function buildTransaction(params) {
   const { type, walletID, fee, payload } = params;
   
   return {
     type,
-    source: walletID,
-    fee,
+    from: walletID,
+    amount: fee,
     payload: encodePayload(payload),
     transactionID: null  // Will be computed later
   };
 }
 
 export async function computeTransactionID(tx) {
+  console.log('[DEBUG] computeTransactionID - input tx:', tx);
   const txID = await generateTxID({
     type: tx.type,
-    sourceID: tx.source,
-    fee: tx.fee,
+    from: tx.from,
+    amount: tx.amount,
     payload: tx.payload
   });
+  console.log('[DEBUG] computeTransactionID - computed txID:', txID);
   
   return {
     ...tx,
@@ -27,22 +30,21 @@ export async function computeTransactionID(tx) {
 }
 
 export function encodePayload(data) {
-  // Payload should be a simple string (e.g., commitment hash)
-  // For name_new: just the commitment
-  // For other types: could be different formats
-  if (typeof data === 'string') {
-    return data;
+  // Payload should be kept as-is (object or string)
+  // It will be canonicalized as part of the full transaction when sending
+  if (!data) {
+    return {};  // Return empty object for null/undefined
   }
-  // If it's an object, stringify it (for other transaction types)
-  return JSON.stringify(data);
+  // Return data as-is, whether it's a string or object
+  return data;
 }
 
 export function validateTransaction(tx) {
   const errors = [];
   
   if (!tx.type) errors.push('Transaction type is required');
-  if (!tx.source) errors.push('Source wallet is required');
-  if (!tx.fee || tx.fee < 1) errors.push('Fee must be at least 1');
+  if (!tx.from) errors.push('Source wallet is required');
+  if (!tx.amount || tx.amount < 1) errors.push('Fee must be at least 1');
   if (!tx.payload) errors.push('Payload is required');
   
   return {

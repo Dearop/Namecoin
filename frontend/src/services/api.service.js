@@ -12,24 +12,29 @@ function getBaseURL() {
 export async function sendTransaction(tx, signature) {
   try {
     const baseURL = getBaseURL();
+    const body = canonicalize({
+      type: tx.type,
+      from: tx.from,
+      amount: tx.amount,
+      payload: tx.payload || "",  // Ensure payload is never undefined
+      txId: tx.transactionID || "",  // Ensure txId is never undefined
+      signature: signature
+    });
+    console.log('[DEBUG] Frontend sending:', body);
+    
     const response = await fetch(`${baseURL}/namecoin/new`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: canonicalize({
-        type: tx.type,
-        from: tx.source,
-        fee: tx.fee,
-        payload: tx.payload,
-        publicKey: tx.source,
-        txId: tx.transactionID,
-        signature: signature
-      })
+      body: body
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      // Try to get error details from response
+      const errorData = await response.json().catch(() => null);
+      const errorMessage = errorData?.message || `HTTP error! status: ${response.status}`;
+      throw new Error(errorMessage);
     }
 
     return await response.json();

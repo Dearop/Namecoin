@@ -203,11 +203,19 @@ func (n *node) DNSServerAddr() string {
 }
 
 func (n *node) HandleNamecoinCommand(buf []byte) error {
+	log.Printf("[DEBUG] Received raw bytes: %s", string(buf))
+
 	var transaction SignedTransaction
 	err := json.Unmarshal(buf, &transaction)
 	if err != nil {
+		log.Printf("[ERROR] Failed to unmarshal transaction: %v", err)
 		return err
 	}
+
+	//log that we received a transaction
+	log.Printf("Received Namecoin transaction: %+v", transaction)
+	log.Printf("[DEBUG] Transaction fields - Type: %s, From: %s, Amount: %d, Payload: %s, TxID: %s",
+		transaction.Type, transaction.From, transaction.Amount, string(transaction.Payload), transaction.TxID)
 
 	err = n.transactionService.ValidateTransaction(&transaction)
 	if err != nil {

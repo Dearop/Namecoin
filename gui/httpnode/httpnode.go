@@ -97,13 +97,16 @@ func NewHTTPNode(node peer.Peer, conf peer.Configuration) Proxy {
 	mux.Handle("/blockchain", http.HandlerFunc(blockchain.BlockchainHandler()))
 
 	mux.Handle("/namecoin/handle", http.HandlerFunc(namecoin.NewHandler()))
+	mux.Handle("/namecoin/new", http.HandlerFunc(namecoin.NewHandler()))
+	mux.Handle("/namecoin/first", http.HandlerFunc(namecoin.NewHandler()))
+	mux.Handle("/namecoin/update", http.HandlerFunc(namecoin.NewHandler()))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not authorized", http.StatusBadGateway)
 		log.Error().Msgf("wrong endpoint: %s", r.URL.Path)
 	})
 
-	return &httpnode{
+	return &httpnode{	
 		Peer: node,
 		conf: conf,
 		log:  &log,

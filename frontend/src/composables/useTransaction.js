@@ -24,6 +24,8 @@ export function useTransaction() {
       // Compute transaction ID
       const completeTx = await transactionService.computeTransactionID(tx);
 
+      console.log('[DEBUG] completeTX:', completeTx);
+
       // Validate
       const validation = transactionService.validateTransaction(completeTx);
       if (!validation.valid) {
@@ -44,6 +46,7 @@ export function useTransaction() {
     if (!currentTransaction.value) {
       throw new Error('No transaction to sign');
     }
+    console.log('[DEBUG] currentTransaction before signing:', currentTransaction.value);
 
     try {
       isProcessing.value = true;
@@ -51,6 +54,7 @@ export function useTransaction() {
       error.value = null;
 
         const txHash = await cryptoService.hashTransaction(currentTransaction.value);
+        currentTransaction.value.txHash = txHash;
 
       // Sign the transaction
       const signature = await cryptoService.generateTransactionSignature(

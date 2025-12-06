@@ -75,10 +75,9 @@ export async function hashTransactionData(txData) {
 export async function hashTransaction(tx) {
     const txString = canonicalize({
         type: tx.type,
-        source: tx.source,
-        fee: tx.fee,
-        payload: tx.payload,
-        transactionID: tx.transactionID
+        from: tx.from,
+        amount: tx.amount,
+        payload: tx.payload
     });
   return await sha256(txString);
 }

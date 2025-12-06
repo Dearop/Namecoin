@@ -4,8 +4,9 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
+
+	canonicaljson "github.com/gibson042/canonicaljson-go"
 )
 
 func (t *SignedTransaction) SerializeTransaction() []byte {
@@ -16,7 +17,8 @@ func (t *SignedTransaction) SerializeTransaction() []byte {
 		"payload": t.Payload,
 	}
 
-	b, _ := json.Marshal(data)
+	b, _ := canonicaljson.Marshal(data)
+	fmt.Printf("[DEBUG] Backend SerializeTransaction: %s\n", string(b))
 	return b
 }
 
