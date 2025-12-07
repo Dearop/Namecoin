@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"go.dedis.ch/cs438/peer/impl"
 	"go.dedis.ch/cs438/types"
 )
@@ -45,9 +46,28 @@ func TestTransactionServiceValidateTransactionFirstUpdateCommitmentMismatch(t *t
 	}
 
 	tx := buildSignedTransaction(t, pub, priv, impl.NameFirstUpdate{}.Name(), 3, payload)
-	state.Commitments[tx.From] = impl.HashString("different")
+	state.UTXOMap[tx.From] = map[string]types.UTXO{
+		"funds-1": {TxID: "funds-1", To: tx.From, Amount: tx.Amount},
+	}
 
-	if err := service.ValidateTransaction(&tx); err == nil {
+	require.NoError(t, service.ValidateTransaction(&tx))
+
+	inputs, outputs, err := service.VerifyBalance(tx.TxID, tx.From, tx.Amount)
+	require.NoError(t, err)
+
+	txToValidate := types.Tx{
+		From:    tx.From,
+		Type:    tx.Type,
+		Inputs:  inputs,
+		Outputs: outputs,
+		Amount:  tx.Amount,
+		Payload: tx.Payload,
+	}
+
+	commitKey := impl.OutpointKey(inputs[0].TxID, inputs[0].Index)
+	state.SetCommitment(commitKey, impl.HashString("different"))
+
+	if err := service.ValidateTxCommand(&txToValidate); err == nil {
 		t.Fatalf("expected validation to fail when commitment does not match")
 	}
 }

@@ -19,23 +19,24 @@ func (n NameFirstUpdate) Name() string {
 	return reflect.TypeOf(&NameFirstUpdate{}).Elem().Name()
 }
 
-func (n NameFirstUpdate) Validate(st *NamecoinState, tx *SignedTransaction) error {
-	// Must match earlier commitment
-	storedCommit := st.GetCommitment(tx.From)
-
-	//todo: Update, to avoid collisions.
-	if HashString(n.Domain+n.Salt) != storedCommit {
-		return fmt.Errorf("commitment mismatch for domain %s", n.Domain)
-	}
-
-	return nil
+func (n NameFirstUpdate) Validate(_ *NamecoinState, _ *SignedTransaction) error {
+	// This command requires the full inputs (txid:vout) to check the commitment.
+	// Call ValidateWithInputs with a fully formed types.Tx instead.
+	return fmt.Errorf("name_firstupdate validation requires full tx inputs (use ValidateWithInputs)")
 }
 
 func (n NameFirstUpdate) ProcessState(st *NamecoinState, tx *types.Tx) error {
-	if st.IsDomainExists(n.Domain) {
+	_, key, err := n.resolveCommitment(st, tx)
+	if err != nil {
+		return err
+	}
+
+	// Reject if already claimed/active.
+	if st.IsDomainExists(n.Domain) || st.IsDomainClaimed(n.Domain) {
 		return xerrors.New("Domain already exists")
 	}
 
+	// Commitment matched, proceed to reveal and consume it.
 	st.SetDomain(types.NameRecord{
 		Owner:     tx.From,
 		IP:        n.IP,
@@ -43,10 +44,33 @@ func (n NameFirstUpdate) ProcessState(st *NamecoinState, tx *types.Tx) error {
 		Salt:      n.Salt,
 		ExpiresAt: 0, // todo: Add expiration
 	})
+	st.DeleteCommitment(key)
 
 	return nil
 }
 
 func (n NameFirstUpdate) ProcessTxState(st *NamecoinState, txID string, tx *types.Tx) error {
 	return ProcessTxStateGeneric(st, txID, tx)
+}
+
+// ValidateWithInputs performs commitment checks requiring full tx inputs.
+func (n NameFirstUpdate) ValidateWithInputs(st *NamecoinState, tx *types.Tx) error {
+	_, _, err := n.resolveCommitment(st, tx)
+	return err
+}
+
+func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (string, string, error) {
+	if len(tx.Inputs) == 0 {
+		return "", "", fmt.Errorf("name_firstupdate requires at least one input")
+	}
+	in := tx.Inputs[0]
+	key := outpointKey(in.TxID, in.Index)
+	commit, ok := st.GetCommitment(key)
+	if !ok {
+		return "", "", fmt.Errorf("no matching name_new commitment")
+	}
+	if HashString(n.Domain+n.Salt) != commit {
+		return "", "", fmt.Errorf("commitment mismatch for domain %s", n.Domain)
+	}
+	return commit, key, nil
 }

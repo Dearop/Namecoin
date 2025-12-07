@@ -5,7 +5,6 @@ import (
 	"maps"
 	"sync"
 
-	"github.com/rs/zerolog/log"
 	"go.dedis.ch/cs438/types"
 )
 
@@ -14,7 +13,11 @@ type NamecoinState struct {
 	// Domain name -> record
 	Domains map[string]types.NameRecord
 
+	// Domains that have been revealed/claimed (used to reject duplicate reveals).
+	ClaimedDomains map[string]struct{}
+
 	// Commitment -> hashed Domain and Salt
+	// Keyed by outpoint string (txid:vout)
 	Commitments map[string]string
 
 	// Simple coin balances per address
@@ -35,23 +38,21 @@ func (c *NamecoinChain) State() *NamecoinState {
 // NewState creates an empty state with fresh maps and a pending pool
 func NewState() *NamecoinState {
 	return &NamecoinState{
-		Domains:     make(map[string]types.NameRecord),
-		Commitments: make(map[string]string),
-		UTXOMap:     make(map[string]map[string]types.UTXO),
-		txMap:       make(map[string]struct{}),
+		Domains:        make(map[string]types.NameRecord),
+		ClaimedDomains: make(map[string]struct{}),
+		Commitments:    make(map[string]string),
+		UTXOMap:        make(map[string]map[string]types.UTXO),
+		txMap:          make(map[string]struct{}),
 	}
 }
 
 func (st *NamecoinState) GetDomainOwner(domain string) string {
-	st.mu.RLock()
-	defer st.mu.RUnlock()
-	res, ok := st.Domains[domain]
-
+	rec, ok := st.NameLookup(domain)
 	if !ok {
 		return ""
 	}
 
-	return res.Owner
+	return rec.Owner
 }
 
 func (st *NamecoinState) IsDomainExists(domain string) bool {
@@ -61,22 +62,51 @@ func (st *NamecoinState) IsDomainExists(domain string) bool {
 	return ok
 }
 
-func (st *NamecoinState) GetCommitment(from string) string {
+// NameLookup returns a copy of the name record if present.
+func (st *NamecoinState) NameLookup(domain string) (types.NameRecord, bool) {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
-	return st.Commitments[from]
+	rec, ok := st.Domains[domain]
+	return rec, ok
+}
+
+func (st *NamecoinState) GetCommitment(outpointKey string) (string, bool) {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	commit, ok := st.Commitments[outpointKey]
+	return commit, ok
 }
 
 func (st *NamecoinState) SetDomain(record types.NameRecord) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	st.Domains[record.Domain] = record
+	if st.ClaimedDomains == nil {
+		st.ClaimedDomains = make(map[string]struct{})
+	}
+	st.ClaimedDomains[record.Domain] = struct{}{}
 }
 
-func (st *NamecoinState) SetCommitment(from, commitment string) {
+func (st *NamecoinState) SetCommitment(outpointKey, commitment string) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	st.Commitments[from] = commitment
+	if st.Commitments == nil {
+		st.Commitments = make(map[string]string)
+	}
+	st.Commitments[outpointKey] = commitment
+}
+
+func (st *NamecoinState) IsDomainClaimed(domain string) bool {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	_, ok := st.ClaimedDomains[domain]
+	return ok
+}
+
+func (st *NamecoinState) DeleteCommitment(outpointKey string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	delete(st.Commitments, outpointKey)
 }
 
 func (st *NamecoinState) Clone() *NamecoinState {
@@ -84,10 +114,11 @@ func (st *NamecoinState) Clone() *NamecoinState {
 		return NewState()
 	}
 	clone := &NamecoinState{
-		Domains:     maps.Clone(st.Domains),
-		Commitments: maps.Clone(st.Commitments),
-		UTXOMap:     make(map[string]map[string]types.UTXO, len(st.UTXOMap)),
-		txMap:       make(map[string]struct{}, len(st.txMap)),
+		Domains:        maps.Clone(st.Domains),
+		ClaimedDomains: maps.Clone(st.ClaimedDomains),
+		Commitments:    maps.Clone(st.Commitments),
+		UTXOMap:        make(map[string]map[string]types.UTXO, len(st.UTXOMap)),
+		txMap:          make(map[string]struct{}, len(st.txMap)),
 	}
 	for addr, utxos := range st.UTXOMap {
 		inner := make(map[string]types.UTXO, len(utxos))
@@ -112,8 +143,6 @@ func (st *NamecoinState) ApplyTx(txID string, tx *types.Tx) error {
 		// tx has already been applied
 		return nil
 	}
-
-	log.Info().Msgf("Applying tx type: %s with ID: %s", tx.Type, txID)
 
 	// BurnUTXOs first making sure the user hasn't burned the same UTXOs already
 	// First transaction in Block is always Reward to ensure that miner gets reward even if user transaction is reverted
@@ -185,11 +214,26 @@ func (st *NamecoinState) ProcessCommandStateUpdate(tx *types.Tx) error {
 	return cmd.ProcessState(st, tx)
 }
 
-// ValidateCommand verifies the payload of a transaction based on its type
+// ValidateCommand verifies the payload of a signed transaction based on its type
 func (st *NamecoinState) ValidateCommand(tx *SignedTransaction) error {
 	cmd, err := ResolveCommand(tx.Type, tx.Payload)
 	if err != nil {
 		return err
 	}
 	return cmd.Validate(st, tx)
+}
+
+// ValidateCommandWithInputs allows validation that depends on fully formed tx
+// inputs/outputs (e.g., outpoint-keyed commitment checks).
+func (st *NamecoinState) ValidateCommandWithInputs(tx *types.Tx) error {
+	cmd, err := ResolveCommand(tx.Type, tx.Payload)
+	if err != nil {
+		return err
+	}
+	if v, ok := cmd.(interface {
+		ValidateWithInputs(*NamecoinState, *types.Tx) error
+	}); ok {
+		return v.ValidateWithInputs(st, tx)
+	}
+	return nil
 }
