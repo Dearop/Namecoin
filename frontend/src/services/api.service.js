@@ -1,12 +1,9 @@
 import canonicalize from 'canonicalize';
 
 function getBaseURL() {
-  // Get proxy address from localStorage (set in Home view)
-  const proxyAddr = localStorage.getItem('proxyAddr');
-  if (!proxyAddr) {
-    throw new Error('No proxy address configured. Please connect to a peer first.');
-  }
-  return `http://${proxyAddr}`;
+  // Use environment variable or default to localhost:8080
+  const proxyAddr = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8080';
+  return proxyAddr;
 }
 
 export async function sendTransaction(tx, signature) {

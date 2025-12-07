@@ -2,11 +2,11 @@ import { describe, it, expect, vi } from 'vitest';
 import { createRouter, createMemoryHistory } from 'vue-router';
 
 describe('Router', () => {
-  it('creates router with home route', () => {
+  it('creates router with wallet route', () => {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
-        { path: '/', name: 'home', component: { template: '<div>Home</div>' } }
+        { path: '/', name: 'Wallet', component: { template: '<div>Wallet</div>' } }
       ]
     });
     
@@ -15,8 +15,7 @@ describe('Router', () => {
 
   it('has correct route configuration', () => {
     const routes = [
-      { path: '/', name: 'home', component: { template: '<div>Home</div>' } },
-      { path: '/wallet', name: 'wallet', component: { template: '<div>Wallet</div>' } }
+      { path: '/', name: 'Wallet', component: { template: '<div>Wallet</div>' } }
     ];
     
     const router = createRouter({
@@ -25,14 +24,14 @@ describe('Router', () => {
     });
     
     const registeredRoutes = router.getRoutes();
-    expect(registeredRoutes.length).toBeGreaterThanOrEqual(2);
+    expect(registeredRoutes.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('has home route path', () => {
+  it('has wallet route as root path', () => {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
-        { path: '/', name: 'home', component: { template: '<div>Home</div>' } }
+        { path: '/', name: 'Wallet', component: { template: '<div>Wallet</div>' } }
       ]
     });
     
@@ -41,42 +40,11 @@ describe('Router', () => {
     expect(paths).toContain('/');
   });
 
-  it('has wallet route path', () => {
-    const router = createRouter({
-      history: createMemoryHistory(),
-      routes: [
-        { path: '/wallet', name: 'wallet', component: { template: '<div>Wallet</div>' } }
-      ]
-    });
-    
-    const routes = router.getRoutes();
-    const paths = routes.map(r => r.path);
-    expect(paths).toContain('/wallet');
-  });
-
-  it('supports route guards', () => {
-    const guardFn = vi.fn();
-    const router = createRouter({
-      history: createMemoryHistory(),
-      routes: [
-        { 
-          path: '/wallet',
-          name: 'wallet',
-          component: { template: '<div>Wallet</div>' },
-          beforeEnter: guardFn
-        }
-      ]
-    });
-    
-    const walletRoute = router.getRoutes().find(r => r.name === 'wallet');
-    expect(walletRoute.beforeEnter).toBeDefined();
-  });
-
   it('uses memory history', () => {
     const history = createMemoryHistory();
     const router = createRouter({
       history,
-      routes: [{ path: '/', component: { template: '<div>Home</div>' } }]
+      routes: [{ path: '/', component: { template: '<div>Wallet</div>' } }]
     });
     
     expect(router.options.history).toBeDefined();
@@ -86,13 +54,11 @@ describe('Router', () => {
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
-        { path: '/', name: 'home', component: { template: '<div>Home</div>' } },
-        { path: '/wallet', name: 'wallet', component: { template: '<div>Wallet</div>' } }
+        { path: '/', name: 'Wallet', component: { template: '<div>Wallet</div>' } }
       ]
     });
     
     const names = router.getRoutes().map(r => r.name).filter(Boolean);
-    expect(names).toContain('home');
-    expect(names).toContain('wallet');
+    expect(names).toContain('Wallet');
   });
 });

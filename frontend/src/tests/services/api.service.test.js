@@ -9,10 +9,10 @@ import {
 // Mock fetch globally
 global.fetch = vi.fn();
 
-// Mock localStorage
+// Mock localStorage (still needed for minerID)
 const localStorageMock = {
   getItem: vi.fn((key) => {
-    if (key === 'proxyAddr') return '127.0.0.1:8080';
+    if (key === 'minerID') return 'test-miner-id';
     return null;
   }),
   setItem: vi.fn(),
@@ -20,6 +20,15 @@ const localStorageMock = {
   clear: vi.fn()
 };
 global.localStorage = localStorageMock;
+
+// Mock import.meta.env (vite sets VITE_BACKEND_URL to http://localhost:8080 by default)
+vi.stubGlobal('import', {
+  meta: {
+    env: {
+      VITE_BACKEND_URL: 'http://localhost:8080'
+    }
+  }
+});
 
 describe('api.service.js', () => {
   beforeEach(() => {
@@ -49,7 +58,7 @@ describe('api.service.js', () => {
 
       expect(result).toEqual(mockResponse);
       expect(fetch).toHaveBeenCalledWith(
-        'http://127.0.0.1:8080/namecoin/new',
+        'http://localhost:8080/namecoin/new',
         expect.objectContaining({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -147,7 +156,7 @@ describe('api.service.js', () => {
       const result = await getTransactionStatus('abc123');
 
       expect(result).toEqual(mockResponse);
-      expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:8080/namecoin/transaction/abc123');
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8080/namecoin/transaction/abc123');
     });
 
     it('should throw error on non-ok response', async () => {
@@ -173,7 +182,7 @@ describe('api.service.js', () => {
 
       await getTransactionStatus('txid789');
 
-      expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:8080/namecoin/transaction/txid789');
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8080/namecoin/transaction/txid789');
     });
   });
 
@@ -188,7 +197,7 @@ describe('api.service.js', () => {
       const result = await getBlockchainState();
 
       expect(result).toEqual(mockResponse);
-      expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:8080/blockchain');
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8080/blockchain');
     });
 
     it('should throw error on non-ok response', async () => {
@@ -214,7 +223,7 @@ describe('api.service.js', () => {
 
       await getBlockchainState();
 
-      expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:8080/blockchain');
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8080/blockchain');
     });
   });
 });

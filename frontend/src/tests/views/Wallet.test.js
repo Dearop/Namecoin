@@ -48,7 +48,8 @@ vi.mock('../../services/transaction.service.js', () => ({
 
 vi.mock('../../services/api.service.js', () => ({
   sendTransaction: vi.fn(() => Promise.resolve({ success: true })),
-  getBlockchainState: vi.fn(() => Promise.resolve({ blocks: [] }))
+  getBlockchainState: vi.fn(() => Promise.resolve({ blocks: [] })),
+  getMinerID: vi.fn(() => Promise.resolve('test-miner-id'))
 }));
 
 vi.mock('../../utils/hash.js', () => ({
@@ -65,7 +66,6 @@ describe('Wallet.vue', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockIsWalletLoaded = false;
-    global.localStorage.setItem('proxyAddr', '127.0.0.1:8080');
     wrapper = mount(Wallet);
   });
 
@@ -73,8 +73,8 @@ describe('Wallet.vue', () => {
     expect(wrapper.find('h1').text()).toBe('Peerster Wallet');
   });
 
-  it('displays proxy address from localStorage', () => {
-    expect(wrapper.text()).toContain('127.0.0.1:8080');
+  it('shows connection status', () => {
+    expect(wrapper.text()).toMatch(/(Connecting|Connected|Connection Failed)/);
   });
 
   it('shows wallet section initially', () => {
@@ -83,13 +83,6 @@ describe('Wallet.vue', () => {
 
   it('shows blockchain section', () => {
     expect(wrapper.text()).toContain('Blockchain Status');
-  });
-
-  it('handles disconnect button click', async () => {
-    const disconnectBtn = wrapper.find('.disconnect-btn');
-    await disconnectBtn.trigger('click');
-    
-    expect(mockPush).toHaveBeenCalledWith('/');
   });
 
   it('has wallet action methods', () => {
@@ -125,8 +118,9 @@ describe('Wallet.vue', () => {
     expect(wrapper.vm.lastTxId).toBeDefined();
   });
 
-  it('has proxy address from localStorage', () => {
-    expect(wrapper.vm.proxyAddr).toBe('127.0.0.1:8080');
+  it('has connection status refs', () => {
+    expect(wrapper.vm.isConnected).toBeDefined();
+    expect(wrapper.vm.connectionStatus).toBeDefined();
   });
 
   it('has handle submit method', () => {
@@ -137,8 +131,9 @@ describe('Wallet.vue', () => {
     expect(wrapper.vm.handleExportWallet).toBeDefined();
   });
 
-  it('has disconnect method', () => {
-    expect(wrapper.vm.disconnect).toBeDefined();
+  it('has auto-connect on mount', () => {
+    // Auto-connect logic is tested by checking connection status is set
+    expect(wrapper.vm.connectionStatus).toMatch(/(Connecting|Connected|Connection Failed)/);
   });
 
   it('can render without errors', () => {

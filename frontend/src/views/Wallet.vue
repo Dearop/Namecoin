@@ -4,9 +4,8 @@
       <div class="header-content">
         <h1>Peerster Wallet</h1>
         <div class="connection-info">
-          <span class="status-indicator"></span>
-          <span class="proxy-address">{{ proxyAddr }}</span>
-          <button @click="disconnect" class="disconnect-btn">Disconnect</button>
+          <span class="status-indicator" :class="{ connected: isConnected }"></span>
+          <span class="connection-status">{{ connectionStatus }}</span>
         </div>
       </div>
     </header>
@@ -90,11 +89,12 @@ import { useWallet } from '../composables/useWallet.js';
 import { useTransaction } from '../composables/useTransaction.js';
 import { hashDomainWithSalt, generateTransactionSignature, hashTransaction } from '../services/crypto.service.js';
 import { buildTransaction, computeTransactionID } from '../services/transaction.service.js';
-import { sendTransaction, getBlockchainState } from '../services/api.service.js';
+import { sendTransaction, getBlockchainState, getMinerID } from '../services/api.service.js';
 import { generateSalt } from '../utils/hash.js';
 
 const router = useRouter();
-const proxyAddr = ref(localStorage.getItem('proxyAddr') || '');
+const isConnected = ref(false);
+const connectionStatus = ref('Connecting...');
 
 const { wallet, walletID, isWalletLoaded, loadWallet, createWallet, exportWallet } = useWallet();
 const domainName = ref('');
@@ -115,13 +115,23 @@ const statusClass = computed(() => {
 const statusMessage = computed(() => status.value);
 
 onMounted(async () => {
+  // Auto-connect to backend and fetch miner ID
+  try {
+    const minerID = await getMinerID();
+    localStorage.setItem('minerID', minerID);
+    isConnected.value = true;
+    connectionStatus.value = 'Connected';
+    console.log('[Wallet] Auto-connected to node with miner ID:', minerID);
+  } catch (error) {
+    console.error('[Wallet] Failed to connect to backend:', error);
+    isConnected.value = false;
+    connectionStatus.value = 'Connection Failed';
+    status.value = 'Failed to connect to backend. Please ensure the backend is running.';
+  }
+  
+  // Load wallet after connection attempt
   await loadWallet();
 });
-
-function disconnect() {
-  localStorage.removeItem('proxyAddr');
-  router.push('/');
-}
 
 async function handleCreateWallet() {
   try {
@@ -249,9 +259,14 @@ async function fetchBlockchain() {
 .status-indicator {
   width: 10px;
   height: 10px;
-  background: #4caf50;
+  background: #ff9800;
   border-radius: 50%;
   animation: pulse 2s infinite;
+}
+
+.status-indicator.connected {
+  background: #4caf50;
+  animation: none;
 }
 
 @keyframes pulse {
@@ -259,24 +274,10 @@ async function fetchBlockchain() {
   50% { opacity: 0.5; }
 }
 
-.proxy-address {
+.connection-status {
   color: #666;
-  font-family: monospace;
   font-size: 14px;
-}
-
-.disconnect-btn {
-  padding: 8px 16px;
-  background: #ff5252;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 14px;
-}
-
-.disconnect-btn:hover {
-  background: #ff1744;
+  font-weight: 500;
 }
 
 .wallet-container {

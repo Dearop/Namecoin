@@ -1,28 +1,12 @@
 import { createRouter, createWebHistory } from 'vue-router';
-import Home from '../views/Home.vue';
 import Wallet from '../views/Wallet.vue';
 
 const routes = [
   {
     path: '/',
-    name: 'Home',
-    component: Home,
-    meta: { title: 'Connect to Peer' }
-  },
-  {
-    path: '/wallet',
     name: 'Wallet',
     component: Wallet,
-    meta: { title: 'Peerster Wallet' },
-    beforeEnter: (to, from, next) => {
-      // Check if proxy address is set
-      const proxyAddr = localStorage.getItem('proxyAddr');
-      if (!proxyAddr) {
-        next('/');
-      } else {
-        next();
-      }
-    }
+    meta: { title: 'Peerster Wallet' }
   }
 ];
 
