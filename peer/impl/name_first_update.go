@@ -28,7 +28,7 @@ func (n NameFirstUpdate) Validate(_ *NamecoinState, _ *SignedTransaction) error 
 }
 
 func (n NameFirstUpdate) ProcessState(st *NamecoinState, tx *types.Tx) error {
-	_, key, err := n.resolveCommitment(st, tx)
+	key, err := n.resolveCommitment(st, tx)
 	if err != nil {
 		return err
 	}
@@ -57,22 +57,22 @@ func (n NameFirstUpdate) ProcessTxState(st *NamecoinState, txID string, tx *type
 
 // ValidateWithInputs performs commitment checks requiring full tx inputs.
 func (n NameFirstUpdate) ValidateWithInputs(st *NamecoinState, tx *types.Tx) error {
-	_, _, err := n.resolveCommitment(st, tx)
+	_, err := n.resolveCommitment(st, tx)
 	return err
 }
 
-func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (string, string, error) {
+func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (string, error) {
 	if len(tx.Inputs) == 0 {
-		return "", "", fmt.Errorf("name_firstupdate requires at least one input")
+		return "", fmt.Errorf("name_firstupdate requires at least one input")
 	}
 	in := tx.Inputs[0]
 	key := outpointKey(in.TxID, in.Index)
 	commit, ok := st.GetCommitment(key)
 	if !ok {
-		return "", "", fmt.Errorf("no matching name_new commitment")
+		return "", fmt.Errorf("no matching name_new commitment")
 	}
 	if HashString(n.Domain+n.Salt) != commit {
-		return "", "", fmt.Errorf("commitment mismatch for domain %s", n.Domain)
+		return "", fmt.Errorf("commitment mismatch for domain %s", n.Domain)
 	}
-	return commit, key, nil
+	return key, nil
 }

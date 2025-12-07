@@ -70,7 +70,6 @@ func Test_Namecoin_Integration_SingleNodeChainGrowth(t *testing.T) {
 		require.NoError(t, err)
 		if chain.HeadHeight() > initialHeight {
 			headHeight = chain.HeadHeight()
-			headHash = chain.HeadHash()
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
