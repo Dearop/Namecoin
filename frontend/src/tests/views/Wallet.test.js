@@ -12,16 +12,13 @@ vi.mock('vue-router', () => ({
 let mockIsWalletLoaded = false;
 const mockCreateWallet = vi.fn();
 const mockLoadWallet = vi.fn();
-const mockExportWallet = vi.fn();
 
 vi.mock('../../composables/useWallet.js', () => ({
   useWallet: () => ({
     wallet: { value: { privateKey: 'test-key', publicKey: 'test-pub' } },
-    walletID: { value: 'wallet-123' },
     get isWalletLoaded() { return { value: mockIsWalletLoaded }; },
     loadWallet: mockLoadWallet,
-    createWallet: mockCreateWallet,
-    exportWallet: mockExportWallet
+    createWallet: mockCreateWallet
   })
 }));
 
@@ -77,25 +74,16 @@ describe('Wallet.vue', () => {
     expect(wrapper.text()).toMatch(/(Connecting|Connected|Connection Failed)/);
   });
 
-  it('shows wallet section initially', () => {
-    expect(wrapper.text()).toContain('Wallet');
+  it('shows DNS section', () => {
+    expect(wrapper.text()).toContain('Registered Domains');
   });
 
-  it('shows blockchain section', () => {
-    expect(wrapper.text()).toContain('Blockchain Status');
+  it('has refresh domains method', () => {
+    expect(wrapper.vm.fetchDomains).toBeDefined();
   });
 
-  it('has wallet action methods', () => {
-    expect(wrapper.vm.handleCreateWallet).toBeDefined();
-    expect(wrapper.vm.handleLoadWallet).toBeDefined();
-  });
-
-  it('has refresh blockchain method', () => {
-    expect(wrapper.vm.fetchBlockchain).toBeDefined();
-  });
-
-  it('can access blockchain data property', () => {
-    expect(wrapper.vm.blockchainData).toBeDefined();
+  it('can access domains property', () => {
+    expect(wrapper.vm.domains).toBeDefined();
   });
 
   it('has domain name input property', () => {
@@ -125,10 +113,6 @@ describe('Wallet.vue', () => {
 
   it('has handle submit method', () => {
     expect(wrapper.vm.handleSubmit).toBeDefined();
-  });
-
-  it('has handle export wallet method', () => {
-    expect(wrapper.vm.handleExportWallet).toBeDefined();
   });
 
   it('has auto-connect on mount', () => {

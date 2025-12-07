@@ -11,30 +11,6 @@
     </header>
 
     <div class="wallet-container">
-      <div class="wallet-section">
-        <h2>Wallet</h2>
-        <div v-if="!isWalletLoaded" class="wallet-actions">
-          <button @click="handleCreateWallet" class="action-btn primary">
-            Create New Wallet
-          </button>
-          <button @click="handleLoadWallet" class="action-btn">
-            Load Existing Wallet
-          </button>
-        </div>
-        
-        <div v-else class="wallet-info">
-          <div class="info-item">
-            <label>Wallet ID:</label>
-            <span class="wallet-id">{{ walletID }}</span>
-          </div>
-          <div class="wallet-actions-loaded">
-            <button @click="handleExportWallet" class="action-btn">
-              Export Wallet
-            </button>
-          </div>
-        </div>
-      </div>
-
       <div class="transaction-section" v-if="isWalletLoaded">
         <h2>Create Domain Transaction</h2>
         
@@ -69,13 +45,22 @@
         </div>
       </div>
 
-      <div class="blockchain-section">
-        <h2>Blockchain Status</h2>
-        <button @click="fetchBlockchain" class="action-btn">
-          Refresh Blockchain
+      <div class="dns-section">
+        <h2>Registered Domains</h2>
+        <button @click="fetchDomains" class="action-btn">
+          Refresh Domains
         </button>
-        <div v-if="blockchainData" class="blockchain-info">
-          <pre>{{ JSON.stringify(blockchainData, null, 2) }}</pre>
+        <div v-if="domains.length > 0" class="domains-list">
+          <div v-for="domain in domains" :key="domain.name" class="domain-item">
+            <div class="domain-name">{{ domain.name }}</div>
+            <div class="domain-info">
+              <span class="domain-owner">Owner: {{ domain.owner }}</span>
+              <span class="domain-block">Block: {{ domain.blockHeight }}</span>
+            </div>
+          </div>
+        </div>
+        <div v-else-if="domainsLoaded" class="no-domains">
+          No domains registered yet.
         </div>
       </div>
     </div>
@@ -96,12 +81,13 @@ const router = useRouter();
 const isConnected = ref(false);
 const connectionStatus = ref('Connecting...');
 
-const { wallet, walletID, isWalletLoaded, loadWallet, createWallet, exportWallet } = useWallet();
+const { wallet, isWalletLoaded, loadWallet, createWallet } = useWallet();
 const domainName = ref('');
 const isProcessing = ref(false);
 const status = ref('');
 const lastTxId = ref('');
-const blockchainData = ref(null);
+const domains = ref([]);
+const domainsLoaded = ref(false);
 
 const statusClass = computed(() => {
   if (status.value.includes('success') || status.value.includes('Success')) {
@@ -142,28 +128,6 @@ async function handleCreateWallet() {
   }
 }
 
-async function handleLoadWallet() {
-  try {
-    await loadWallet();
-    if (isWalletLoaded.value) {
-      status.value = 'Wallet loaded successfully';
-    } else {
-      status.value = 'No wallet found. Please create a new wallet.';
-    }
-  } catch (error) {
-    status.value = `Error loading wallet: ${error.message}`;
-  }
-}
-
-async function handleExportWallet() {
-  try {
-    await exportWallet();
-    status.value = 'Wallet exported successfully';
-  } catch (error) {
-    status.value = `Error exporting wallet: ${error.message}`;
-  }
-}
-
 async function handleSubmit() {
   if (!domainName.value || !isWalletLoaded.value) return;
   
@@ -198,26 +162,59 @@ async function handleSubmit() {
     status.value = 'Sending transaction to network...';
     const response = await sendTransaction(completeTx, signature);
     
-    if (response.success) {
-      lastTxId.value = response.txID;
-      status.value = `Transaction successful! Status: ${response.status}`;
+    if (response && response.status === 'success') {
+      lastTxId.value = completeTx.transactionID;
+      status.value = `Transaction successful! ${response.message || 'Transaction received'}`;
       domainName.value = '';
     } else {
-      status.value = `Transaction failed: ${response.error}`;
+      status.value = `Transaction failed: ${response?.message || 'Unknown error'}`;
     }
   } catch (error) {
     console.error('[Wallet] Transaction error:', error);
-    status.value = `Error: ${error.message}`;
+    status.value = `Error: ${error.message || 'Unknown error occurred'}`;
   } finally {
     isProcessing.value = false;
   }
 }
 
-async function fetchBlockchain() {
+async function fetchDomains() {
   try {
-    blockchainData.value = await getBlockchainState();
+    const blockchainData = await getBlockchainState();
+    domainsLoaded.value = true;
+    
+    // Extract domain registrations from blockchain
+    const domainMap = new Map();
+    
+    if (blockchainData && blockchainData.blocks) {
+      for (const block of blockchainData.blocks) {
+        if (block.transactions) {
+          for (const tx of block.transactions) {
+            // Look for name_firstupdate transactions (domain registrations)
+            if (tx.Type === 'name_firstupdate' && tx.Payload) {
+              try {
+                const payload = JSON.parse(tx.Payload);
+                if (payload.domain) {
+                  domainMap.set(payload.domain, {
+                    name: payload.domain,
+                    owner: tx.From.substring(0, 16) + '...',
+                    blockHeight: block.height || 0
+                  });
+                }
+              } catch (e) {
+                // Skip invalid payload
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    domains.value = Array.from(domainMap.values()).sort((a, b) => 
+      b.blockHeight - a.blockHeight
+    );
   } catch (error) {
-    status.value = `Error fetching blockchain: ${error.message}`;
+    status.value = `Error fetching domains: ${error.message}`;
+    domainsLoaded.value = true;
   }
 }
 </script>
@@ -290,7 +287,7 @@ async function fetchBlockchain() {
 
 .wallet-section,
 .transaction-section,
-.blockchain-section {
+.dns-section {
   background: white;
   padding: 30px;
   border-radius: 8px;
@@ -351,13 +348,13 @@ h2 {
   font-size: 14px;
 }
 
-.wallet-id {
-  font-family: monospace;
-  background: #f5f5f5;
-  padding: 8px 12px;
-  border-radius: 4px;
-  font-size: 13px;
-  word-break: break-all;
+.wallet-status {
+  color: #4caf50;
+  font-size: 16px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .transaction-form {
@@ -436,18 +433,48 @@ h2 {
   font-size: 14px;
 }
 
-.blockchain-info {
-  margin-top: 15px;
-  max-height: 400px;
-  overflow: auto;
+.domains-list {
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.blockchain-info pre {
-  background: #f5f5f5;
-  padding: 15px;
+.domain-item {
+  background: #f9f9f9;
+  padding: 16px;
   border-radius: 6px;
-  font-size: 12px;
-  line-height: 1.5;
-  margin: 0;
+  border-left: 4px solid #667eea;
+}
+
+.domain-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 8px;
+  font-family: monospace;
+}
+
+.domain-info {
+  display: flex;
+  gap: 20px;
+  font-size: 13px;
+  color: #666;
+}
+
+.domain-owner,
+.domain-block {
+  display: flex;
+  align-items: center;
+}
+
+.no-domains {
+  margin-top: 20px;
+  padding: 20px;
+  background: #f9f9f9;
+  border-radius: 6px;
+  text-align: center;
+  color: #999;
+  font-style: italic;
 }
 </style>
