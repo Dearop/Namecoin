@@ -40,26 +40,10 @@ func (t *TransactionService) VerifyBalance(
 	txID,
 	from string,
 	amount uint64) ([]types.TxInput, []types.TxOutput, error) {
-	// Log current UTXOs for this user
-	t.state.mu.RLock()
-	userUTXOs := t.state.UTXOMap[from]
-	totalBalance := uint64(0)
-	utxoCount := 0
-	if userUTXOs != nil {
-		for _, utxo := range userUTXOs {
-			totalBalance += utxo.Amount
-			utxoCount++
-		}
-	}
-	t.state.mu.RUnlock()
-	fmt.Printf("[DEBUG] User %s has %d UTXOs with total balance: %d (requested: %d)\n",
-		from, utxoCount, totalBalance, amount)
-
 	// 5. Check user balance use BalanceManager
 	// generating UTXOs to burn and one for leftovers
 	inputs, output, err := t.TokenManager.VerifyBalance(txID, from, amount)
 	if err != nil {
-		fmt.Printf("[DEBUG] VerifyBalance failed: %v\n", err)
 		return make([]types.TxInput, 0), make([]types.TxOutput, 0), err
 	}
 
