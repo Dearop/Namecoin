@@ -20,9 +20,11 @@ func (n NameFirstUpdate) Name() string {
 }
 
 func (n NameFirstUpdate) Validate(_ *NamecoinState, _ *SignedTransaction) error {
-	// This command requires the full inputs (txid:vout) to check the commitment.
-	// Call ValidateWithInputs with a fully formed types.Tx instead.
-	return fmt.Errorf("name_firstupdate validation requires full tx inputs (use ValidateWithInputs)")
+	// Basic payload sanity; full commit–reveal checks happen in ValidateWithInputs.
+	if n.Domain == "" || n.Salt == "" || n.IP == "" {
+		return fmt.Errorf("invalid name_firstupdate payload")
+	}
+	return nil
 }
 
 func (n NameFirstUpdate) ProcessState(st *NamecoinState, tx *types.Tx) error {
