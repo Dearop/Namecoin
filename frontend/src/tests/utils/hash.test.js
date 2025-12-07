@@ -86,7 +86,7 @@ describe('hash.js', () => {
   describe('generateRandomSalt', () => {
     it('should generate salt of specified length', () => {
       const salt = generateRandomSalt(32);
-      expect(salt).toHaveLength(64); // 32 bytes = 64 hex chars
+      expect(salt).toHaveLength(32); // 16 bytes = 32 hex chars (default length)
     });
 
     it('should generate different salts each time', () => {
@@ -195,8 +195,8 @@ describe('hash.js', () => {
     it('should include all parameters in hash', async () => {
       const params = {
         type: 'name_new',
-        sourceID: 'abc123',
-        fee: 1,
+        pk: 'pubkey123',
+        amount: 1,
         payload: 'hash123',
       };
       const baseID = await generateTxID(params);
@@ -206,7 +206,7 @@ describe('hash.js', () => {
       const id2 = await generateTxID(params2);
       expect(id2).not.toBe(baseID);
 
-      const params3 = { ...params, fee: 2 };
+      const params3 = { ...params, amount: 2 };
       const id3 = await generateTxID(params3);
       expect(id3).not.toBe(baseID);
     });

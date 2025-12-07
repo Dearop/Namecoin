@@ -56,35 +56,71 @@ describe('Home.vue', () => {
   });
 
   it('accepts valid address format with IP', async () => {
+    // Mock getMinerID
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ minerID: 'test-miner-id' }),
+      })
+    );
+
     wrapper.vm.proxyAddr = '127.0.0.1:8080';
     const form = wrapper.find('form');
     await form.trigger('submit.prevent');
+    await new Promise(resolve => setTimeout(resolve, 0)); // Wait for async
     
     expect(wrapper.vm.error).toBe('');
     expect(mockPush).toHaveBeenCalledWith('/wallet');
   });
 
   it('accepts valid address format with hostname', async () => {
+    // Mock getMinerID
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ minerID: 'test-miner-id' }),
+      })
+    );
+
     wrapper.vm.proxyAddr = 'localhost:8080';
     const form = wrapper.find('form');
     await form.trigger('submit.prevent');
+    await new Promise(resolve => setTimeout(resolve, 0)); // Wait for async
     
     expect(wrapper.vm.error).toBe('');
     expect(mockPush).toHaveBeenCalledWith('/wallet');
   });
 
   it('stores proxy address in localStorage', async () => {
+    // Mock getMinerID
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ minerID: 'test-miner-id' }),
+      })
+    );
+
     wrapper.vm.proxyAddr = '192.168.1.1:9000';
     const form = wrapper.find('form');
     await form.trigger('submit.prevent');
+    await new Promise(resolve => setTimeout(resolve, 0)); // Wait for async
     
     expect(localStorage.getItem('proxyAddr')).toBe('192.168.1.1:9000');
   });
 
   it('navigates to wallet page on successful connection', async () => {
+    // Mock getMinerID
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ minerID: 'test-miner-id' }),
+      })
+    );
+
     wrapper.vm.proxyAddr = '127.0.0.1:8080';
     const form = wrapper.find('form');
     await form.trigger('submit.prevent');
+    await new Promise(resolve => setTimeout(resolve, 0)); // Wait for async
     
     expect(mockPush).toHaveBeenCalledWith('/wallet');
   });

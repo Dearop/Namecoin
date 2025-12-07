@@ -37,10 +37,10 @@ describe('api.service.js', () => {
 
       const tx = {
         type: 'name_new',
-        source: 'wallet123',
-        fee: 1,
+        from: 'wallet123',
+        amount: 1,
         payload: 'commitment',
-        nonce: 1,
+        pk: 'pubkey123',
         transactionID: 'txid123',
       };
       const signature = 'sig123';
@@ -55,10 +55,10 @@ describe('api.service.js', () => {
           headers: { 'Content-Type': 'application/json' },
           body: canonicalize({
             type: tx.type,
-            from: tx.source,
-            fee: tx.fee,
+            from: tx.from,
+            amount: tx.amount,
             payload: tx.payload,
-            publicKey: tx.source,
+            pk: tx.pk,
             txId: tx.transactionID,
             signature: signature
           }),
@@ -70,13 +70,15 @@ describe('api.service.js', () => {
       fetch.mockResolvedValueOnce({
         ok: false,
         status: 500,
+        json: async () => ({}),
       });
 
       const tx = {
         type: 'name_new',
-        source: 'wallet123',
-        fee: 1,
+        from: 'wallet123',
+        amount: 1,
         payload: 'commitment',
+        pk: 'pubkey123',
         transactionID: 'txid123',
       };
       const signature = 'sig123';
@@ -89,9 +91,10 @@ describe('api.service.js', () => {
 
       const tx = {
         type: 'name_new',
-        source: 'wallet123',
-        fee: 1,
+        from: 'wallet123',
+        amount: 1,
         payload: 'commitment',
+        pk: 'pubkey123',
         transactionID: 'txid123',
       };
       const signature = 'sig123';
@@ -107,9 +110,10 @@ describe('api.service.js', () => {
 
       const tx = {
         type: 'name_new',
-        source: 'wallet123',
-        fee: 1,
+        from: 'wallet123',
+        amount: 1,
         payload: 'commitment',
+        pk: 'pubkey123',
         transactionID: 'txid123',
       };
       const signature = 'sig123';
@@ -122,10 +126,10 @@ describe('api.service.js', () => {
 
       expect(bodyObj).toEqual({
         type: tx.type,
-        from: tx.source,
-        fee: tx.fee,
+        from: tx.from,
+        amount: tx.amount,
         payload: tx.payload,
-        publicKey: tx.source,
+        pk: tx.pk,
         txId: tx.transactionID,
         signature: signature
       });

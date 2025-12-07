@@ -22,15 +22,17 @@ describe('transaction.service.js', () => {
         walletID: 'abc123',
         fee: 1,
         payload: 'commitment_hash',
+        pk: 'pubkey123',
       };
 
       const tx = await buildTransaction(params);
 
       expect(tx).toEqual({
         type: 'name_new',
-        source: 'abc123',
-        fee: 1,
+        from: 'abc123',
+        amount: 1,
         payload: 'commitment_hash',
+        pk: 'pubkey123',
         transactionID: null,
       });
     });
@@ -41,10 +43,11 @@ describe('transaction.service.js', () => {
         walletID: 'abc123',
         fee: 1,
         payload: { domain: 'example.com', hash: 'abc' },
+        pk: 'pubkey123',
       };
 
       const tx = await buildTransaction(params);
-      expect(tx.payload).toBe(JSON.stringify({ domain: 'example.com', hash: 'abc' }));
+      expect(tx.payload).toEqual({ domain: 'example.com', hash: 'abc' });
     });
 
     it('should handle string payload', async () => {
@@ -103,37 +106,37 @@ describe('transaction.service.js', () => {
     it('should stringify object payload', () => {
       const payload = { domain: 'example.com', hash: 'abc123' };
       const encoded = encodePayload(payload);
-      expect(encoded).toBe(JSON.stringify(payload));
+      expect(encoded).toEqual(payload);
     });
 
     it('should handle nested objects', () => {
-      const payload = { 
-        data: { 
-          nested: { 
-            value: 'deep' 
-          } 
-        } 
+      const payload = {
+        data: {
+          nested: {
+            value: 'deep'
+          }
+        }
       };
       const encoded = encodePayload(payload);
-      expect(encoded).toBe(JSON.stringify(payload));
+      expect(encoded).toEqual(payload);
     });
 
     it('should handle arrays', () => {
       const payload = [1, 2, 3];
       const encoded = encodePayload(payload);
-      expect(encoded).toBe(JSON.stringify(payload));
+      expect(encoded).toEqual(payload);
     });
 
     it('should handle null', () => {
       const payload = null;
       const encoded = encodePayload(payload);
-      expect(encoded).toBe('null');
+      expect(encoded).toEqual({});
     });
 
     it('should handle numbers', () => {
       const payload = 42;
       const encoded = encodePayload(payload);
-      expect(encoded).toBe('42');
+      expect(encoded).toBe(42);
     });
   });
 
@@ -141,9 +144,10 @@ describe('transaction.service.js', () => {
     it('should validate a correct transaction', () => {
       const tx = {
         type: 'name_new',
-        source: 'abc123',
-        fee: 1,
+        from: 'abc123',
+        amount: 1,
         payload: 'commitment',
+        pk: 'pubkey123',
       };
 
       const result = validateTransaction(tx);
@@ -166,8 +170,9 @@ describe('transaction.service.js', () => {
     it('should detect missing source', () => {
       const tx = {
         type: 'name_new',
-        fee: 1,
+        amount: 1,
         payload: 'commitment',
+        pk: 'pubkey123',
       };
 
       const result = validateTransaction(tx);
@@ -178,9 +183,10 @@ describe('transaction.service.js', () => {
     it('should detect invalid fee', () => {
       const tx = {
         type: 'name_new',
-        source: 'abc123',
-        fee: 0,
+        from: 'abc123',
+        amount: 0,
         payload: 'commitment',
+        pk: 'pubkey123',
       };
 
       const result = validateTransaction(tx);
@@ -191,8 +197,9 @@ describe('transaction.service.js', () => {
     it('should detect missing payload', () => {
       const tx = {
         type: 'name_new',
-        source: 'abc123',
-        fee: 1,
+        from: 'abc123',
+        amount: 1,
+        pk: 'pubkey123',
       };
 
       const result = validateTransaction(tx);
@@ -211,9 +218,10 @@ describe('transaction.service.js', () => {
     it('should accept fee greater than 1', () => {
       const tx = {
         type: 'name_new',
-        source: 'abc123',
-        fee: 10,
+        from: 'abc123',
+        amount: 10,
         payload: 'commitment',
+        pk: 'pubkey123',
       };
 
       const result = validateTransaction(tx);
