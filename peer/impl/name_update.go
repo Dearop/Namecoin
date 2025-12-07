@@ -28,8 +28,7 @@ func (n NameUpdate) Validate(st *NamecoinState, tx *SignedTransaction) error {
 }
 
 func (n NameUpdate) ProcessState(st *NamecoinState, _ *types.Tx) error {
-	// rec is copy, changing it without a lock, then updating with lock.
-	rec, ok := st.Domains[n.Domain]
+	rec, ok := st.NameLookup(n.Domain)
 	if !ok {
 		return fmt.Errorf("updating non-existent domain %s", n.Domain)
 	}

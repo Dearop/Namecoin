@@ -14,6 +14,10 @@ type UTXO struct {
 
 type TxInput struct {
 	TxID string
+	// Index of the output being spent from the referenced transaction.
+	Index uint32
+	// TODO: replace with following in case multiple outputs
+	// OutPoint string = TxID + Index
 }
 
 type TxOutput struct {
@@ -35,6 +39,7 @@ type Tx struct {
 	// stored as an array for simplicity
 	Outputs []TxOutput
 
+	// primary amount
 	Amount  uint64
 	Payload json.RawMessage
 }
@@ -71,8 +76,6 @@ type NameRecord struct {
 }
 
 // Serialisation
-// Marshal marshals the NamecoinBlock into bytes for the blockchain store
-
 func (b *Block) Marshal() ([]byte, error) {
 	// Serialize the header using the custom method to respect determinism
 	headerBytes := b.Header.SerializeHeader()
@@ -94,7 +97,6 @@ func (b *Block) Marshal() ([]byte, error) {
 	return json.Marshal(data)
 }
 
-// Unmarshal unmarshals data into this NamecoinBlock
 func (b *Block) Unmarshal(data []byte) error {
 	var raw struct {
 		Header       string `json:"header"`
