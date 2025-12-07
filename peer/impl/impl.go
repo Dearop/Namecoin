@@ -195,11 +195,15 @@ func (n *node) NamecoinChainState() *NamecoinChain {
 }
 
 // DNSServerAddr returns the bound DNS server address (testing helper).
-func (n *node) DNSServerAddr() string {
+func (n *node) GetDNSAddr() string {
 	if n.dnsServer == nil {
 		return ""
 	}
 	return n.dnsServer.Addr()
+}
+
+func (n *node) GetMinerID() string {
+	return n.conf.PoWConfig.PubKey
 }
 
 func (n *node) HandleNamecoinCommand(buf []byte) error {

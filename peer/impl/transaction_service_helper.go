@@ -15,7 +15,9 @@ func (t *SignedTransaction) SerializeTransaction() []byte {
 		"from":    t.From,
 		"amount":  t.Amount,
 		"payload": t.Payload,
+		"pk" : t.Pk,
 	}
+	
 
 	b, _ := canonicaljson.Marshal(data)
 	fmt.Printf("[DEBUG] Backend SerializeTransaction: %s\n", string(b))

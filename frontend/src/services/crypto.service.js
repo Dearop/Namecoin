@@ -77,7 +77,8 @@ export async function hashTransaction(tx) {
         type: tx.type,
         from: tx.from,
         amount: tx.amount,
-        payload: tx.payload
+        payload: tx.payload,
+        pk : tx.pk
     });
   return await sha256(txString);
 }

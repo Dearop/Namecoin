@@ -164,13 +164,19 @@ async function handleSubmit() {
     const salt = generateSalt();
     const hashedDomain = await hashDomainWithSalt(domainName.value, salt);
     
+    const minerID = localStorage.getItem('minerID');
+    if (!minerID) {
+      throw new Error('Miner ID not found. Please reconnect to the node.');
+    }
+    
     const transaction = await buildTransaction({
       type: 'NameNew',
-      walletID: walletID.value,
+      walletID: minerID,
       fee: 1,
       payload: {
         commitment: hashedDomain
-      }
+      },
+      pk: wallet.value.publicKey
     });
     
     // Compute transaction ID before signing

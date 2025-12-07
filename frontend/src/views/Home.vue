@@ -35,12 +35,13 @@
 <script setup>
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { getMinerID } from '../services/api.service.js';
 
 const router = useRouter();
 const proxyAddr = ref('127.0.0.1:8080');
 const error = ref('');
 
-function connect() {
+async function connect() {
   error.value = '';
   
   if (!proxyAddr.value) {
@@ -58,8 +59,18 @@ function connect() {
   // Store proxy address
   localStorage.setItem('proxyAddr', proxyAddr.value);
   
-  // Navigate to wallet
-  router.push('/wallet');
+  // Fetch and store miner ID from the backend
+  try {
+    const minerID = await getMinerID();
+    localStorage.setItem('minerID', minerID);
+    console.log('[Home] Connected to node with miner ID:', minerID);
+    
+    // Navigate to wallet
+    router.push('/wallet');
+  } catch (err) {
+    error.value = `Failed to connect: ${err.message}`;
+    localStorage.removeItem('proxyAddr');
+  }
 }
 </script>
 

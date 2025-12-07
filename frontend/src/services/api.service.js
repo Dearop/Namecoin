@@ -17,6 +17,7 @@ export async function sendTransaction(tx, signature) {
       from: tx.from,
       amount: tx.amount,
       payload: tx.payload || "",  // Ensure payload is never undefined
+      pk : tx.pk,                 //public key
       txId: tx.transactionID || "",  // Ensure txId is never undefined
       signature: signature
     });
@@ -72,6 +73,23 @@ export async function getBlockchainState() {//will be used later
     return await response.json();
   } catch (error) {
     console.error('[API] Get blockchain state failed:', error);
+    throw error;
+  }
+}
+
+export async function getMinerID() {
+  try {
+    const baseURL = getBaseURL();
+    const response = await fetch(`${baseURL}/namecoin/minerid`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.minerID;
+  } catch (error) {
+    console.error('[API] Get miner ID failed:', error);
     throw error;
   }
 }

@@ -8,7 +8,7 @@ import (
 
 func (t *TransactionService) ValidateTransaction(tx *SignedTransaction) error {
 	// 1. Decode public key
-	pubKeyBytes, err := decodeHex(tx.From)
+	pubKeyBytes, err := decodeHex(tx.Pk)
 	if err != nil {
 		return fmt.Errorf("invalid public key format")
 	}
