@@ -3,6 +3,7 @@ import canonicalize from 'canonicalize';
 import {
   sendTransaction,
   getTransactionStatus,
+  getMinerID,
 } from '../../services/api.service.js';
 
 // Mock fetch globally
@@ -57,7 +58,7 @@ describe('api.service.js', () => {
 
       expect(result).toEqual(mockResponse);
       expect(fetch).toHaveBeenCalledWith(
-        'http://localhost:8080/namecoin/new',
+        'http://localhost:8080/namecoin/handle',
         expect.objectContaining({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -182,6 +183,35 @@ describe('api.service.js', () => {
       await getTransactionStatus('txid789');
 
       expect(fetch).toHaveBeenCalledWith('http://localhost:8080/namecoin/transaction/txid789');
+    });
+  });
+
+  describe('getMinerID', () => {
+    it('should get miner ID successfully', async () => {
+      fetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ minerID: 'miner-abc123' }),
+      });
+
+      const result = await getMinerID();
+
+      expect(result).toBe('miner-abc123');
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8080/namecoin/minerid');
+    });
+
+    it('should throw error on non-ok response', async () => {
+      fetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+      });
+
+      await expect(getMinerID()).rejects.toThrow('HTTP error! status: 500');
+    });
+
+    it('should handle network errors', async () => {
+      fetch.mockRejectedValueOnce(new Error('Network error'));
+
+      await expect(getMinerID()).rejects.toThrow('Network error');
     });
   });
 });

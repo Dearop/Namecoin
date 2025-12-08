@@ -268,4 +268,26 @@ describe('crypto.service.js', () => {
       expect(typeof hash).toBe('string');
     });
   });
+
+  describe('verifyTransactionSignature error handling', () => {
+    it('should return false on invalid signature format', async () => {
+      const txHash = 'a'.repeat(64);
+      const invalidSignature = 'invalid-signature';
+      const publicKey = '320ff9db0f2ceb7458777d9054773b586d433d6a424023df0622a0f0fe0e2259';
+
+      const isValid = await verifyTransactionSignature(txHash, invalidSignature, publicKey);
+
+      expect(isValid).toBe(false);
+    });
+
+    it('should return false on malformed public key', async () => {
+      const txHash = 'a'.repeat(64);
+      const signature = 'b'.repeat(128);
+      const invalidPublicKey = 'malformed';
+
+      const isValid = await verifyTransactionSignature(txHash, signature, invalidPublicKey);
+
+      expect(isValid).toBe(false);
+    });
+  });
 });

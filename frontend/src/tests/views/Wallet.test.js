@@ -123,4 +123,157 @@ describe('Wallet.vue', () => {
   it('can render without errors', () => {
     expect(wrapper.html()).toBeTruthy();
   });
+
+  describe('handleCreateWallet', () => {
+    it('should create wallet successfully', async () => {
+      mockCreateWallet.mockResolvedValueOnce();
+      wrapper = mount(Wallet);
+      await flushPromises();
+      
+      await wrapper.vm.handleCreateWallet();
+      
+      expect(mockCreateWallet).toHaveBeenCalled();
+      expect(wrapper.vm.status).toContain('successfully');
+    });
+
+    it('should handle wallet creation error', async () => {
+      mockCreateWallet.mockRejectedValueOnce(new Error('Creation failed'));
+      wrapper = mount(Wallet);
+      await flushPromises();
+      
+      await wrapper.vm.handleCreateWallet();
+      
+      expect(wrapper.vm.status).toContain('Error creating wallet');
+    });
+  });
+
+  describe('handleSubmit', () => {
+    beforeEach(() => {
+      mockIsWalletLoaded = true;
+    });
+
+    it('should not proceed if domain name is empty', async () => {
+      wrapper = mount(Wallet);
+      await flushPromises();
+      
+      wrapper.vm.domainName = '';
+      const { buildTransaction } = await import('../../services/transaction.service.js');
+      
+      await wrapper.vm.handleSubmit();
+      
+      expect(buildTransaction).not.toHaveBeenCalled();
+    });
+
+    it('should not proceed if wallet is not loaded', async () => {
+      mockIsWalletLoaded = false;
+      wrapper = mount(Wallet);
+      await flushPromises();
+      
+      wrapper.vm.domainName = 'test.domain';
+      const { buildTransaction } = await import('../../services/transaction.service.js');
+      
+      await wrapper.vm.handleSubmit();
+      
+      expect(buildTransaction).not.toHaveBeenCalled();
+    });
+
+    it('should handle missing miner ID', async () => {
+      wrapper = mount(Wallet);
+      await flushPromises();
+      
+      localStorage.clear();
+      wrapper.vm.domainName = 'test.domain';
+      
+      await wrapper.vm.handleSubmit();
+      
+      expect(wrapper.vm.status).toContain('Miner ID not found');
+    });
+  });
+
+  describe('handleFirstUpdate', () => {
+    beforeEach(() => {
+      mockIsWalletLoaded = true;
+      localStorage.setItem('minerID', 'test-miner-id');
+    });
+
+    it('should not proceed if wallet not loaded', async () => {
+      mockIsWalletLoaded = false;
+      wrapper = mount(Wallet);
+      await flushPromises();
+      
+      const { buildTransaction } = await import('../../services/transaction.service.js');
+      buildTransaction.mockClear();
+      
+      await wrapper.vm.handleFirstUpdate({ domain: 'test.domain', salt: 'salt' });
+      
+      expect(buildTransaction).not.toHaveBeenCalled();
+    });
+
+    it('should handle missing miner ID in first update', async () => {
+      wrapper = mount(Wallet);
+      await flushPromises();
+      
+      localStorage.clear();
+      
+      await wrapper.vm.handleFirstUpdate({ domain: 'test.domain', salt: 'salt' });
+      
+      expect(wrapper.vm.status).toContain('Miner ID not found');
+    });
+  });
+
+  describe('handleUpdate', () => {
+    beforeEach(() => {
+      mockIsWalletLoaded = true;
+      localStorage.setItem('minerID', 'test-miner-id');
+    });
+
+    it('should not proceed if wallet not loaded', async () => {
+      mockIsWalletLoaded = false;
+      wrapper = mount(Wallet);
+      await flushPromises();
+      
+      const { buildTransaction } = await import('../../services/transaction.service.js');
+      buildTransaction.mockClear();
+      
+      await wrapper.vm.handleUpdate({ domain: 'test.domain', newIp: '1.2.3.4' });
+      
+      expect(buildTransaction).not.toHaveBeenCalled();
+    });
+
+    it('should not proceed if new IP is empty', async () => {
+      wrapper = mount(Wallet);
+      await flushPromises();
+      
+      const { buildTransaction } = await import('../../services/transaction.service.js');
+      buildTransaction.mockClear();
+      
+      await wrapper.vm.handleUpdate({ domain: 'test.domain', newIp: '' });
+      
+      expect(wrapper.vm.status).toContain('Please enter an IP address');
+      expect(buildTransaction).not.toHaveBeenCalled();
+    });
+
+    it('should handle missing miner ID in update', async () => {
+      wrapper = mount(Wallet);
+      await flushPromises();
+      
+      localStorage.clear();
+      
+      await wrapper.vm.handleUpdate({ domain: 'test.domain', newIp: '1.2.3.5' });
+      
+      expect(wrapper.vm.status).toContain('Miner ID not found');
+    });
+  });
+
+  describe('fetchDomains', () => {
+    it('should load domains and set loaded flag', async () => {
+      wrapper = mount(Wallet);
+      await flushPromises();
+      
+      await wrapper.vm.fetchDomains();
+      
+      expect(wrapper.vm.domainsLoaded).toBe(true);
+      expect(wrapper.vm.domains).toBeDefined();
+    });
+  });
 });
