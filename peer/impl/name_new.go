@@ -28,8 +28,14 @@ func (n NameNew) Validate(_ *NamecoinState, _ *SignedTransaction) error {
 func (n NameNew) ProcessState(st *NamecoinState, tx *types.Tx) error {
 	// we don't reveal the name on the initial domain creation, look at the project description
 	st.SetCommitment(tx.From, n.Commitment)
+
+	// Convert 0 to default TTL before storing
+    ttlToStore := n.TTL
+    if ttlToStore == 0 {
+        ttlToStore = DefaultDomainTTLBlocks  // or DefaultDomainTTLBlocks
+    }
 	// Store TTL preference keyed by commitment; applied during firstupdate
-	st.SetCommitmentTTL(n.Commitment, n.TTL)
+	st.SetCommitmentTTL(n.Commitment, ttlToStore)
 
 	return nil
 }

@@ -28,6 +28,19 @@
             />
           </div>
           
+          <div class="form-group">
+            <label for="ttl">TTL (blocks):</label>
+            <input 
+              id="ttl"
+              v-model.number="ttl" 
+              type="number"
+              min="0"
+              placeholder="0 for default"
+              :disabled="isProcessing"
+            />
+            <small class="form-hint">Number of blocks the reservation will live. 0 uses default TTL (36,000 blocks).</small>
+          </div>
+          
           <button 
             type="submit" 
             class="submit-btn"
@@ -69,13 +82,21 @@
                 <span class="domain-ip">Current IP: {{ domain.ip }}</span>
               </div>
               
-              <!-- Pending: Show IP input and Reveal button -->
+              <!-- Pending: Show IP input, TTL input, and Reveal button -->
               <div v-if="domain.status === 'pending'" class="domain-update">
                 <input 
                   v-model="domain.revealIp" 
                   type="text" 
                   placeholder="Enter IP address (optional)"
                   class="ip-input"
+                  :disabled="isProcessing"
+                />
+                <input 
+                  v-model.number="domain.revealTtl" 
+                  type="number" 
+                  min="0"
+                  placeholder="TTL (0=default)"
+                  class="ttl-input"
                   :disabled="isProcessing"
                 />
                 <button 
@@ -87,13 +108,21 @@
                 </button>
               </div>
               
-              <!-- Revealed: Show Update IP input and button -->
+              <!-- Revealed: Show Update IP input, TTL input, and button -->
               <div v-if="domain.status === 'revealed'" class="domain-update">
                 <input 
                   v-model="domain.newIp" 
                   type="text" 
                   placeholder="Enter new IP address"
                   class="ip-input"
+                  :disabled="isProcessing"
+                />
+                <input 
+                  v-model.number="domain.updateTtl" 
+                  type="number" 
+                  min="0"
+                  placeholder="TTL (0=default)"
+                  class="ttl-input"
                   :disabled="isProcessing"
                 />
                 <button 
@@ -152,6 +181,7 @@ const connectionStatus = ref('Connecting...');
 
 const { wallet, isWalletLoaded, loadWallet, createWallet } = useWallet();
 const domainName = ref('');
+const ttl = ref(0);
 const isProcessing = ref(false);
 const status = ref('');
 const lastTxId = ref('');
@@ -177,11 +207,13 @@ function loadMyDomains() {
   // Load all domains from localStorage (both pending and revealed)
   const stored = getPendingDomains(minerID);
   
-  // Map to add input fields for IP addresses
+  // Map to add input fields for IP addresses and TTL
   myDomains.value = stored.map(d => ({
     ...d,
     revealIp: d.ip || '', // IP for first_update (reveal)
-    newIp: d.ip || '' // IP for update
+    revealTtl: 0, // TTL for first_update
+    newIp: d.ip || '', // IP for update
+    updateTtl: 0 // TTL for update
   }));
 }
 
@@ -252,7 +284,8 @@ async function handleSubmit() {
       walletID: minerID,
       fee: 1,
       payload: {
-        commitment: hashedDomain
+        commitment: hashedDomain,
+        ttl: ttl.value || 0
       },
       pk: wallet.value.publicKey
     });
@@ -312,7 +345,8 @@ async function handleFirstUpdate(pending) {
       payload: {
         domain: pending.domain,
         salt: pending.salt,
-        ip: pending.revealIp ? pending.revealIp.trim() : ''
+        ip: pending.revealIp ? pending.revealIp.trim() : '',
+        ttl: pending.revealTtl || 0
       },
       pk: wallet.value.publicKey
     });
@@ -375,7 +409,8 @@ async function handleUpdate(domain) {
       fee: 0,
       payload: {
         domain: domain.domain,
-        ip: domain.newIp.trim()
+        ip: domain.newIp.trim(),
+        ttl: domain.updateTtl || 0
       },
       pk: wallet.value.publicKey
     });
@@ -706,6 +741,34 @@ h2 {
 .ip-input:disabled {
   background: #f5f5f5;
   cursor: not-allowed;
+}
+
+.ttl-input {
+  width: 140px;
+  padding: 10px 14px;
+  border: 2px solid #e0e0e0;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: all 0.3s;
+}
+
+.ttl-input:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.ttl-input:disabled {
+  background: #f5f5f5;
+  cursor: not-allowed;
+}
+
+.form-hint {
+  display: block;
+  margin-top: 6px;
+  color: #666;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .no-domains {

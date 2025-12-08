@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/rs/zerolog/log"
 	"go.dedis.ch/cs438/types"
 	"golang.org/x/xerrors"
 )
@@ -48,12 +49,17 @@ func (n NameFirstUpdate) ProcessState(st *NamecoinState, tx *types.Tx) error {
 		return xerrors.New("domain already exists")
 	}
 
+	effectiveTTLValue := st.effectiveTTL(resolveTTLPreference(n.TTL, st.GetCommitment(tx.From), st))
+	newExpiresAt := st.CurrentHeight() + effectiveTTLValue
+	
+	log.Info().Str("domain", n.Domain).Uint64("ttl_blocks", effectiveTTLValue).Uint64("new_expires_at", newExpiresAt).Msg("Domain registered with TTL")
+	
 	st.SetDomain(types.NameRecord{
 		Owner:     tx.From,
 		IP:        n.IP,
 		Domain:    n.Domain,
 		Salt:      n.Salt,
-		ExpiresAt: st.CurrentHeight() + st.effectiveTTL(resolveTTLPreference(n.TTL, st.GetCommitment(tx.From), st)),
+		ExpiresAt: newExpiresAt,
 	})
 
 	return nil
