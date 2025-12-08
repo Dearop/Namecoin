@@ -12,7 +12,7 @@ import (
 // DomainTTLBlocks is the default number of blocks a domain will remain registered for.
 // DefaultDomainTTLBlocks defines the default number of blocks a domain stays valid.
 var DefaultDomainTTLBlocks uint64 = 36_000
-// MaxDomainTTLBlocks caps the TTL to ~1 year (assuming 6s blocks -> 5,256,000 blocks).
+// MaxDomainTTLBlocks caps the TTL to ~1 year (assuming 10s blocks -> 5,256,000 blocks).
 var MaxDomainTTLBlocks uint64 = 5_256_000
 
 // NamecoinState is the in-memory state rebuilt from the Namecoin chain
