@@ -56,7 +56,7 @@ func NewState() *NamecoinState {
 		UTXOMap:        make(map[string]map[string]types.UTXO),
 		txMap:          make(map[string]struct{}),
 		// Clamp default TTL to the configured max to avoid unbounded domain lifetimes.
-		domainTTL: minTTL(DefaultDomainTTLBlocks),
+		domainTTL: 		clampTTL(DefaultDomainTTLBlocks),
 	}
 }
 
@@ -214,9 +214,9 @@ func (st *NamecoinState) addExpiryLocked(domain string, height uint64) {
 
 func (st *NamecoinState) effectiveTTL(ttl uint64) uint64 {
 	if ttl == 0 {
-		return minTTL(st.domainTTL)
+		return clampTTL(st.domainTTL)
 	}
-	return minTTL(ttl)
+	return clampTTL(ttl)
 }
 
 func (st *NamecoinState) removeFromExpiryLocked(domain string, height uint64) {
@@ -354,7 +354,8 @@ func (st *NamecoinState) ValidateCommand(tx *SignedTransaction) error {
 	return cmd.Validate(st, tx)
 }
 
-func minTTL(ttl uint64) uint64 {
+// clampTTL ensures the TTL is within the configured bounds.
+func clampTTL(ttl uint64) uint64 {
 	if ttl == 0 {
 		return 0
 	}
