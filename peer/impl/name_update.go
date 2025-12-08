@@ -60,7 +60,8 @@ func (n NameUpdate) ProcessState(st *NamecoinState, tx *types.Tx) error {
 	newExpiresAt := st.CurrentHeight() + effectiveTTLValue
 	rec.ExpiresAt = newExpiresAt
 
-	log.Info().Str("domain", n.Domain).Uint64("old_expires_at", oldExpiresAt).Uint64("ttl_blocks", effectiveTTLValue).Uint64("new_expires_at", newExpiresAt).Msg("Domain TTL updated")
+	log.Info().Str("domain", n.Domain).Uint64("old_expires_at", oldExpiresAt).Uint64("ttl_blocks",
+	 effectiveTTLValue).Uint64("new_expires_at", newExpiresAt).Msg("Domain TTL updated")
 
 	st.SetDomain(rec)
 
