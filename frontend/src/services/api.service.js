@@ -20,7 +20,7 @@ export async function sendTransaction(tx, signature) {
     });
     console.log('[DEBUG] Frontend sending:', body);
     
-    const response = await fetch(`${baseURL}/namecoin/new`, {
+    const response = await fetch(`${baseURL}/namecoin/handle`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -38,42 +38,6 @@ export async function sendTransaction(tx, signature) {
     return await response.json();
   } catch (error) {
     console.error('[API] Send transaction failed:', error);
-    throw error;
-  }
-}
-
-export async function first_updateTransaction(tx, signature) {
-  try {
-    const baseURL = getBaseURL();
-    const body = canonicalize({
-      type: tx.type,
-      from: tx.from,
-      amount: tx.amount,
-      payload: tx.payload || "",  // Ensure payload is never undefined
-      pk : tx.pk,                 //public key
-      txId: tx.transactionID || "",  // Ensure txId is never undefined
-      signature: signature
-    });
-    console.log('[DEBUG] Frontend sending first_update:', body);    
-
-    const response = await fetch(`${baseURL}/namecoin/first_update`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: body
-    });
-
-    if (!response.ok) {
-      // Try to get error details from response
-      const errorData = await response.json().catch(() => null);
-      const errorMessage = errorData?.message || `HTTP error! status: ${response.status}`;
-      throw new Error(errorMessage);
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.error('[API] First update transaction failed:', error);
     throw error;
   }
 }
