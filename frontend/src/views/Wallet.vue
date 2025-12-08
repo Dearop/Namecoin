@@ -49,52 +49,66 @@
       <div class="my-domains-section" v-if="isWalletLoaded">
         <h2>My Domains</h2>
         
-        <!-- Pending Commitments -->
-        <div v-if="pendingDomains.length > 0" class="subsection">
+        <div v-if="myDomains.length > 0" class="subsection">
           <div class="subsection-header">
-            <h3>Pending Commitments</h3>
+            <h3>Your Domains</h3>
             <button @click="clearPendingDomains" class="clear-btn" title="Clear all pending domains">
               Clear All
             </button>
           </div>
-          <p class="section-description">⚠️ Wait for your commitment to be mined in a block before revealing. Revealing too early will fail with "commitment mismatch".</p>
+          <p class="section-description">⚠️ Wait for commitment to be mined before revealing. After reveal, you can update the IP address.</p>
           <div class="domains-list">
-            <div v-for="pending in pendingDomains" :key="pending.domain" class="domain-item pending">
+            <div v-for="domain in myDomains" :key="domain.domain" class="domain-item" :class="domain.status">
               <div class="domain-header">
-                <div class="domain-name">{{ pending.domain }}</div>
-                <span class="domain-badge">Pending</span>
+                <div class="domain-name">{{ domain.domain }}</div>
+                <span class="domain-badge" :class="domain.status">{{ domain.status === 'pending' ? 'Pending' : 'Active' }}</span>
               </div>
-              <div class="domain-actions">
+              
+              <!-- Show current IP if revealed -->
+              <div v-if="domain.status === 'revealed' && domain.ip" class="domain-info">
+                <span class="domain-ip">Current IP: {{ domain.ip }}</span>
+              </div>
+              
+              <!-- Pending: Show IP input and Reveal button -->
+              <div v-if="domain.status === 'pending'" class="domain-update">
+                <input 
+                  v-model="domain.revealIp" 
+                  type="text" 
+                  placeholder="Enter IP address (optional)"
+                  class="ip-input"
+                  :disabled="isProcessing"
+                />
                 <button 
-                  @click="handleFirstUpdate(pending)" 
+                  @click="handleFirstUpdate(domain)" 
                   class="action-btn primary"
                   :disabled="isProcessing"
                 >
                   Reveal Domain
                 </button>
               </div>
+              
+              <!-- Revealed: Show Update IP input and button -->
+              <div v-if="domain.status === 'revealed'" class="domain-update">
+                <input 
+                  v-model="domain.newIp" 
+                  type="text" 
+                  placeholder="Enter new IP address"
+                  class="ip-input"
+                  :disabled="isProcessing"
+                />
+                <button 
+                  @click="handleUpdate(domain)" 
+                  class="action-btn primary"
+                  :disabled="isProcessing || !domain.newIp"
+                >
+                  Update IP
+                </button>
+              </div>
             </div>
           </div>
         </div>
 
-        <!-- Owned Domains -->
-        <div v-if="ownedDomains.length > 0" class="subsection">
-          <h3>Published Domains</h3>
-          <p class="section-description">Your successfully registered domains</p>
-          <div class="domains-list">
-            <div v-for="owned in ownedDomains" :key="owned.name" class="domain-item owned">
-              <div class="domain-header">
-                <div class="domain-name">{{ owned.name }}</div>
-                <span class="domain-badge owned">Active</span>
-              </div>
-              <div class="domain-info">
-                <span class="domain-block">Block: {{ owned.blockHeight }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="pendingDomains.length === 0 && ownedDomains.length === 0" class="no-domains">
+        <div v-if="myDomains.length === 0" class="no-domains">
           You don't have any domains yet. Register one above!
         </div>
       </div>
@@ -143,8 +157,7 @@ const status = ref('');
 const lastTxId = ref('');
 const domains = ref([]);
 const domainsLoaded = ref(false);
-const pendingDomains = ref([]);
-const ownedDomains = ref([]);
+const myDomains = ref([]);
 
 const statusClass = computed(() => {
   if (status.value.includes('success') || status.value.includes('Success')) {
@@ -161,26 +174,27 @@ function loadMyDomains() {
   const minerID = localStorage.getItem('minerID');
   if (!minerID) return;
   
-  // Load pending domains from localStorage
-  const pending = getPendingDomains(minerID);
-  pendingDomains.value = pending.filter(d => d.status === 'pending');
+  // Load all domains from localStorage (both pending and revealed)
+  const stored = getPendingDomains(minerID);
   
-  // Load owned domains from blockchain
-  if (domains.value.length > 0) {
-    ownedDomains.value = domains.value.filter(d => d.fullOwner === minerID);
-  }
+  // Map to add input fields for IP addresses
+  myDomains.value = stored.map(d => ({
+    ...d,
+    revealIp: d.ip || '', // IP for first_update (reveal)
+    newIp: d.ip || '' // IP for update
+  }));
 }
 
 function clearPendingDomains() {
-  if (!confirm('Are you sure you want to clear all pending domains? This cannot be undone.')) {
+  if (!confirm('Are you sure you want to clear all domains? This cannot be undone.')) {
     return;
   }
   
   const minerID = localStorage.getItem('minerID');
   if (minerID) {
     localStorage.removeItem(`pending_domains_${minerID}`);
-    pendingDomains.value = [];
-    status.value = 'Pending domains cleared.';
+    myDomains.value = [];
+    status.value = 'All domains cleared.';
   }
 }
 
@@ -294,11 +308,11 @@ async function handleFirstUpdate(pending) {
     const transaction = await buildTransaction({
       type: 'NameFirstUpdate',
       walletID: minerID,
-      fee: 1,
+      fee: 0,
       payload: {
         domain: pending.domain,
         salt: pending.salt,
-        ip: ''
+        ip: pending.revealIp ? pending.revealIp.trim() : ''
       },
       pk: wallet.value.publicKey
     });
@@ -316,8 +330,16 @@ async function handleFirstUpdate(pending) {
       lastTxId.value = completeTx.transactionID;
       status.value = `Domain "${pending.domain}" revealed successfully!`;
       
-      // Update status and refresh lists
-      updateDomainStatus(minerID, pending.domain, 'revealed');
+      // Update status and save IP to localStorage
+      const key = `pending_domains_${minerID}`;
+      const stored = JSON.parse(localStorage.getItem(key) || '[]');
+      const updated = stored.map(d => 
+        d.domain === pending.domain 
+          ? { ...d, status: 'revealed', ip: pending.revealIp ? pending.revealIp.trim() : '' } 
+          : d
+      );
+      localStorage.setItem(key, JSON.stringify(updated));
+      
       loadMyDomains();
       fetchDomains();
     } else {
@@ -325,6 +347,68 @@ async function handleFirstUpdate(pending) {
     }
   } catch (error) {
     console.error('[Wallet] First update error:', error);
+    status.value = `Error: ${error.message || 'Unknown error occurred'}`;
+  } finally {
+    isProcessing.value = false;
+  }
+}
+
+async function handleUpdate(domain) {
+  if (!isWalletLoaded.value) return;
+  if (!domain.newIp || !domain.newIp.trim()) {
+    status.value = 'Please enter an IP address';
+    return;
+  }
+  
+  isProcessing.value = true;
+  status.value = `Updating IP for ${domain.domain}...`;
+  
+  try {
+    const minerID = localStorage.getItem('minerID');
+    if (!minerID) {
+      throw new Error('Miner ID not found. Please reconnect to the node.');
+    }
+    
+    const transaction = await buildTransaction({
+      type: 'NameUpdate',
+      walletID: minerID,
+      fee: 0,
+      payload: {
+        domain: domain.domain,
+        ip: domain.newIp.trim()
+      },
+      pk: wallet.value.publicKey
+    });
+    
+    const completeTx = await computeTransactionID(transaction);
+    const txHash = await hashTransaction(completeTx);
+    const signature = await generateTransactionSignature(txHash, wallet.value.privateKey);
+    
+    status.value = 'Sending update transaction...';
+    const response = await sendTransaction(completeTx, signature);
+    
+    if (response && response.status === 'success') {
+      lastTxId.value = completeTx.transactionID;
+      status.value = `IP updated for "${domain.domain}"! Wait for it to be mined in a block.`;
+      
+      // Update the stored IP and clear input
+      const key = `pending_domains_${minerID}`;
+      const stored = JSON.parse(localStorage.getItem(key) || '[]');
+      const updated = stored.map(d => 
+        d.domain === domain.domain ? { ...d, ip: domain.newIp.trim() } : d
+      );
+      localStorage.setItem(key, JSON.stringify(updated));
+      
+      // Clear the input field
+      domain.newIp = '';
+      
+      // Refresh domain list
+      loadMyDomains();
+    } else {
+      status.value = `Update failed: ${response?.message || 'Unknown error'}`;
+    }
+  } catch (error) {
+    console.error('[Wallet] Update error:', error);
     status.value = `Error: ${error.message || 'Unknown error occurred'}`;
   } finally {
     isProcessing.value = false;
@@ -591,9 +675,37 @@ h2 {
 }
 
 .domain-owner,
-.domain-block {
+.domain-block,
+.domain-ip {
   display: flex;
   align-items: center;
+}
+
+.domain-update {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+  align-items: center;
+}
+
+.ip-input {
+  flex: 1;
+  padding: 10px 14px;
+  border: 2px solid #e0e0e0;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: all 0.3s;
+}
+
+.ip-input:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.ip-input:disabled {
+  background: #f5f5f5;
+  cursor: not-allowed;
 }
 
 .no-domains {
@@ -669,7 +781,7 @@ h2 {
 }
 
 .domain-item.pending,
-.domain-item.owned {
+.domain-item.revealed {
   background: #f9f9f9;
   padding: 20px;
   border-radius: 8px;
@@ -680,6 +792,11 @@ h2 {
 .domain-item.pending {
   border-left-color: #ff9800;
   background: #fff8f0;
+}
+
+.domain-item.revealed {
+  border-left-color: #4caf50;
+  background: #f1f8f4;
 }
 
 .domain-item.owned {
@@ -702,12 +819,12 @@ h2 {
   text-transform: uppercase;
 }
 
-.domain-badge {
+.domain-badge.pending {
   background: #ffe0b2;
   color: #f57c00;
 }
 
-.domain-badge.owned {
+.domain-badge.revealed {
   background: #c8e6c9;
   color: #2e7d32;
 }
