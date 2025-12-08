@@ -39,6 +39,9 @@ test_unit_wallet_manager:
 test_unit_namecoin_resolver:
 	go test -timeout 2m -v -race -run 'TestNamecoinDNS' ./peer/tests/unit
 
+test_unit_namecoin_expiry:
+	go test -timeout 2m -v -race -run 'TestNamecoinExpiry' ./peer/tests/unit
+
 test_int_hw0:
 	go test -timeout 5m -v -race -run Test_HW0 ./peer/tests/integration
 
@@ -56,6 +59,9 @@ test_int_namecoin_dns:
 
 test_int_node_dns:
 	go test -timeout 5m -v -race -run NodeDNS ./peer/tests/integration
+
+test_int_namecoin_expiry:
+	go test -timeout 5m -v -race -run TestNamecoinExpiryResolver ./peer/tests/integration
 
 # JSONIFY is set to "-json" in CI to format for GitHub, empty for displaying locally
 # || true allows to ignore error code and allow for smoother output logging

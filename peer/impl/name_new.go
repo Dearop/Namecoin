@@ -9,6 +9,7 @@ import (
 
 type NameNew struct {
 	Commitment string `json:"commitment"` // H(salt + domain)
+	TTL        uint64 `json:"ttl,omitempty"`
 }
 
 // Name implements NamecoinCommand
@@ -27,6 +28,8 @@ func (n NameNew) Validate(_ *NamecoinState, _ *SignedTransaction) error {
 func (n NameNew) ProcessState(st *NamecoinState, tx *types.Tx) error {
 	// we don't reveal the name on the initial domain creation, look at the project description
 	st.SetCommitment(tx.From, n.Commitment)
+	// Store TTL preference keyed by commitment; applied during firstupdate
+	st.SetCommitmentTTL(n.Commitment, n.TTL)
 
 	return nil
 }
