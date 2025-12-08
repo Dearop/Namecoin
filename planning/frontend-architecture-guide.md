@@ -6,40 +6,53 @@
 
 ---
 
-## 🔄 Recent Updates (Nov 25, 2025 - Latest)
+## 🔄 Recent Updates (Dec 8, 2025 - Latest)
 
-### Implementation Status: **PRODUCTION READY** ✅
+### Implementation Status: **PRODUCTION READY WITH TTL SUPPORT** ✅
+
+#### TTL (Time-To-Live) Feature Implementation
+- ✅ **TTL Input Fields**: Added to NameNew, NameFirstUpdate, and NameUpdate forms
+- ✅ **Default TTL Handling**: TTL=0 automatically uses backend's default (36,000 blocks)
+- ✅ **TTL Validation**: Frontend validates numeric inputs with min=0
+- ✅ **Backend Logging**: Added comprehensive logging for TTL calculations and domain expiry
+- ✅ **Expiry Tracking**: Backend maintains `expires` map (blockHeight → domains)
+- ✅ **All Tests Passing**: 236/236 tests (92.33% coverage)
 
 #### Major Architecture Overhaul - Router-Based System
 - ✅ **Vue Router Integration**: Added connection-based flow (Home → Wallet)
 - ✅ **Connection Management**: Users enter backend proxy address before accessing wallet
 - ✅ **Dynamic API Configuration**: All API calls use user-specified proxy address
-- ✅ **Comprehensive Testing**: 146/146 tests passing (93.82% coverage)
+- ✅ **Comprehensive Testing**: 236/236 tests passing (92.33% coverage)
 - ✅ **Documentation**: Added ARCHITECTURE.md with full system design
 - ✅ **CI/CD**: GitHub Actions workflow for automated testing
 
-### Current Architecture (Router-Based)
+### Current Architecture (Router-Based with TTL)
 ```
 Home View (/) 
   ↓ User enters proxy address (e.g., 127.0.0.1:8080)
   ↓ Stored in localStorage
 Wallet View (/wallet)
-  ↓ All functionality available
+  ↓ Domain Management with TTL
+  ↓   - NameNew: commitment + optional TTL preference
+  ↓   - NameFirstUpdate: reveal + IP + TTL (uses commitment TTL or default)
+  ↓   - NameUpdate: update IP + reset TTL expiration
   ↓ API calls use stored proxy address
 Backend HTTP Proxy
-  ↓
-Peer Network
+  ↓ Transaction processing with TTL validation
+  ↓ Expiry tracking: expires[blockHeight][]domains
+Peer Network (Paxos + Blockchain)
 ```
 
 ### Active Implementation
 - **Router**: Vue Router 4 with route guards
-- **Views**: Home.vue (connection), Wallet.vue (main app)
+- **Views**: Home.vue (connection), Wallet.vue (main app with TTL inputs)
 - **Services**: wallet.service.js, crypto.service.js, transaction.service.js, api.service.js
 - **Composables**: useWallet.js, useTransaction.js
-- **Utils**: hash.js, storage.js, validation.js
-- **Tests**: 146 tests across utils, services, and composables
+- **Utils**: hash.js, storage.js, validation.js, domainStorage.js
+- **Tests**: 236 tests across utils, services, composables, components, views, and router
 - **Crypto Library**: TweetNaCl 1.0.3
 - **Framework**: Vue 3.3.4 + Vue Router 4
+- **TTL Features**: Input fields with validation, default handling (0 = 36,000 blocks), backend logging
 
 ### Architecture Benefits
 1. **Backend Alignment**: Mirrors backend's CLI → HTTP Proxy → Peer pattern
