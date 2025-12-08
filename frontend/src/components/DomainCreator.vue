@@ -105,7 +105,7 @@ async function handleSubmit() {
   
   try {
     const tx = await createTransaction({
-      type: 'name_new',
+      type: 'first_update',
       walletID: props.walletId,
       fee: fee.value,
       payload: {

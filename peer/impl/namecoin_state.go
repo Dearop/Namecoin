@@ -15,7 +15,7 @@ type NamecoinState struct {
 	Domains map[string]types.NameRecord
 
 	// Commitment -> hashed Domain and Salt
-	Commitments map[string]string
+	Commitments map[string]string //TODO: what if the same address has multiple commitments?
 
 	// Simple coin balances per address
 	UTXOMap map[string]map[string]types.UTXO

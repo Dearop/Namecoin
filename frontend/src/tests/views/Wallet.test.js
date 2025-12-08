@@ -45,7 +45,7 @@ vi.mock('../../services/transaction.service.js', () => ({
 
 vi.mock('../../services/api.service.js', () => ({
   sendTransaction: vi.fn(() => Promise.resolve({ success: true })),
-  getBlockchainState: vi.fn(() => Promise.resolve({ blocks: [] })),
+
   getMinerID: vi.fn(() => Promise.resolve('test-miner-id'))
 }));
 

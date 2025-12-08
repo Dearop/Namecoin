@@ -24,8 +24,8 @@ func (n NameFirstUpdate) Validate(st *NamecoinState, tx *SignedTransaction) erro
 	storedCommit := st.GetCommitment(tx.From)
 
 	//todo: Update, to avoid collisions.
-	if HashString(n.Domain+n.Salt) != storedCommit {
-		return fmt.Errorf("commitment mismatch for domain %s", n.Domain)
+	if HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", n.Domain, n.Salt)) != storedCommit {
+		return fmt.Errorf("commitment mismatch for domain %s with the following values %s : %s", n.Domain, HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", n.Domain, n.Salt)), storedCommit)
 	}
 
 	return nil

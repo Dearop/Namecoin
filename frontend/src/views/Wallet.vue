@@ -12,7 +12,8 @@
 
     <div class="wallet-container">
       <div class="transaction-section" v-if="isWalletLoaded">
-        <h2>Create Domain Transaction</h2>
+        <h2>Register New Domain (Step 1: Commitment)</h2>
+        <p class="section-description">Create a commitment for a new domain. This hides your domain choice from others.</p>
         
         <form @submit.prevent="handleSubmit" class="transaction-form">
           <div class="form-group">
@@ -32,7 +33,7 @@
             class="submit-btn"
             :disabled="isProcessing || !domainName"
           >
-            {{ isProcessing ? 'Processing...' : 'Create Transaction' }}
+            {{ isProcessing ? 'Processing...' : 'Create Commitment' }}
           </button>
         </form>
         
@@ -42,6 +43,59 @@
         
         <div v-if="lastTxId" class="tx-info">
           <strong>Transaction ID:</strong> {{ lastTxId }}
+        </div>
+      </div>
+
+      <div class="my-domains-section" v-if="isWalletLoaded">
+        <h2>My Domains</h2>
+        
+        <!-- Pending Commitments -->
+        <div v-if="pendingDomains.length > 0" class="subsection">
+          <div class="subsection-header">
+            <h3>Pending Commitments</h3>
+            <button @click="clearPendingDomains" class="clear-btn" title="Clear all pending domains">
+              Clear All
+            </button>
+          </div>
+          <p class="section-description">⚠️ Wait for your commitment to be mined in a block before revealing. Revealing too early will fail with "commitment mismatch".</p>
+          <div class="domains-list">
+            <div v-for="pending in pendingDomains" :key="pending.domain" class="domain-item pending">
+              <div class="domain-header">
+                <div class="domain-name">{{ pending.domain }}</div>
+                <span class="domain-badge">Pending</span>
+              </div>
+              <div class="domain-actions">
+                <button 
+                  @click="handleFirstUpdate(pending)" 
+                  class="action-btn primary"
+                  :disabled="isProcessing"
+                >
+                  Reveal Domain
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Owned Domains -->
+        <div v-if="ownedDomains.length > 0" class="subsection">
+          <h3>Published Domains</h3>
+          <p class="section-description">Your successfully registered domains</p>
+          <div class="domains-list">
+            <div v-for="owned in ownedDomains" :key="owned.name" class="domain-item owned">
+              <div class="domain-header">
+                <div class="domain-name">{{ owned.name }}</div>
+                <span class="domain-badge owned">Active</span>
+              </div>
+              <div class="domain-info">
+                <span class="domain-block">Block: {{ owned.blockHeight }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="pendingDomains.length === 0 && ownedDomains.length === 0" class="no-domains">
+          You don't have any domains yet. Register one above!
         </div>
       </div>
 
@@ -74,8 +128,9 @@ import { useWallet } from '../composables/useWallet.js';
 import { useTransaction } from '../composables/useTransaction.js';
 import { hashDomainWithSalt, generateTransactionSignature, hashTransaction } from '../services/crypto.service.js';
 import { buildTransaction, computeTransactionID } from '../services/transaction.service.js';
-import { sendTransaction, getBlockchainState, getMinerID } from '../services/api.service.js';
+import { sendTransaction, getMinerID } from '../services/api.service.js';
 import { generateSalt } from '../utils/hash.js';
+import { savePendingDomain, getPendingDomains, updateDomainStatus } from '../utils/domainStorage.js';
 
 const router = useRouter();
 const isConnected = ref(false);
@@ -88,6 +143,8 @@ const status = ref('');
 const lastTxId = ref('');
 const domains = ref([]);
 const domainsLoaded = ref(false);
+const pendingDomains = ref([]);
+const ownedDomains = ref([]);
 
 const statusClass = computed(() => {
   if (status.value.includes('success') || status.value.includes('Success')) {
@@ -99,6 +156,33 @@ const statusClass = computed(() => {
 });
 
 const statusMessage = computed(() => status.value);
+
+function loadMyDomains() {
+  const minerID = localStorage.getItem('minerID');
+  if (!minerID) return;
+  
+  // Load pending domains from localStorage
+  const pending = getPendingDomains(minerID);
+  pendingDomains.value = pending.filter(d => d.status === 'pending');
+  
+  // Load owned domains from blockchain
+  if (domains.value.length > 0) {
+    ownedDomains.value = domains.value.filter(d => d.fullOwner === minerID);
+  }
+}
+
+function clearPendingDomains() {
+  if (!confirm('Are you sure you want to clear all pending domains? This cannot be undone.')) {
+    return;
+  }
+  
+  const minerID = localStorage.getItem('minerID');
+  if (minerID) {
+    localStorage.removeItem(`pending_domains_${minerID}`);
+    pendingDomains.value = [];
+    status.value = 'Pending domains cleared.';
+  }
+}
 
 onMounted(async () => {
   // Auto-connect to backend and fetch miner ID
@@ -117,6 +201,10 @@ onMounted(async () => {
   
   // Load wallet after connection attempt
   await loadWallet();
+  
+  // Load user's domains
+  await fetchDomains();
+  loadMyDomains();
 });
 
 async function handleCreateWallet() {
@@ -132,11 +220,13 @@ async function handleSubmit() {
   if (!domainName.value || !isWalletLoaded.value) return;
   
   isProcessing.value = true;
-  status.value = 'Creating transaction...';
+  status.value = 'Creating commitment...';
   
   try {
     const salt = generateSalt();
+    console.log('[DEBUG] Creating commitment - Domain:', domainName.value, 'Salt:', salt);
     const hashedDomain = await hashDomainWithSalt(domainName.value, salt);
+    console.log('[DEBUG] Hashed commitment:', hashedDomain);
     
     const minerID = localStorage.getItem('minerID');
     if (!minerID) {
@@ -153,6 +243,9 @@ async function handleSubmit() {
       pk: wallet.value.publicKey
     });
     
+    console.log('[DEBUG] Transaction payload:', transaction.payload);
+    console.log('[DEBUG] Transaction payload type:', typeof transaction.payload);
+    
     // Compute transaction ID before signing
     const completeTx = await computeTransactionID(transaction);
     
@@ -164,8 +257,15 @@ async function handleSubmit() {
     
     if (response && response.status === 'success') {
       lastTxId.value = completeTx.transactionID;
-      status.value = `Transaction successful! ${response.message || 'Transaction received'}`;
+      
+      // Save pending domain with salt for later reveal
+      savePendingDomain(minerID, domainName.value, salt, hashedDomain);
+      
+      status.value = `Commitment created! Wait for it to be mined in a block before revealing. Check "My Domains" section below.`;
       domainName.value = '';
+      
+      // Refresh pending domains list
+      loadMyDomains();
     } else {
       status.value = `Transaction failed: ${response?.message || 'Unknown error'}`;
     }
@@ -177,41 +277,69 @@ async function handleSubmit() {
   }
 }
 
-async function fetchDomains() {
+async function handleFirstUpdate(pending) {
+  if (!isWalletLoaded.value) return;
+  
+  isProcessing.value = true;
+  status.value = 'Revealing domain...';
+  
   try {
-    const blockchainData = await getBlockchainState();
-    domainsLoaded.value = true;
-    
-    // Extract domain registrations from blockchain
-    const domainMap = new Map();
-    
-    if (blockchainData && blockchainData.blocks) {
-      for (const block of blockchainData.blocks) {
-        if (block.transactions) {
-          for (const tx of block.transactions) {
-            // Look for name_firstupdate transactions (domain registrations)
-            if (tx.Type === 'name_firstupdate' && tx.Payload) {
-              try {
-                const payload = JSON.parse(tx.Payload);
-                if (payload.domain) {
-                  domainMap.set(payload.domain, {
-                    name: payload.domain,
-                    owner: tx.From.substring(0, 16) + '...',
-                    blockHeight: block.height || 0
-                  });
-                }
-              } catch (e) {
-                // Skip invalid payload
-              }
-            }
-          }
-        }
-      }
+    const minerID = localStorage.getItem('minerID');
+    if (!minerID) {
+      throw new Error('Miner ID not found. Please reconnect to the node.');
     }
     
-    domains.value = Array.from(domainMap.values()).sort((a, b) => 
-      b.blockHeight - a.blockHeight
-    );
+    console.log('[DEBUG] First update - Domain:', pending.domain, 'Salt:', pending.salt);
+    
+    const transaction = await buildTransaction({
+      type: 'NameFirstUpdate',
+      walletID: minerID,
+      fee: 1,
+      payload: {
+        domain: pending.domain,
+        salt: pending.salt,
+        ip: ''
+      },
+      pk: wallet.value.publicKey
+    });
+    
+    console.log('[DEBUG] First update payload:', transaction.payload);
+    
+    const completeTx = await computeTransactionID(transaction);
+    const txHash = await hashTransaction(completeTx);
+    const signature = await generateTransactionSignature(txHash, wallet.value.privateKey);
+    
+    status.value = 'Sending reveal transaction...';
+    const response = await sendTransaction(completeTx, signature);
+    
+    if (response && response.status === 'success') {
+      lastTxId.value = completeTx.transactionID;
+      status.value = `Domain "${pending.domain}" revealed successfully!`;
+      
+      // Update status and refresh lists
+      updateDomainStatus(minerID, pending.domain, 'revealed');
+      loadMyDomains();
+      fetchDomains();
+    } else {
+      status.value = `Reveal failed: ${response?.message || 'Unknown error'}`;
+    }
+  } catch (error) {
+    console.error('[Wallet] First update error:', error);
+    status.value = `Error: ${error.message || 'Unknown error occurred'}`;
+  } finally {
+    isProcessing.value = false;
+  }
+}
+
+async function fetchDomains() {
+  try {
+    // Since backend doesn't provide blockchain state API,
+    // we'll just show domains that the user has registered
+    domainsLoaded.value = true;
+    domains.value = [];
+    
+    // Update owned domains list
+    loadMyDomains();
   } catch (error) {
     status.value = `Error fetching domains: ${error.message}`;
     domainsLoaded.value = true;
@@ -477,4 +605,143 @@ h2 {
   color: #999;
   font-style: italic;
 }
+
+/* My Domains Section */
+.my-domains-section {
+  background: white;
+  border-radius: 10px;
+  padding: 30px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  margin-top: 30px;
+}
+
+.my-domains-section h2 {
+  margin-top: 0;
+  margin-bottom: 20px;
+  color: #333;
+  font-size: 22px;
+}
+
+.subsection {
+  margin-bottom: 30px;
+}
+
+.subsection:last-child {
+  margin-bottom: 0;
+}
+
+.subsection-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.subsection h3 {
+  margin: 0;
+  color: #667eea;
+  font-size: 18px;
+}
+
+.clear-btn {
+  padding: 6px 14px;
+  background: #ff5252;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.clear-btn:hover {
+  background: #e04848;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(255, 82, 82, 0.3);
+}
+
+.section-description {
+  margin: 0 0 15px 0;
+  color: #666;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.domain-item.pending,
+.domain-item.owned {
+  background: #f9f9f9;
+  padding: 20px;
+  border-radius: 8px;
+  margin-bottom: 15px;
+  border-left: 4px solid #667eea;
+}
+
+.domain-item.pending {
+  border-left-color: #ff9800;
+  background: #fff8f0;
+}
+
+.domain-item.owned {
+  border-left-color: #4caf50;
+  background: #f1f8f4;
+}
+
+.domain-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.domain-badge {
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.domain-badge {
+  background: #ffe0b2;
+  color: #f57c00;
+}
+
+.domain-badge.owned {
+  background: #c8e6c9;
+  color: #2e7d32;
+}
+
+.domain-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.action-btn {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.action-btn.primary {
+  background: #667eea;
+  color: white;
+}
+
+.action-btn.primary:hover:not(:disabled) {
+  background: #5568d3;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(102, 126, 234, 0.3);
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 </style>

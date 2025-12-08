@@ -3,7 +3,6 @@ import canonicalize from 'canonicalize';
 import {
   sendTransaction,
   getTransactionStatus,
-  getBlockchainState,
 } from '../../services/api.service.js';
 
 // Mock fetch globally
@@ -183,47 +182,6 @@ describe('api.service.js', () => {
       await getTransactionStatus('txid789');
 
       expect(fetch).toHaveBeenCalledWith('http://localhost:8080/namecoin/transaction/txid789');
-    });
-  });
-
-  describe('getBlockchainState', () => {
-    it('should get blockchain state successfully', async () => {
-      const mockResponse = { blocks: [], height: 0 };
-      fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      });
-
-      const result = await getBlockchainState();
-
-      expect(result).toEqual(mockResponse);
-      expect(fetch).toHaveBeenCalledWith('http://localhost:8080/blockchain');
-    });
-
-    it('should throw error on non-ok response', async () => {
-      fetch.mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-      });
-
-      await expect(getBlockchainState()).rejects.toThrow('HTTP error! status: 500');
-    });
-
-    it('should handle network errors', async () => {
-      fetch.mockRejectedValueOnce(new Error('Network error'));
-
-      await expect(getBlockchainState()).rejects.toThrow('Network error');
-    });
-
-    it('should use correct endpoint', async () => {
-      fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ blocks: [] }),
-      });
-
-      await getBlockchainState();
-
-      expect(fetch).toHaveBeenCalledWith('http://localhost:8080/blockchain');
     });
   });
 });
