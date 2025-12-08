@@ -12,6 +12,8 @@ import (
 // DomainTTLBlocks is the default number of blocks a domain will remain registered for.
 // DefaultDomainTTLBlocks defines the default number of blocks a domain stays valid.
 var DefaultDomainTTLBlocks uint64 = 36_000
+// MaxDomainTTLBlocks caps the TTL to ~1 year (assuming 6s blocks -> 5,256,000 blocks).
+var MaxDomainTTLBlocks uint64 = 5_256_000
 
 // NamecoinState is the in-memory state rebuilt from the Namecoin chain
 type NamecoinState struct {
@@ -53,7 +55,8 @@ func NewState() *NamecoinState {
 		commitmentTTLs: make(map[string]uint64),
 		UTXOMap:        make(map[string]map[string]types.UTXO),
 		txMap:          make(map[string]struct{}),
-		domainTTL:      DefaultDomainTTLBlocks,
+		// Clamp default TTL to the configured max to avoid unbounded domain lifetimes.
+		domainTTL: minTTL(DefaultDomainTTLBlocks),
 	}
 }
 
@@ -211,9 +214,9 @@ func (st *NamecoinState) addExpiryLocked(domain string, height uint64) {
 
 func (st *NamecoinState) effectiveTTL(ttl uint64) uint64 {
 	if ttl == 0 {
-		return st.domainTTL
+		return minTTL(st.domainTTL)
 	}
-	return ttl
+	return minTTL(ttl)
 }
 
 func (st *NamecoinState) removeFromExpiryLocked(domain string, height uint64) {
@@ -349,4 +352,14 @@ func (st *NamecoinState) ValidateCommand(tx *SignedTransaction) error {
 		return err
 	}
 	return cmd.Validate(st, tx)
+}
+
+func minTTL(ttl uint64) uint64 {
+	if ttl == 0 {
+		return 0
+	}
+	if ttl > MaxDomainTTLBlocks {
+		return MaxDomainTTLBlocks
+	}
+	return ttl
 }
