@@ -245,8 +245,18 @@ onMounted(async () => {
     status.value = 'Failed to connect to backend. Please ensure the backend is running.';
   }
   
-  // Load wallet after connection attempt
-  await loadWallet();
+  // Load wallet after connection attempt - auto-create if doesn't exist
+  const walletLoaded = await loadWallet();
+  if (!walletLoaded) {
+    console.log('[Wallet] No wallet found, creating new wallet...');
+    try {
+      await createWallet();
+      console.log('[Wallet] New wallet created successfully');
+    } catch (error) {
+      console.error('[Wallet] Failed to create wallet:', error);
+      status.value = 'Failed to create wallet. Please refresh the page.';
+    }
+  }
   
   // Load user's domains
   await fetchDomains();

@@ -137,6 +137,8 @@ describe('Wallet.vue', () => {
     });
 
     it('should handle wallet creation error', async () => {
+      // Mock loadWallet to return true so auto-creation doesn't happen in onMounted
+      mockLoadWallet.mockResolvedValueOnce(true);
       mockCreateWallet.mockRejectedValueOnce(new Error('Creation failed'));
       wrapper = mount(Wallet);
       await flushPromises();
