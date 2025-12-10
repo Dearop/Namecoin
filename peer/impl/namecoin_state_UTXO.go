@@ -19,12 +19,20 @@ func (st *NamecoinState) BurnUTXO(from string, txIDs []string) error {
 		return xerrors.Errorf("burn txID %s not found", from)
 	}
 
+	seen := make(map[string]struct{}, len(txIDs))
 	for _, txID := range txIDs {
+		if _, dup := seen[txID]; dup {
+			return xerrors.Errorf("duplicate utxo input %s", txID)
+		}
+		seen[txID] = struct{}{}
+
 		// burn UTXOs corresponding to TxID
 		if _, ok := userUTXOs[txID]; !ok {
-			return xerrors.Errorf("burn txID %s not found", from)
+			return xerrors.Errorf("burn txID %s not found", txID)
 		}
+	}
 
+	for txID := range seen {
 		delete(userUTXOs, txID)
 	}
 
@@ -57,7 +65,10 @@ func (st *NamecoinState) GetUTXOsToBurn(txID, from string, amount uint64) ([]str
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 
-	userUTXOs := st.UTXOMap[from]
+	userUTXOs, ok := st.UTXOMap[from]
+	if !ok || len(userUTXOs) == 0 {
+		return make([]string, 0), make([]types.UTXO, 0), xerrors.New("insufficient funds")
+	}
 	UTXOsToBurn := make([]string, 0)
 
 	total := int(amount)

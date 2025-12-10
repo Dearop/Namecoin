@@ -8,7 +8,7 @@ import (
 	"fmt"
 )
 
-func (t *SignedTransaction) SerializeTransaction() []byte {
+func (t *SignedTransaction) SerializeTransaction() ([]byte, error) {
 	data := map[string]interface{}{
 		"type":    t.Type,
 		"from":    t.From,
@@ -16,8 +16,11 @@ func (t *SignedTransaction) SerializeTransaction() []byte {
 		"payload": t.Payload,
 	}
 
-	b, _ := json.Marshal(data)
-	return b
+	b, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
 }
 
 func Hash(bytes []byte) []byte {

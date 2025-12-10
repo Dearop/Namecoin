@@ -270,8 +270,6 @@ func (st *NamecoinState) ApplyTx(txID string, tx *types.Tx) error {
 	if os.Getenv("GLOG") != "no" {
 		log.Debug().Msgf("applying tx type: %s with ID: %s", tx.Type, txID)
 	}
-	// Reduce noise in tests: log at debug level for normal tx application.
-	log.Debug().Msgf("applying tx type: %s with ID: %s", tx.Type, txID)
 
 	// BurnUTXOs first making sure the user hasn't burned the same UTXOs already
 	// First transaction in Block is always Reward to ensure that miner gets reward even if user transaction is reverted
@@ -296,6 +294,24 @@ func (st *NamecoinState) ApplyBlock(blk *types.Block) error {
 	if blk == nil {
 		return fmt.Errorf("apply namecoin block: nil block")
 	}
+
+	// Apply on a working copy to avoid corrupting the live state if a tx fails.
+	working := st.Clone()
+	if err := working.applyBlockInPlace(blk); err != nil {
+		return err
+	}
+
+	st.replaceWith(working)
+	return nil
+}
+
+// applyBlockInPlace mutates the state directly without cloning. Callers must
+// ensure they are operating on a disposable copy when they want rollback
+// semantics.
+func (st *NamecoinState) applyBlockInPlace(blk *types.Block) error {
+	if blk == nil {
+		return fmt.Errorf("apply namecoin block: nil block")
+	}
 	st.setHeight(blk.Header.Height)
 	st.pruneExpired(blk.Header.Height)
 	for i := range blk.Transactions {
@@ -306,12 +322,32 @@ func (st *NamecoinState) ApplyBlock(blk *types.Block) error {
 		}
 
 		if err = st.ApplyTx(txID, tx); err != nil {
-			// for robustness, we log and continue
+			// For robustness, log and bubble the error so callers can decide
+			// whether to continue (e.g., during replay) or reject the block.
 			warnf("namecoin: failed to apply tx %s at height %d: %v",
 				txID, blk.Header.Height, err)
+			return err
 		}
 	}
 	return nil
+}
+
+// replaceWith swaps the live state with the provided snapshot.
+func (st *NamecoinState) replaceWith(snapshot *NamecoinState) {
+	if snapshot == nil {
+		return
+	}
+
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.Domains = snapshot.Domains
+	st.expires = snapshot.expires
+	st.Commitments = snapshot.Commitments
+	st.commitmentTTLs = snapshot.commitmentTTLs
+	st.UTXOMap = snapshot.UTXOMap
+	st.txMap = snapshot.txMap
+	st.currentHeight = snapshot.currentHeight
+	st.domainTTL = snapshot.domainTTL
 }
 
 // IsTxApplied returns true if Tx is already in the state

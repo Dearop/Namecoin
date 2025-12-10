@@ -14,7 +14,10 @@ func (t *TransactionService) ValidateTransaction(tx *SignedTransaction) error {
 	}
 
 	// 2. Recompute TxID from unsigned transaction
-	unsignedBytes := tx.SerializeTransaction()
+	unsignedBytes, err := tx.SerializeTransaction()
+	if err != nil {
+		return fmt.Errorf("failed to serialize transaction: %w", err)
+	}
 	computedTxID := HashHex(unsignedBytes)
 
 	if computedTxID != tx.TxID {

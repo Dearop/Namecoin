@@ -331,7 +331,7 @@ func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
 	}
 
 	// try to apply on a state clone to ensure safety
-	if err = clonedState.ApplyBlock(blk); err != nil {
+	if err = clonedState.applyBlockInPlace(blk); err != nil {
 		return err
 	}
 
@@ -344,14 +344,13 @@ func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	err = c.ValidateBlock(c.headHeight, c.headHash, blk, c.powTarget)
-	if err != nil {
+	if err = c.ValidateBlock(c.headHeight, c.headHash, blk, c.powTarget); err != nil {
 		return err
 	}
 
-	if err = c.state.ApplyBlock(blk); err != nil {
-		return err
-	}
+	// Swap in the validated state rather than reapplying to avoid partial writes
+	// if a later error bubbles up.
+	c.state.replaceWith(clonedState)
 
 	// Persist block to block store
 	blockKey := encodeNamecoinBlockKey(blk.Header.Height)
