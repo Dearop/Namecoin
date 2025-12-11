@@ -25,6 +25,14 @@ func (n NameNew) Validate(_ *NamecoinState, _ *SignedTransaction) error {
 	return nil
 }
 
+// ValidateWithInputs enforces that name_new spends at least one UTXO (no free mints).
+func (n NameNew) ValidateWithInputs(_ *NamecoinState, tx *types.Tx) error {
+	if len(tx.Inputs) == 0 {
+		return fmt.Errorf("name_new requires at least one input UTXO")
+	}
+	return nil
+}
+
 func (n NameNew) ProcessState(st *NamecoinState, tx *types.Tx) error {
 	// Store TTL preference keyed by commitment; applied during firstupdate
 	st.SetCommitmentTTL(n.Commitment, n.TTL)

@@ -90,7 +90,10 @@ func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (str
 		return "", "", fmt.Errorf("name_firstupdate requires at least one input")
 	}
 	in := tx.Inputs[0]
-	key := OutpointKey(in.TxID, in.Index)
+	// MVP: commitments are keyed by the name_new transaction's first (and only)
+	// output. Inputs here reference UTXOs being spent, but the commitment was
+	// stored at txid:0 of the original name_new, so we fix the index to 0.
+	key := OutpointKey(in.TxID, 0)
 	commit, ok := st.GetCommitment(key)
 	if !ok {
 		return "", "", fmt.Errorf("no matching name_new commitment")
