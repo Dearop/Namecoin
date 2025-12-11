@@ -50,6 +50,9 @@ func TestTransactionServiceValidateTransactionFirstUpdateCommitmentMismatch(t *t
 		"funds-1": {TxID: "funds-1", To: tx.From, Amount: tx.Amount},
 	}
 
+	// Set up the correct commitment for initial validation to pass
+	state.SetCommitment(tx.From, impl.HashString(payload.Domain+payload.Salt))
+
 	require.NoError(t, service.ValidateTransaction(&tx))
 
 	inputs, outputs, err := service.VerifyBalance(tx.TxID, tx.From, tx.Amount)
@@ -132,7 +135,7 @@ func mustMakeKeyPair(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey) {
 }
 
 func buildSignedTransaction(t *testing.T, from string, privateKey ed25519.PrivateKey,
-	 txType string, amount uint64, payload interface{}, publicKey ed25519.PublicKey) impl.SignedTransaction {
+	txType string, amount uint64, payload interface{}, publicKey ed25519.PublicKey) impl.SignedTransaction {
 	t.Helper()
 
 	payloadBytes, err := json.Marshal(payload)
