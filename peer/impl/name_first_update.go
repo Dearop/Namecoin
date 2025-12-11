@@ -12,6 +12,7 @@ type NameFirstUpdate struct {
 	Domain string `json:"domain"` // The real domain name being registered
 	Salt   string `json:"salt"`   // Must match the original commitment
 	IP     string `json:"ip"`     // IP address the user wants to bind
+	TTL    uint64 `json:"ttl,omitempty"`
 }
 
 // Name implements NamecoinCommand
@@ -28,7 +29,15 @@ func (n NameFirstUpdate) Validate(_ *NamecoinState, _ *SignedTransaction) error 
 }
 
 func (n NameFirstUpdate) ProcessState(st *NamecoinState, tx *types.Tx) error {
-	key, err := n.resolveCommitment(st, tx)
+	// remove expired if present
+	if rec, ok := st.getDomain(n.Domain); ok && st.isExpired(rec, st.CurrentHeight()) {
+		st.mu.Lock()
+		delete(st.Domains, n.Domain)
+		st.removeFromExpiryLocked(n.Domain, rec.ExpiresAt)
+		st.mu.Unlock()
+	}
+
+	commit, key, err := n.resolveCommitment(st, tx)
 	if err != nil {
 		return err
 	}
@@ -44,11 +53,23 @@ func (n NameFirstUpdate) ProcessState(st *NamecoinState, tx *types.Tx) error {
 		IP:        n.IP,
 		Domain:    n.Domain,
 		Salt:      n.Salt,
-		ExpiresAt: 0, // todo: Add expiration
+		ExpiresAt: st.CurrentHeight() + st.effectiveTTL(resolveTTLPreference(n.TTL, commit, st)),
 	})
 	st.DeleteCommitment(key)
 
 	return nil
+}
+
+func resolveTTLPreference(txTTL uint64, commitment string, st *NamecoinState) uint64 {
+	if txTTL != 0 {
+		return txTTL
+	}
+	if commitment != "" {
+		if pref := st.GetCommitmentTTL(commitment); pref != 0 {
+			return pref
+		}
+	}
+	return 0
 }
 
 func (n NameFirstUpdate) ProcessTxState(st *NamecoinState, txID string, tx *types.Tx) error {
@@ -57,22 +78,25 @@ func (n NameFirstUpdate) ProcessTxState(st *NamecoinState, txID string, tx *type
 
 // ValidateWithInputs performs commitment checks requiring full tx inputs.
 func (n NameFirstUpdate) ValidateWithInputs(st *NamecoinState, tx *types.Tx) error {
-	_, err := n.resolveCommitment(st, tx)
+	_, _, err := n.resolveCommitment(st, tx)
+	if rec, ok := st.getDomain(n.Domain); ok && !st.isExpired(rec, st.CurrentHeight()) {
+		return xerrors.New("domain already exists")
+	}
 	return err
 }
 
-func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (string, error) {
+func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (string, string, error) {
 	if len(tx.Inputs) == 0 {
-		return "", fmt.Errorf("name_firstupdate requires at least one input")
+		return "", "", fmt.Errorf("name_firstupdate requires at least one input")
 	}
 	in := tx.Inputs[0]
-	key := outpointKey(in.TxID, in.Index)
+	key := OutpointKey(in.TxID, in.Index)
 	commit, ok := st.GetCommitment(key)
 	if !ok {
-		return "", fmt.Errorf("no matching name_new commitment")
+		return "", "", fmt.Errorf("no matching name_new commitment")
 	}
 	if HashString(n.Domain+n.Salt) != commit {
-		return "", fmt.Errorf("commitment mismatch for domain %s", n.Domain)
+		return "", "", fmt.Errorf("commitment mismatch for domain %s", n.Domain)
 	}
-	return key, nil
+	return commit, key, nil
 }

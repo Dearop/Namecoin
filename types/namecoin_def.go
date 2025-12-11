@@ -65,7 +65,6 @@ type Block struct {
 	Hash []byte
 }
 
-// NameRecord is a minimal name -> value mapping
 type NameRecord struct {
 	Owner  string
 	IP     string

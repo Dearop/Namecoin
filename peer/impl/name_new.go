@@ -9,6 +9,7 @@ import (
 
 type NameNew struct {
 	Commitment string `json:"commitment"` // H(salt + domain)
+	TTL        uint64 `json:"ttl,omitempty"`
 }
 
 // Name implements NamecoinCommand
@@ -25,6 +26,9 @@ func (n NameNew) Validate(_ *NamecoinState, _ *SignedTransaction) error {
 }
 
 func (n NameNew) ProcessState(st *NamecoinState, tx *types.Tx) error {
+	// Store TTL preference keyed by commitment; applied during firstupdate
+	st.SetCommitmentTTL(n.Commitment, n.TTL)
+
 	return nil
 }
 
@@ -33,7 +37,7 @@ func (n NameNew) ProcessTxState(st *NamecoinState, txID string, tx *types.Tx) er
 		return err
 	}
 
-	key := outpointKey(txID, 0)
+	key := OutpointKey(txID, 0)
 	st.SetCommitment(key, n.Commitment)
 
 	return nil

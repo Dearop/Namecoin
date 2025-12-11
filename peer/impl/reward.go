@@ -27,12 +27,18 @@ func (r Reward) ProcessState(_ *NamecoinState, _ *types.Tx) error {
 
 func (r Reward) ProcessTxState(st *NamecoinState, txID string, tx *types.Tx) error {
 	// On Reward - always 1 UTXO
-	// todo: when block mined, output is not actually created, Should it be or we can create it here based on the data?
+	outputs := tx.Outputs
+	if len(outputs) == 0 {
+		outputs = []types.TxOutput{{
+			To:     tx.From,
+			Amount: tx.Amount,
+		}}
+	}
 
 	utxo := types.UTXO{
 		TxID:   txID,
-		To:     tx.Outputs[0].To,
-		Amount: tx.Outputs[0].Amount,
+		To:     outputs[0].To,
+		Amount: outputs[0].Amount,
 	}
 
 	// save UTXO that rewards miner
