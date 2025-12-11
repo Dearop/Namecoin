@@ -236,16 +236,22 @@ func (n *node) HandleNamecoinCommand(buf []byte) error {
 		return err
 	}
 
+	tx := types.Tx{
+		From:    transaction.From,
+		Type:    transaction.Type,
+		Inputs:  inputs,
+		Outputs: outputs,
+		Amount:  transaction.Amount,
+		Payload: transaction.Payload,
+	}
+
+	if err := n.transactionService.ValidateTxCommand(&tx); err != nil {
+		return err
+	}
+
 	msg := types.NamecoinTransactionMessage{
 		TxID: transaction.TxID,
-		Tx: types.Tx{
-			From:    transaction.From,
-			Type:    transaction.Type,
-			Inputs:  inputs,
-			Outputs: outputs,
-			Amount:  transaction.Amount,
-			Payload: transaction.Payload,
-		},
+		Tx:   tx,
 	}
 
 	marshaled, err := n.conf.MessageRegistry.MarshalMessage(msg)

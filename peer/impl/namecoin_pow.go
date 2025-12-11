@@ -33,14 +33,14 @@ func CheckWork(header []byte, target *big.Int) bool {
 
 // MineNonce runs a simple PoW search by iterating nonces until the header hash
 // is below the effective target or the stop channel is signaled. It returns the
-// winning nonce, the corresponding hash, and a boolean indicating success.
-func MineNonce(buildHeader PoWHeaderBuilder, cfg peer.PoWConfig, stop <-chan struct{}) (uint64, bool) {
+// winning nonce, the timestamp used for that header, and a boolean indicating success.
+func MineNonce(buildHeader PoWHeaderBuilder, cfg peer.PoWConfig, stop <-chan struct{}) (uint64, int64, bool) {
 	if buildHeader == nil {
-		return 0, false
+		return 0, 0, false
 	}
 	target := effectiveTarget(cfg.Target)
 	if target.Sign() == 0 {
-		return 0, false
+		return 0, 0, false
 	}
 	maxNonce := cfg.MaxNonce
 	if maxNonce == 0 {
@@ -50,23 +50,23 @@ func MineNonce(buildHeader PoWHeaderBuilder, cfg peer.PoWConfig, stop <-chan str
 	if now == nil {
 		now = time.Now
 	}
-	var hash [32]byte
 	for nonce := uint64(0); nonce < maxNonce; nonce++ {
 		// Allow the caller to abort quickly when the head changes.
 		if stop != nil {
 			select {
 			case <-stop:
-				return 0, false
+				return 0, 0, false
 			default:
 			}
 		}
-		header := buildHeader(nonce, now().Unix())
-		hash = sha256.Sum256(header)
+		ts := now().Unix()
+		header := buildHeader(nonce, ts)
+		hash := sha256.Sum256(header)
 		if new(big.Int).SetBytes(hash[:]).Cmp(target) <= 0 {
-			return nonce, true
+			return nonce, ts, true
 		}
 	}
-	return 0, false
+	return 0, 0, false
 }
 
 func effectiveTarget(normal *big.Int) *big.Int {

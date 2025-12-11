@@ -49,9 +49,12 @@ func ProcessTxStateGeneric(st *NamecoinState, txID string, tx *types.Tx) error {
 		txIDs[i] = value.TxID
 	}
 
-	err := st.BurnUTXO(tx.From, txIDs)
-	if err != nil {
-		return err
+	var err error
+	if len(txIDs) > 0 {
+		err = st.BurnUTXO(tx.From, txIDs)
+		if err != nil {
+			return err
+		}
 	}
 
 	// 1 or 0 UTXOs

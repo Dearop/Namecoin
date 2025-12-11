@@ -27,13 +27,12 @@ func (t *TransactionService) ValidateTransaction(tx *SignedTransaction) error {
 		return err
 	}
 
-	// 4. Validate payload based on transaction type
-	err = t.state.ValidateCommand(tx)
-	if err != nil {
-		return err
-	}
+	// 4. Validate payload based on transaction type (signed transaction view)
+	return t.state.ValidateCommand(tx)
+}
 
-	return nil
+func (t *TransactionService) ValidateTxCommand(tx *types.Tx) error {
+	return t.state.ValidateCommandWithInputs(tx)
 }
 
 func (t *TransactionService) VerifyBalance(

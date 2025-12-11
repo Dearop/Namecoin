@@ -22,13 +22,14 @@ func (n NameFirstUpdate) Name() string {
 }
 
 func (n NameFirstUpdate) Validate(st *NamecoinState, tx *SignedTransaction) error {
+	if n.Domain == "" || n.Salt == "" || n.IP == "" {
+		return fmt.Errorf("invalid name_firstupdate payload")
+	}
 	// Must match earlier commitment
-	storedCommit := st.GetCommitment(tx.From)
-
-	//todo: Update, to avoid collisions.
-	if HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", n.Domain, n.Salt)) != storedCommit {
-		return fmt.Errorf("commitment mismatch for domain %s with the following values %s : %s",
-		 n.Domain, HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", n.Domain, n.Salt)), storedCommit)
+	storedCommit, ok := st.GetCommitment(tx.From)
+	//TODO: Update, to avoid collisions.
+	if !ok || HashString(n.Domain+n.Salt) != storedCommit {
+		return fmt.Errorf("commitment mismatch for domain %s", n.Domain)
 	}
 
 	if rec, ok := st.getDomain(n.Domain); ok && !st.isExpired(rec, st.CurrentHeight()) {
@@ -44,12 +45,19 @@ func (n NameFirstUpdate) ProcessState(st *NamecoinState, tx *types.Tx) error {
 		delete(st.Domains, n.Domain)
 		st.removeFromExpiryLocked(n.Domain, rec.ExpiresAt)
 		st.mu.Unlock()
-	} else if ok {
-		// TODO: Bubble error up to caller to send message to frontend.
-		return xerrors.New("domain already exists")
 	}
 
-	effectiveTTLValue := st.effectiveTTL(resolveTTLPreference(n.TTL, st.GetCommitment(tx.From), st))
+	commit, key, err := n.resolveCommitment(st, tx)
+	if err != nil {
+		return err
+	}
+
+	// Reject if already claimed/active.
+	if st.IsDomainExists(n.Domain) || st.IsDomainClaimed(n.Domain) {
+		return xerrors.New("Domain already exists")
+	}
+
+	effectiveTTLValue := st.effectiveTTL(resolveTTLPreference(n.TTL, commit, st))
 	newExpiresAt := st.CurrentHeight() + effectiveTTLValue
 	
 	log.Info().Str("domain", n.Domain).Uint64("ttl_blocks", effectiveTTLValue).Uint64("new_expires_at",
@@ -62,6 +70,7 @@ func (n NameFirstUpdate) ProcessState(st *NamecoinState, tx *types.Tx) error {
 		Salt:      n.Salt,
 		ExpiresAt: newExpiresAt,
 	})
+	st.DeleteCommitment(key)
 
 	return nil
 }
@@ -80,4 +89,32 @@ func resolveTTLPreference(txTTL uint64, commitment string, st *NamecoinState) ui
 
 func (n NameFirstUpdate) ProcessTxState(st *NamecoinState, txID string, tx *types.Tx) error {
 	return ProcessTxStateGeneric(st, txID, tx)
+}
+
+// ValidateWithInputs performs commitment checks requiring full tx inputs.
+func (n NameFirstUpdate) ValidateWithInputs(st *NamecoinState, tx *types.Tx) error {
+	_, _, err := n.resolveCommitment(st, tx)
+	if rec, ok := st.getDomain(n.Domain); ok && !st.isExpired(rec, st.CurrentHeight()) {
+		return xerrors.New("domain already exists")
+	}
+	return err
+}
+
+func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (string, string, error) {
+	if len(tx.Inputs) == 0 {
+		return "", "", fmt.Errorf("name_firstupdate requires at least one input")
+	}
+	in := tx.Inputs[0]
+	// MVP: commitments are keyed by the name_new transaction's first (and only)
+	// output. Inputs here reference UTXOs being spent, but the commitment was
+	// stored at txid:0 of the original name_new, so we fix the index to 0.
+	key := OutpointKey(in.TxID, 0)
+	commit, ok := st.GetCommitment(key)
+	if !ok {
+		return "", "", fmt.Errorf("no matching name_new commitment")
+	}
+	if HashString(n.Domain+n.Salt) != commit {
+		return "", "", fmt.Errorf("commitment mismatch for domain %s", n.Domain)
+	}
+	return commit, key, nil
 }

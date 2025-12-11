@@ -8,9 +8,10 @@ import (
 
 	"go.dedis.ch/cs438/peer"
 	"go.dedis.ch/cs438/peer/impl"
+	"go.dedis.ch/cs438/types"
 )
 
-func TestCheckWorkBasic(t *testing.T) {
+func TestCheckWork_Basic(t *testing.T) {
 	header := []byte("hello")
 	hash := sha256Sum(header)
 
@@ -31,7 +32,28 @@ func TestCheckWorkBasic(t *testing.T) {
 	}
 }
 
-func TestMineNonceUsesEasyTarget(t *testing.T) {
+func TestCheckWork_UsesDefaultTargetWhenNil(t *testing.T) {
+	header := []byte("hello")
+
+	// When target is nil, CheckWork should behave like using the default target.
+	defaultTarget := new(big.Int).Lsh(big.NewInt(1), 240)
+	gotNil := impl.CheckWork(header, nil)
+	gotDefault := impl.CheckWork(header, defaultTarget)
+	if gotNil != gotDefault {
+		t.Fatalf("expected nil target to use default target semantics")
+	}
+}
+
+func TestCheckWork_ZeroTargetAlwaysFails(t *testing.T) {
+	header := []byte("hello")
+
+	// When target is explicitly zero, CheckWork must always fail.
+	if impl.CheckWork(header, big.NewInt(0)) {
+		t.Fatalf("expected zero target to always fail")
+	}
+}
+
+func TestMineNonce_UsesEasyTarget(t *testing.T) {
 	headerFor := func(n uint64, ts int64) []byte {
 		return append(uint64ToBytes(n), uint64ToBytes(uint64(ts))...)
 	}
@@ -62,7 +84,7 @@ func TestMineNonceUsesEasyTarget(t *testing.T) {
 	}
 }
 
-func TestMineNonceHonorsMaxNonce(t *testing.T) {
+func TestMineNonce_HonorsMaxNonce(t *testing.T) {
 	headerFor := func(n uint64, ts int64) []byte {
 		return append(uint64ToBytes(n), uint64ToBytes(uint64(ts))...)
 	}
@@ -80,7 +102,7 @@ func TestMineNonceHonorsMaxNonce(t *testing.T) {
 	}
 }
 
-func TestMineNonceStopsEarly(t *testing.T) {
+func TestMineNonce_StopsEarly(t *testing.T) {
 	cfg := peer.PoWConfig{
 		Target:     big.NewInt(1), // impossible to reach quickly
 		MaxNonce:   1000,
@@ -102,6 +124,59 @@ func TestMineNonceStopsEarly(t *testing.T) {
 	}
 }
 
+func TestMineNonce_DegenerateConfig(t *testing.T) {
+	// Nil header builder should immediately fail.
+	cfg := peer.PoWConfig{
+		Target:     big.NewInt(1),
+		MaxNonce:   10,
+		TimeSource: func() time.Time { return time.Unix(1, 0) },
+	}
+	nonce, ok := callMineNonce(nil, cfg, nil)
+	if ok {
+		t.Fatalf("expected mining to fail with nil header builder")
+	}
+	if nonce != 0 {
+		t.Fatalf("expected nonce 0 on failure, got %d", nonce)
+	}
+
+	// Zero target is degenerate and should also fail without doing useful work.
+	headerFor := func(n uint64, ts int64) []byte {
+		return append(uint64ToBytes(n), uint64ToBytes(uint64(ts))...)
+	}
+	cfg = peer.PoWConfig{
+		Target:     big.NewInt(0),
+		MaxNonce:   10,
+		TimeSource: func() time.Time { return time.Unix(1, 0) },
+	}
+	nonce, ok = callMineNonce(headerFor, cfg, nil)
+	if ok {
+		t.Fatalf("expected mining to fail with zero target")
+	}
+	if nonce != 0 {
+		t.Fatalf("expected nonce 0 on failure, got %d", nonce)
+	}
+}
+
+func TestIsBlockComplexityValid(t *testing.T) {
+	// Build a simple block with a deterministic hash and a very high target so it must pass.
+	var hdr types.BlockHeader
+	block := types.Block{
+		Header: hdr,
+	}
+	block.Hash = block.ComputeHash()
+
+	// Target = 2^256 ensures any 256-bit hash is below the target.
+	highTarget := new(big.Int).Lsh(big.NewInt(1), 256)
+	if !impl.IsBlockComplexityValid(block, highTarget) {
+		t.Fatalf("expected block complexity to be valid under high target")
+	}
+
+	// With a zero target, the same block should be invalid (hash != 0 with overwhelming probability).
+	if impl.IsBlockComplexityValid(block, big.NewInt(0)) {
+		t.Fatalf("expected block complexity to be invalid under zero target")
+	}
+}
+
 // Helpers
 
 func sha256Sum(b []byte) [32]byte {
@@ -118,5 +193,6 @@ func uint64ToBytes(v uint64) []byte {
 
 // callMineNonce wraps the unexported mineNonce for test use.
 func callMineNonce(build impl.PoWHeaderBuilder, cfg peer.PoWConfig, stop <-chan struct{}) (uint64, bool) {
-	return impl.MineNonce(build, cfg, stop)
+	nonce, _, ok := impl.MineNonce(build, cfg, stop)
+	return nonce, ok
 }

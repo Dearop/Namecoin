@@ -33,18 +33,14 @@ func (n NameUpdate) Validate(st *NamecoinState, tx *SignedTransaction) error {
 	return nil
 }
 
-func (n NameUpdate) ProcessState(st *NamecoinState, tx *types.Tx) error {
+func (n NameUpdate) ProcessState(st *NamecoinState, _ *types.Tx) error {
 	// rec is copy, changing it without a lock, then updating with lock.
-	rec, ok := st.getDomain(n.Domain)
+	rec, ok := st.NameLookup(n.Domain)
 	if !ok {
 		return fmt.Errorf("updating non-existent domain %s", n.Domain)
 	}
-	// TODO : Bubble errors up to caller to send message to frontend.
 	if st.isExpired(rec, st.CurrentHeight()) {
 		return fmt.Errorf("updating expired domain %s", n.Domain)
-	}
-	if tx != nil && rec.Owner != tx.From {
-		return fmt.Errorf("update: not owner")
 	}
 
 	// update only if the value is set. If value equals "", no updates have been made
