@@ -27,6 +27,8 @@ func (t *BalanceManager) VerifyBalance(txID, from string, amount uint64) ([]type
 	for _, value := range inp {
 		inputs = append(inputs, types.TxInput{
 			TxID: value,
+			// Single-output transactions map to index 0 for now.
+			Index: 0,
 		})
 	}
 
