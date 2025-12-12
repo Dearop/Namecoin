@@ -51,6 +51,7 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 	node.transactionService = transactionService
 	node.namecoinDNS = NewNamecoinDNS()
 	node.namecoinDNS.Start(node)
+	node.pendingTxConfirm = make(map[string]chan error)
 	node.mu.Unlock()
 	return node
 }
@@ -110,6 +111,10 @@ type node struct {
 	// Step completion waiters
 	stepWaitMu  sync.Mutex
 	stepWaiters map[uint][]chan struct{}
+
+	// Transaction confirmation tracking
+	txConfirmMu      sync.Mutex
+	pendingTxConfirm map[string]chan error
 }
 
 // Start implements peer.Service.
@@ -249,6 +254,17 @@ func (n *node) HandleNamecoinCommand(buf []byte) error {
 		return err
 	}
 
+	//build the txID
+	txID, err := BuildTransactionID(&tx)
+	if err != nil {
+		return err
+	}
+
+
+	// Register for confirmation before broadcasting
+	log.Printf("[DEBUG] Registering transaction %s for confirmation tracking", txID)
+	confirmCh := n.registerTxConfirmation(txID)
+
 	msg := types.NamecoinTransactionMessage{
 		TxID: transaction.TxID,
 		Tx:   tx,
@@ -256,14 +272,26 @@ func (n *node) HandleNamecoinCommand(buf []byte) error {
 
 	marshaled, err := n.conf.MessageRegistry.MarshalMessage(msg)
 	if err != nil {
+		n.unregisterTxConfirmation(txID)
 		return err
 	}
 
+	log.Printf("[DEBUG] Broadcasting transaction %s to network", txID)
 	err = n.Broadcast(marshaled)
 	if err != nil {
+		log.Printf("[ERROR] Failed to broadcast transaction %s: %v", txID, err)
+		n.unregisterTxConfirmation(txID)
 		return err
 	}
 
+	// Wait for transaction to be included in a block (no timeout)
+	log.Printf("[DEBUG] Waiting for transaction %s to be included in block (no timeout)", txID)
+	err = <-confirmCh
+	if err != nil {
+		log.Printf("[ERROR] Transaction %s failed block inclusion: %v", txID, err)
+		return xerrors.Errorf("transaction failed to be included in block: %w", err)
+	}
+	log.Printf("[SUCCESS] Transaction %s confirmed in block", txID)
 	return nil
 }
 
@@ -362,6 +390,23 @@ func (n *node) MinerDoWork() error {
 	if err = n.NamecoinChain.ApplyBlock(&block); err != nil {
 		// should not happen; log but continue
 		log.Printf("Error applying mined block: %v", err)
+		// Notify all transactions in this block that they failed
+		log.Printf("[DEBUG] Notifying %d transactions in FAILED mined block", len(block.Transactions))
+		for _, val := range block.Transactions {
+			txID, txErr := BuildTransactionID(&val)
+			if txErr == nil {
+				n.notifyTxConfirmation(txID, err)
+			}
+		}
+	} else {
+		// Notify all transactions in this block that they succeeded
+		log.Printf("[DEBUG] Successfully applied mined block at height %d, notifying %d transactions", block.Header.Height, len(block.Transactions))
+		for _, val := range block.Transactions {
+			txID, txErr := BuildTransactionID(&val)
+			if txErr == nil {
+				n.notifyTxConfirmation(txID, nil)
+			}
+		}
 	}
 
 	return nil
@@ -844,6 +889,50 @@ func (n *node) SetRoutingEntry(origin, relayAddr string) {
 		return
 	}
 	n.routingTable[origin] = relayAddr
+}
+
+// registerTxConfirmation registers a transaction to wait for confirmation
+func (n *node) registerTxConfirmation(txID string) chan error {
+	n.txConfirmMu.Lock()
+	defer n.txConfirmMu.Unlock()
+
+	ch := make(chan error, 1)
+	n.pendingTxConfirm[txID] = ch
+	log.Printf("[DEBUG] Registered txID=%s for confirmation (total pending: %d)", txID, len(n.pendingTxConfirm))
+	return ch
+}
+
+// unregisterTxConfirmation removes a transaction from the confirmation wait list
+func (n *node) unregisterTxConfirmation(txID string) {
+	n.txConfirmMu.Lock()
+	defer n.txConfirmMu.Unlock()
+
+	if ch, ok := n.pendingTxConfirm[txID]; ok {
+		log.Printf("[DEBUG] Unregistering txID=%s (cleaning up)", txID)
+		close(ch)
+		delete(n.pendingTxConfirm, txID)
+	} else {
+		log.Printf("[WARN] Attempted to unregister txID=%s but not found in pending map", txID)
+	}
+}
+
+// notifyTxConfirmation notifies waiting handlers that a transaction was included in a block
+func (n *node) notifyTxConfirmation(txID string, err error) {
+	n.txConfirmMu.Lock()
+	defer n.txConfirmMu.Unlock()
+
+	if ch, ok := n.pendingTxConfirm[txID]; ok {
+		if err != nil {
+			log.Printf("[DEBUG] Notifying txID=%s with ERROR: %v", txID, err)
+		} else {
+			log.Printf("[DEBUG] Notifying txID=%s with SUCCESS (block applied)", txID)
+		}
+		ch <- err
+		close(ch)
+		delete(n.pendingTxConfirm, txID)
+	} else {
+		log.Printf("[DEBUG] Attempted to notify txID=%s but not in pending map (may have timed out or already processed)", txID)
+	}
 }
 
 // validateNode checks the receiver and its critical configuration.

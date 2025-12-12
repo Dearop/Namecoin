@@ -227,7 +227,7 @@ func start(c *urfave.Context) error {
 		EnableMiner:        true,
 
 		PoWConfig: peer.PoWConfig{
-			Target:     new(big.Int).Lsh(big.NewInt(1), 231), //set to 253 for testing purposes to mine block faster
+			Target:     new(big.Int).Lsh(big.NewInt(1), 232), //set to 253 for testing purposes to mine block faster
 			MaxNonce:   0,
 			TimeSource: nil,
 			PubKey:     "27227b017ac2a11885743f6a84e435d44e338bf2082340c73893afa81b4c86dc", // randomly generated

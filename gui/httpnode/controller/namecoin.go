@@ -57,10 +57,10 @@ func (n Namecoin) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send success response
+	// Send success response - transaction has been validated and included in a block
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"success","message":"Transaction received"}`))
+	w.Write([]byte(`{"status":"success","message":"Transaction confirmed in blockchain"}`))
 }
 
 func (n Namecoin) MinerIDHandler() http.HandlerFunc {
