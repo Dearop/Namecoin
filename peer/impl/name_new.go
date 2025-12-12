@@ -35,9 +35,11 @@ func (n NameNew) ValidateWithInputs(_ *NamecoinState, tx *types.Tx) error {
 
 func (n NameNew) ApplyState(st *NamecoinState, _ *types.Tx) error {
 	// Store TTL preference keyed by commitment; applied during firstupdate
-	if n.TTL != 0 {
-		st.SetCommitmentTTL(n.Commitment, n.TTL)
+	ttl := n.TTL
+	if ttl == 0 {
+		ttl = DefaultDomainTTLBlocks
 	}
+	st.SetCommitmentTTL(n.Commitment, ttl)
 	return nil
 }
 
