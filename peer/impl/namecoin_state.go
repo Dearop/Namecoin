@@ -298,8 +298,8 @@ func (st *NamecoinState) pruneExpired(height uint64) {
 func (st *NamecoinState) ApplyTx(txID string, tx *types.Tx) error {
 
 	if st.IsTxApplied(txID) {
-		// tx has already been applied
-		return fmt.Errorf("tx %s already applied", txID)
+		// Already processed; treat as no-op to keep ApplyTx idempotent.
+		return nil
 	}
 
 	if os.Getenv("GLOG") != "no" {
