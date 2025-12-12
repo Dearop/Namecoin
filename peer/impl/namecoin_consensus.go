@@ -32,7 +32,7 @@ func NewNamecoinConsensus(
 	powCfg peer.PoWConfig,
 	txBuffer *TxBuffer,
 ) (*NamecoinConsensus, error) {
-	if err := validateConsensusDeps(powCfg, txBuffer); err != nil {
+	if err := validateConsensusDeps(txBuffer); err != nil {
 		return nil, err
 	}
 	return &NamecoinConsensus{
@@ -57,7 +57,11 @@ func HeaderBuilderFactory() PoWHeaderBuilderFactory {
 
 // MineAndApply mines a block using the provided stop channel, validates it, and
 // applies it. It returns the mined block and any error from validation/apply.
-func (c *NamecoinConsensus) MineAndApply(stop <-chan struct{}, baseHeader *types.BlockHeader, target *big.Int) (types.Block, error) {
+func (c *NamecoinConsensus) MineAndApply(
+	stop <-chan struct{},
+	baseHeader *types.BlockHeader,
+	target *big.Int,
+) (types.Block, error) {
 	// Build the header builder for PoW hashing using the current base header.
 	if baseHeader == nil {
 		return types.Block{}, xerrors.Errorf("invalid base header for namecoin miner")
@@ -111,7 +115,7 @@ var (
 	ErrInvalidConfig = xerrors.New("namecoin consensus invalid configuration")
 )
 
-func validateConsensusDeps(cfg peer.PoWConfig, buffer *TxBuffer) error {
+func validateConsensusDeps(buffer *TxBuffer) error {
 	if buffer == nil {
 		return ErrInvalidConfig
 	}
