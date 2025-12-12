@@ -124,10 +124,14 @@ func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (str
 	// Compute the TxID of the original name_new transaction
 	nameNewTxID, err := BuildTransactionID(nameNewTx)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to compute name_new txID: %v", err)
+		return "", "", fmt.Errorf("failed to compute name_new txID: %w", err)
 	}
 
-	log.Info().Str("computed_name_new_txID", nameNewTxID).Str("commitment", commitment).Uint64("ttl", ttl).Msg("Computed name_new TxID for lookup")
+	log.Info().
+		Str("computed_name_new_txID", nameNewTxID).
+		Str("commitment", commitment).
+		Uint64("ttl", ttl).
+		Msg("Computed name_new TxID for lookup")
 
 	// Look up the commitment using the computed name_new TxID
 	key := OutpointKey(nameNewTxID, 0)
