@@ -46,7 +46,7 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 
 	transactionService := NewTransactionService(namecoinChain.state)
 
-	node.NamecoinChain = namecoinChain
+	node.NamecoinChainService = NewChainService(namecoinChain)
 	node.namecoinConsensus = consensus
 	node.transactionService = transactionService
 	node.namecoinDNS = NewNamecoinDNS()
@@ -97,11 +97,11 @@ type node struct {
 	tlcBroadcasted map[uint]bool
 
 	// Namecoin
-	namecoinConsensus  *NamecoinConsensus
-	NamecoinChain      *NamecoinChain
-	transactionService *TransactionService
-	namecoinDNS        *NamecoinDNS
-	dnsServer          *dns.Server
+	namecoinConsensus    *NamecoinConsensus
+	NamecoinChainService *ChainService
+	transactionService   *TransactionService
+	namecoinDNS          *NamecoinDNS
+	dnsServer            *dns.Server
 
 	// MinerPubKey
 	minerStopCh chan struct{}
@@ -189,9 +189,9 @@ func (n *node) ResolveDomain(domain string) types.DNSResponse {
 	return n.namecoinDNS.Resolve(strings.ToLower(strings.TrimSpace(domain)))
 }
 
-// NamecoinChainState returns the underlying Namecoin chain (testing helper).
-func (n *node) NamecoinChainState() *NamecoinChain {
-	return n.NamecoinChain
+// NamecoinChain returns the underlying Namecoin chain (testing helper).
+func (n *node) NamecoinChain() *NamecoinChain {
+	return n.NamecoinChainService.GetLongestChain()
 }
 
 // DNSServerAddr returns the bound DNS server address (testing helper).
@@ -303,10 +303,12 @@ func (n *node) StopMiner() {
 
 func (n *node) MinerDoWork() error {
 	// Build base header from current chain head
+
 	n.mu.RLock()
-	headHash := n.NamecoinChain.HeadHash()
-	headHeight := n.NamecoinChain.HeadHeight()
+	chain := n.NamecoinChainService.GetLongestChain()
 	n.mu.RUnlock()
+	headHash := chain.HeadHash()
+	headHeight := chain.HeadHeight()
 
 	nextHeight := headHeight + 1
 	if headHash == nil {
@@ -342,7 +344,7 @@ func (n *node) MinerDoWork() error {
 		return err
 	}
 	// Apply block locally
-	if err = n.NamecoinChain.ApplyBlock(&block); err != nil {
+	if err = n.NamecoinChainService.AppendBlockToLongestChain(&block); err != nil {
 		// should not happen; log but continue
 		log.Printf("Error applying mined block: %v", err)
 	}

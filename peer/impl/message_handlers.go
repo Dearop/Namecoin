@@ -99,7 +99,7 @@ func (n *node) handleNamecoinBlockMessage(message types.Message, packet transpor
 		n.namecoinConsensus.txBuffer.Remove(txID)
 	}
 
-	err := n.NamecoinChain.ApplyBlock(&msg.Block)
+	err := n.NamecoinChainService.AppendBlockToLongestChain(&msg.Block)
 
 	n.StartMiner()
 

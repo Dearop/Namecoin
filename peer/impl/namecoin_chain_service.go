@@ -10,6 +10,16 @@ import (
 	"go.dedis.ch/cs438/types"
 )
 
+func NewChainService(chain *NamecoinChain) *ChainService {
+	chains := make([]*NamecoinChain, 0, 1)
+	chains = append(chains, chain)
+
+	return &ChainService{
+		Chains:            chains,
+		LongestChainIndex: 0,
+	}
+}
+
 type ChainService struct {
 	Chains            []*NamecoinChain
 	LongestChainIndex int
@@ -25,6 +35,12 @@ func (s *ChainService) AppendChain(chain *NamecoinChain) {
 
 func (s *ChainService) AppendBlockToLongestChain(block *types.Block) error {
 	return s.AppendBlockToChain(s.LongestChainIndex, block)
+}
+
+func (s *ChainService) GetLongestChain() *NamecoinChain {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Chains[s.LongestChainIndex]
 }
 
 func (s *ChainService) AppendBlockToChain(index int, block *types.Block) error {
