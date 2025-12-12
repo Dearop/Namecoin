@@ -34,10 +34,13 @@ test_unit_transaction_service:
 	go test -timeout 2m -v -race -run TestTransactionService ./peer/tests/unit
 
 test_unit_wallet_manager:
-	go test -timeout 2m -v -race -run TestTokenWalletManager ./peer/tests/unit
+	go test -timeout 2m -v -race -run 'Test(VerifyBalance|TokenBalanceManager)' ./peer/tests/unit
 
 test_unit_namecoin_resolver:
 	go test -timeout 2m -v -race -run 'TestNamecoinDNS' ./peer/tests/unit
+
+test_unit_namecoin_state:
+	go test -timeout 2m -v -race -run 'Test_Namecoin' ./peer/tests/unit
 
 test_unit_namecoin_expiry:
 	go test -timeout 2m -v -race -run 'TestNamecoinExpiry' ./peer/tests/unit
@@ -62,6 +65,12 @@ test_int_node_dns:
 
 test_int_namecoin_expiry:
 	go test -timeout 5m -v -race -run TestNamecoinExpiryResolver ./peer/tests/integration
+
+test_int_namecoin_pow:
+	go test -timeout 5m -v -race -run 'Test_Namecoin_Integration' ./peer/tests/integration
+
+test_int_namecoin_verification:
+	go test -timeout 5m -v -race -run TestNamecoinBlockValidation ./peer/tests/integration
 
 # JSONIFY is set to "-json" in CI to format for GitHub, empty for displaying locally
 # || true allows to ignore error code and allow for smoother output logging
