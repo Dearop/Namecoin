@@ -78,6 +78,9 @@ func Test_Namecoin_State_ApplyTx_FirstUpdateCreatesDomainAndUpdatesUTXO(t *testi
 	}
 	commitTxID := mustTxID(t, &nameNewTx)
 	require.NoError(t, st.ApplyTx(commitTxID, &nameNewTx))
+	// name_new appends an output to owner; ensure it exists for firstupdate burn.
+	nameNewTx.Outputs = []types.TxOutput{{To: from, Amount: 10}}
+	require.NoError(t, st.ApplyTx(commitTxID, &nameNewTx))
 	commitKey := outpointKeyForTx(t, commitTxID, 0)
 
 	// Seed one UTXO that will be spent by the firstupdate. In the real

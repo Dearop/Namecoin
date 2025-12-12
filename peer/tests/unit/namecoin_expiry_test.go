@@ -32,11 +32,17 @@ func TestNamecoinExpiry_PruneAndReregister(t *testing.T) {
 	commit := impl.HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", domain, salt))
 
 	txNew := buildTx(t, impl.NameNewCommandName, owner, impl.NameNew{Commitment: commit, TTL: impl.DefaultDomainTTLBlocks})
+	txNew.Outputs = []types.TxOutput{{To: owner, Amount: 1}}
+	txNewID, err := impl.BuildTransactionID(&txNew)
+	require.NoError(t, err)
+
 	txFirst := buildTx(t, impl.NameFirstUpdateCommandName, owner, impl.NameFirstUpdate{
 		Domain: domain,
 		Salt:   salt,
 		IP:     "1.2.3.4",
 	})
+	txFirst.Inputs = []types.TxInput{{TxID: txNewID, Index: 0}}
+	txFirst.Outputs = []types.TxOutput{{To: owner, Amount: 1}}
 
 	st.EnsureAccount(owner)
 	require.NoError(t, st.ApplyBlock(&types.Block{
@@ -62,11 +68,16 @@ func TestNamecoinExpiry_PruneAndReregister(t *testing.T) {
 	salt2 := "pepper2"
 	commit2 := impl.HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", domain, salt2))
 	txNew2 := buildTx(t, impl.NameNewCommandName, owner, impl.NameNew{Commitment: commit2, TTL: impl.DefaultDomainTTLBlocks})
+	txNew2.Outputs = []types.TxOutput{{To: owner, Amount: 1}}
+	txNew2ID, err := impl.BuildTransactionID(&txNew2)
+	require.NoError(t, err)
 	txFirst2 := buildTx(t, impl.NameFirstUpdateCommandName, owner, impl.NameFirstUpdate{
 		Domain: domain,
 		Salt:   salt2,
 		IP:     "2.2.2.2",
 	})
+	txFirst2.Inputs = []types.TxInput{{TxID: txNew2ID, Index: 0}}
+	txFirst2.Outputs = []types.TxOutput{{To: owner, Amount: 1}}
 	require.NoError(t, st.ApplyBlock(&types.Block{
 		Header:       types.BlockHeader{Height: expireHeight + 1},
 		Transactions: []types.Tx{txNew2, txFirst2},
@@ -88,11 +99,16 @@ func TestNamecoinExpiry_UpdateRefreshesTTL(t *testing.T) {
 	commit := impl.HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", domain, salt))
 
 	txNew := buildTx(t, impl.NameNewCommandName, owner, impl.NameNew{Commitment: commit, TTL: impl.DefaultDomainTTLBlocks})
+	txNew.Outputs = []types.TxOutput{{To: owner, Amount: 1}}
+	txNewID, err := impl.BuildTransactionID(&txNew)
+	require.NoError(t, err)
 	txFirst := buildTx(t, impl.NameFirstUpdateCommandName, owner, impl.NameFirstUpdate{
 		Domain: domain,
 		Salt:   salt,
 		IP:     "5.6.7.8",
 	})
+	txFirst.Inputs = []types.TxInput{{TxID: txNewID, Index: 0}}
+	txFirst.Outputs = []types.TxOutput{{To: owner, Amount: 1}}
 
 	st.EnsureAccount(owner)
 	require.NoError(t, st.ApplyBlock(&types.Block{
@@ -170,11 +186,16 @@ func registerDomain(t *testing.T, st *impl.NamecoinState, height uint64, owner, 
 	t.Helper()
 	commit := impl.HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", domain, salt))
 	txNew := buildTx(t, impl.NameNewCommandName, owner, impl.NameNew{Commitment: commit, TTL: impl.DefaultDomainTTLBlocks})
+	txNew.Outputs = []types.TxOutput{{To: owner, Amount: 1}}
+	txNewID, err := impl.BuildTransactionID(&txNew)
+	require.NoError(t, err)
 	txFirst := buildTx(t, impl.NameFirstUpdateCommandName, owner, impl.NameFirstUpdate{
 		Domain: domain,
 		Salt:   salt,
 		IP:     ip,
 	})
+	txFirst.Inputs = []types.TxInput{{TxID: txNewID, Index: 0}}
+	txFirst.Outputs = []types.TxOutput{{To: owner, Amount: 1}}
 	require.NoError(t, st.ApplyBlock(&types.Block{
 		Header:       types.BlockHeader{Height: height},
 		Transactions: []types.Tx{txNew, txFirst},

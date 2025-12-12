@@ -97,37 +97,15 @@ func (n NameFirstUpdate) ValidateWithInputs(st *NamecoinState, tx *types.Tx) err
 }
 
 func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (string, string, error) {
-	// Generate the commitment hash from domain and salt
+	if len(tx.Inputs) == 0 {
+		return "", "", fmt.Errorf("name_firstupdate requires at least one input")
+	}
+
 	commitment := HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", n.Domain, n.Salt))
+	// Use the referenced name_new outpoint (txid:0 in the single-output MVP).
+	in := tx.Inputs[0]
+	key := OutpointKey(in.TxID, 0)
 
-	// Get the TTL that was stored with this commitment during name_new
-	ttl := st.GetCommitmentTTL(commitment)
-
-	// Reconstruct the name_new transaction to compute its TxID
-	// The name_new transaction had: type="NameNew", from=tx.From, amount=1, payload={"commitment":"...","ttl":...}
-	payloadBytes := []byte(fmt.Sprintf(`{"commitment":"%s","ttl":%d}`, commitment, ttl))
-
-	nameNewTx := &types.Tx{
-		Type:    "NameNew",
-		From:    tx.From,
-		Amount:  1,
-		Payload: payloadBytes,
-	}
-
-	// Compute the TxID of the original name_new transaction
-	nameNewTxID, err := BuildTransactionID(nameNewTx)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to compute name_new txID: %w", err)
-	}
-
-	log.Info().
-		Str("computed_name_new_txID", nameNewTxID).
-		Str("commitment", commitment).
-		Uint64("ttl", ttl).
-		Msg("Computed name_new TxID for lookup")
-
-	// Look up the commitment using the computed name_new TxID
-	key := OutpointKey(nameNewTxID, 0)
 	storedCommit, ok := st.GetCommitment(key)
 	if !ok {
 		return "", "", fmt.Errorf("no matching name_new commitment with key %s", key)
