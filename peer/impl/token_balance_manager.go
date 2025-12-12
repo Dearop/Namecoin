@@ -45,10 +45,13 @@ func (t *BalanceManager) VerifyBalance(txID, from string, amount uint64) ([]type
 
 // VerifyOwnership verifies that the given public key matches the given address
 func (t *BalanceManager) VerifyOwnership(from string, publicKey []byte) error {
-	derivedAddr := hex.EncodeToString(Hash(publicKey))
-	if derivedAddr != from {
-		return fmt.Errorf("public key does not match sender address")
+	pkHex := hex.EncodeToString(publicKey)
+	if from == pkHex {
+		return nil
 	}
-
-	return nil
+	derivedAddr := hex.EncodeToString(Hash(publicKey))
+	if from == derivedAddr {
+		return nil
+	}
+	return fmt.Errorf("public key does not match sender address")
 }

@@ -24,6 +24,9 @@ func (n NameFirstUpdate) Validate(st *NamecoinState, tx *SignedTransaction) erro
 	// Must match earlier commitment
 	storedCommit := st.GetCommitment(tx.From)
 	//TODO: Update, to avoid collisions.
+	if storedCommit == "" {
+		return fmt.Errorf("no prior commitment for %s", tx.From)
+	}
 	if HashString(n.Domain+n.Salt) != storedCommit {
 		return fmt.Errorf("commitment mismatch for domain %s", n.Domain)
 	}

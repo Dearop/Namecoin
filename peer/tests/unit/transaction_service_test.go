@@ -119,9 +119,10 @@ func buildSignedTransaction(t *testing.T, publicKey ed25519.PublicKey, privateKe
 		t.Fatalf("failed to marshal payload: %v", err)
 	}
 
+	addr := hex.EncodeToString(publicKey)
 	tx := impl.SignedTransaction{
 		Type:    txType,
-		From:    hex.EncodeToString(publicKey),
+		From:    addr,
 		Amount:  amount,
 		Payload: json.RawMessage(payloadBytes),
 	}

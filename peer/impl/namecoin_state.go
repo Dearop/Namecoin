@@ -12,6 +12,7 @@ import (
 // DomainTTLBlocks is the default number of blocks a domain will remain registered for.
 // DefaultDomainTTLBlocks defines the default number of blocks a domain stays valid.
 var DefaultDomainTTLBlocks uint64 = 36_000
+
 // MaxDomainTTLBlocks caps the TTL to ~1 year (assuming 10s blocks -> 5,256,000 blocks).
 var MaxDomainTTLBlocks uint64 = 5_256_000
 
@@ -56,7 +57,7 @@ func NewState() *NamecoinState {
 		UTXOMap:        make(map[string]map[string]types.UTXO),
 		txMap:          make(map[string]struct{}),
 		// Clamp default TTL to the configured max to avoid unbounded domain lifetimes.
-		domainTTL: 		clampTTL(DefaultDomainTTLBlocks),
+		domainTTL: clampTTL(DefaultDomainTTLBlocks),
 	}
 }
 
@@ -264,7 +265,7 @@ func (st *NamecoinState) ApplyTx(txID string, tx *types.Tx) error {
 
 	if st.IsTxApplied(txID) {
 		// tx has already been applied
-		return nil
+		return fmt.Errorf("tx %s already applied", txID)
 	}
 
 	if os.Getenv("GLOG") != "no" {

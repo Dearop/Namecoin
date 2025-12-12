@@ -9,11 +9,16 @@ import (
 )
 
 func (t *SignedTransaction) SerializeTransaction() ([]byte, error) {
-	data := map[string]interface{}{
-		"type":    t.Type,
-		"from":    t.From,
-		"amount":  t.Amount,
-		"payload": t.Payload,
+	data := struct {
+		Type    string          `json:"type"`
+		From    string          `json:"from"`
+		Amount  uint64          `json:"amount"`
+		Payload json.RawMessage `json:"payload"`
+	}{
+		Type:    t.Type,
+		From:    t.From,
+		Amount:  t.Amount,
+		Payload: t.Payload,
 	}
 
 	b, err := json.Marshal(data)

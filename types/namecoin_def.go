@@ -141,14 +141,22 @@ func (b *Block) ComputeHash() []byte {
 }
 
 func (h *BlockHeader) SerializeHeader() []byte {
-	data := map[string]interface{}{
-		"height":     h.Height,
-		"prevHash":   h.PrevHash,
-		"txRoot":     h.TxRoot,
-		"timestamp":  h.Timestamp,
-		"nonce":      h.Nonce,
-		"miner":      h.Miner,
-		"difficulty": h.Difficulty,
+	data := struct {
+		Height     uint64 `json:"height"`
+		PrevHash   []byte `json:"prevHash"`
+		TxRoot     []byte `json:"txRoot"`
+		Timestamp  int64  `json:"timestamp"`
+		Nonce      uint64 `json:"nonce"`
+		Miner      string `json:"miner"`
+		Difficulty []byte `json:"difficulty"`
+	}{
+		Height:     h.Height,
+		PrevHash:   h.PrevHash,
+		TxRoot:     h.TxRoot,
+		Timestamp:  h.Timestamp,
+		Nonce:      h.Nonce,
+		Miner:      h.Miner,
+		Difficulty: h.Difficulty,
 	}
 
 	b, _ := json.Marshal(data)
@@ -156,12 +164,18 @@ func (h *BlockHeader) SerializeHeader() []byte {
 }
 
 func (h *BlockHeader) SerializeBase() []byte {
-	data := map[string]interface{}{
-		"height":     h.Height,
-		"prevHash":   h.PrevHash,
-		"txRoot":     h.TxRoot,
-		"miner":      h.Miner,
-		"difficulty": h.Difficulty,
+	data := struct {
+		Height     uint64 `json:"height"`
+		PrevHash   []byte `json:"prevHash"`
+		TxRoot     []byte `json:"txRoot"`
+		Miner      string `json:"miner"`
+		Difficulty []byte `json:"difficulty"`
+	}{
+		Height:     h.Height,
+		PrevHash:   h.PrevHash,
+		TxRoot:     h.TxRoot,
+		Miner:      h.Miner,
+		Difficulty: h.Difficulty,
 	}
 
 	b, _ := json.Marshal(data)
