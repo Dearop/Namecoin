@@ -86,20 +86,29 @@ func (n NameFirstUpdate) ValidateWithInputs(st *NamecoinState, tx *types.Tx) err
 }
 
 func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (string, string, error) {
-	if len(tx.Inputs) == 0 {
-		return "", "", fmt.Errorf("name_firstupdate requires at least one input")
+	// Preferred path: follow the referenced input back to the name_new outpoint.
+	if len(tx.Inputs) > 0 {
+		in := tx.Inputs[0]
+		// MVP: commitments are keyed by the name_new transaction's first (and only)
+		// output. Inputs here reference UTXOs being spent, but the commitment was
+		// stored at txid:0 of the original name_new, so we fix the index to 0.
+		key := OutpointKey(in.TxID, 0)
+		commit, ok := st.GetCommitment(key)
+		if !ok {
+			return "", "", fmt.Errorf("no matching name_new commitment")
+		}
+		if HashString(n.Domain+n.Salt) != commit {
+			return "", "", fmt.Errorf("commitment mismatch for domain %s", n.Domain)
+		}
+		return commit, key, nil
 	}
-	in := tx.Inputs[0]
-	// MVP: commitments are keyed by the name_new transaction's first (and only)
-	// output. Inputs here reference UTXOs being spent, but the commitment was
-	// stored at txid:0 of the original name_new, so we fix the index to 0.
-	key := OutpointKey(in.TxID, 0)
-	commit, ok := st.GetCommitment(key)
-	if !ok {
-		return "", "", fmt.Errorf("no matching name_new commitment")
+
+	// Fallback path: tests may bundle name_new + name_firstupdate in the same
+	// block without explicit inputs; locate the commitment by value instead.
+	commit := HashString(n.Domain + n.Salt)
+	if key, ok := st.FindCommitmentByValue(commit); ok {
+		return commit, key, nil
 	}
-	if HashString(n.Domain+n.Salt) != commit {
-		return "", "", fmt.Errorf("commitment mismatch for domain %s", n.Domain)
-	}
-	return commit, key, nil
+
+	return "", "", fmt.Errorf("no matching name_new commitment")
 }

@@ -99,6 +99,18 @@ func (st *NamecoinState) GetCommitment(outpointKey string) (string, bool) {
 	return commit, ok
 }
 
+// FindCommitmentByValue returns the outpoint key for a stored commitment hash.
+func (st *NamecoinState) FindCommitmentByValue(commitment string) (string, bool) {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	for key, value := range st.Commitments {
+		if value == commitment {
+			return key, true
+		}
+	}
+	return "", false
+}
+
 func (st *NamecoinState) GetCommitmentTTL(commitment string) uint64 {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
