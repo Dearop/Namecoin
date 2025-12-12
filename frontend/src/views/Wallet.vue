@@ -351,7 +351,7 @@ async function handleFirstUpdate(pending) {
     const transaction = await buildTransaction({
       type: 'NameFirstUpdate',
       walletID: minerID,
-      fee: 0,
+      fee: 1,
       payload: {
         domain: pending.domain,
         salt: pending.salt,
@@ -416,7 +416,7 @@ async function handleUpdate(domain) {
     const transaction = await buildTransaction({
       type: 'NameUpdate',
       walletID: minerID,
-      fee: 0,
+      fee: 1,
       payload: {
         domain: domain.domain,
         ip: domain.newIp.trim(),
