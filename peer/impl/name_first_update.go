@@ -39,7 +39,7 @@ func (n NameFirstUpdate) Validate(st *NamecoinState, tx *SignedTransaction) erro
 	return nil
 }
 
-func (n NameFirstUpdate) ProcessState(st *NamecoinState, tx *types.Tx) error {
+func (n NameFirstUpdate) ApplyState(st *NamecoinState, tx *types.Tx) error {
 	// remove expired if present
 	if rec, ok := st.getDomain(n.Domain); ok && st.isExpired(rec, st.CurrentHeight()) {
 		st.mu.Lock()
@@ -90,8 +90,8 @@ func resolveTTLPreference(txTTL uint64, commitment string, st *NamecoinState) ui
 	return 0
 }
 
-func (n NameFirstUpdate) ProcessTxState(st *NamecoinState, txID string, tx *types.Tx) error {
-	return ProcessTxStateGeneric(st, txID, tx)
+func (n NameFirstUpdate) ApplyUTXO(st *NamecoinState, txID string, tx *types.Tx) error {
+	return ApplyUTXOGeneric(st, txID, tx)
 }
 
 // ValidateWithInputs performs commitment checks requiring full tx inputs.

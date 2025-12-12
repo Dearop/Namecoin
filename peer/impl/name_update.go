@@ -33,7 +33,7 @@ func (n NameUpdate) Validate(st *NamecoinState, tx *SignedTransaction) error {
 	return nil
 }
 
-func (n NameUpdate) ProcessState(st *NamecoinState, _ *types.Tx) error {
+func (n NameUpdate) ApplyState(st *NamecoinState, _ *types.Tx) error {
 	// rec is copy, changing it without a lock, then updating with lock.
 	rec, ok := st.NameLookup(n.Domain)
 	if !ok {
@@ -57,13 +57,13 @@ func (n NameUpdate) ProcessState(st *NamecoinState, _ *types.Tx) error {
 	rec.ExpiresAt = newExpiresAt
 
 	log.Info().Str("domain", n.Domain).Uint64("old_expires_at", oldExpiresAt).Uint64("ttl_blocks",
-	 effectiveTTLValue).Uint64("new_expires_at", newExpiresAt).Msg("Domain TTL updated")
+		effectiveTTLValue).Uint64("new_expires_at", newExpiresAt).Msg("Domain TTL updated")
 
 	st.SetDomain(rec)
 
 	return nil
 }
 
-func (n NameUpdate) ProcessTxState(st *NamecoinState, txID string, tx *types.Tx) error {
-	return ProcessTxStateGeneric(st, txID, tx)
+func (n NameUpdate) ApplyUTXO(st *NamecoinState, txID string, tx *types.Tx) error {
+	return ApplyUTXOGeneric(st, txID, tx)
 }
