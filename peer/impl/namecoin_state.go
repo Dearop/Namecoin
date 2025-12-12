@@ -2,11 +2,12 @@ package impl
 
 import (
 	"fmt"
-	"github.com/rs/zerolog/log"
-	"go.dedis.ch/cs438/types"
 	"maps"
 	"os"
 	"sync"
+
+	"github.com/rs/zerolog/log"
+	"go.dedis.ch/cs438/types"
 )
 
 // DomainTTLBlocks is the default number of blocks a domain will remain registered for.
@@ -20,6 +21,7 @@ var MaxDomainTTLBlocks uint64 = 5_256_000
 type NamecoinState struct {
 	// Domain name -> record
 	Domains map[string]types.NameRecord
+
 	// Expiry index: height -> domains expiring at that height
 	expires map[uint64][]string
 	// Tracks current height processed
@@ -27,7 +29,11 @@ type NamecoinState struct {
 	// Configurable TTL for domains
 	domainTTL uint64
 
+	// Domains that have been revealed/claimed (used to reject duplicate reveals).
+	ClaimedDomains map[string]struct{}
+
 	// Commitment -> hashed Domain and Salt
+	// Keyed by outpoint string (txid:vout)
 	Commitments map[string]string
 	// Optional TTL preference keyed by commitment hash
 	commitmentTTLs map[string]uint64
@@ -51,6 +57,7 @@ func (c *NamecoinChain) State() *NamecoinState {
 func NewState() *NamecoinState {
 	return &NamecoinState{
 		Domains:        make(map[string]types.NameRecord),
+		ClaimedDomains: make(map[string]struct{}),
 		expires:        make(map[uint64][]string),
 		Commitments:    make(map[string]string),
 		commitmentTTLs: make(map[string]uint64),
@@ -62,15 +69,12 @@ func NewState() *NamecoinState {
 }
 
 func (st *NamecoinState) GetDomainOwner(domain string) string {
-	st.mu.RLock()
-	defer st.mu.RUnlock()
-	res, ok := st.Domains[domain]
-
+	rec, ok := st.NameLookup(domain)
 	if !ok {
 		return ""
 	}
 
-	return res.Owner
+	return rec.Owner
 }
 
 func (st *NamecoinState) IsDomainExists(domain string) bool {
@@ -80,10 +84,19 @@ func (st *NamecoinState) IsDomainExists(domain string) bool {
 	return ok
 }
 
-func (st *NamecoinState) GetCommitment(from string) string {
+// NameLookup returns a copy of the name record if present.
+func (st *NamecoinState) NameLookup(domain string) (types.NameRecord, bool) {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
-	return st.Commitments[from]
+	rec, ok := st.Domains[domain]
+	return rec, ok
+}
+
+func (st *NamecoinState) GetCommitment(outpointKey string) (string, bool) {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	commit, ok := st.Commitments[outpointKey]
+	return commit, ok
 }
 
 func (st *NamecoinState) GetCommitmentTTL(commitment string) uint64 {
@@ -119,15 +132,35 @@ func (st *NamecoinState) SetDomain(record types.NameRecord) {
 		st.removeFromExpiryLocked(record.Domain, existing.ExpiresAt)
 	}
 	st.Domains[record.Domain] = record
+	if st.ClaimedDomains == nil {
+		st.ClaimedDomains = make(map[string]struct{})
+	}
+	st.ClaimedDomains[record.Domain] = struct{}{}
 	if record.ExpiresAt != 0 {
 		st.addExpiryLocked(record.Domain, record.ExpiresAt)
 	}
 }
 
-func (st *NamecoinState) SetCommitment(from, commitment string) {
+func (st *NamecoinState) SetCommitment(outpointKey, commitment string) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	st.Commitments[from] = commitment
+	if st.Commitments == nil {
+		st.Commitments = make(map[string]string)
+	}
+	st.Commitments[outpointKey] = commitment
+}
+
+func (st *NamecoinState) IsDomainClaimed(domain string) bool {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	_, ok := st.ClaimedDomains[domain]
+	return ok
+}
+
+func (st *NamecoinState) DeleteCommitment(outpointKey string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	delete(st.Commitments, outpointKey)
 }
 
 func (st *NamecoinState) SetCommitmentTTL(commitment string, ttl uint64) {
@@ -145,6 +178,7 @@ func (st *NamecoinState) Clone() *NamecoinState {
 	}
 	clone := &NamecoinState{
 		Domains:        maps.Clone(st.Domains),
+		ClaimedDomains: maps.Clone(st.ClaimedDomains),
 		expires:        make(map[uint64][]string, len(st.expires)),
 		Commitments:    maps.Clone(st.Commitments),
 		commitmentTTLs: maps.Clone(st.commitmentTTLs),
@@ -382,7 +416,7 @@ func (st *NamecoinState) ProcessCommandStateUpdate(tx *types.Tx) error {
 	return cmd.ProcessState(st, tx)
 }
 
-// ValidateCommand verifies the payload of a transaction based on its type
+// ValidateCommand verifies the payload of a signed transaction based on its type
 func (st *NamecoinState) ValidateCommand(tx *SignedTransaction) error {
 	cmd, err := ResolveCommand(tx.Type, tx.Payload)
 	if err != nil {
@@ -400,4 +434,19 @@ func clampTTL(ttl uint64) uint64 {
 		return MaxDomainTTLBlocks
 	}
 	return ttl
+}
+
+// ValidateCommandWithInputs allows validation that depends on fully formed tx
+// inputs/outputs (e.g., outpoint-keyed commitment checks).
+func (st *NamecoinState) ValidateCommandWithInputs(tx *types.Tx) error {
+	cmd, err := ResolveCommand(tx.Type, tx.Payload)
+	if err != nil {
+		return err
+	}
+	if v, ok := cmd.(interface {
+		ValidateWithInputs(*NamecoinState, *types.Tx) error
+	}); ok {
+		return v.ValidateWithInputs(st, tx)
+	}
+	return nil
 }

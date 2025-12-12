@@ -30,18 +30,12 @@ func (t *TransactionService) ValidateTransaction(tx *SignedTransaction) error {
 		return err
 	}
 
-	// 4. Ensure the advertised address matches the public key
-	if err = t.TokenManager.VerifyOwnership(tx.From, pubKeyBytes); err != nil {
-		return err
-	}
+	// 4. Validate payload based on transaction type (signed transaction view)
+	return t.state.ValidateCommand(tx)
+}
 
-	// 5. Validate payload based on transaction type
-	err = t.state.ValidateCommand(tx)
-	if err != nil {
-		return err
-	}
-
-	return nil
+func (t *TransactionService) ValidateTxCommand(tx *types.Tx) error {
+	return t.state.ValidateCommandWithInputs(tx)
 }
 
 func (t *TransactionService) VerifyBalance(

@@ -1,11 +1,8 @@
 package impl
 
 import (
-	"bytes"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"go.dedis.ch/cs438/peer"
 	"go.dedis.ch/cs438/types"
@@ -13,8 +10,9 @@ import (
 )
 
 // PoWHeaderBuilderFactory builds a PoWHeaderBuilder for a given base header.
-// The returned PoWHeaderBuilder must encode nonce and timestamp deterministically.
-type PoWHeaderBuilderFactory func(baseBytes []byte) PoWHeaderBuilder
+// The returned PoWHeaderBuilder must encode the header deterministically using
+// SerializeHeader, updating timestamp and nonce for each attempt.
+type PoWHeaderBuilderFactory func(baseHeader *types.BlockHeader) PoWHeaderBuilder
 
 // NamecoinConsensus wires PoW mining with block validation/apply. It is an
 // abstraction layer so PoW can be reused with different state/chain
@@ -44,19 +42,14 @@ func NewNamecoinConsensus(
 }
 
 func HeaderBuilderFactory() PoWHeaderBuilderFactory {
-	return func(baseBytes []byte) PoWHeaderBuilder {
+	return func(baseHeader *types.BlockHeader) PoWHeaderBuilder {
+		// take a copy of the base header so per-attempt mutations don't leak
+		base := *baseHeader
 		return func(nonce uint64, ts int64) []byte {
-			buf := bytes.Buffer{}
-			buf.Write(baseBytes)
-
-			b := make([]byte, 8)
-			binary.LittleEndian.PutUint64(b, uint64(ts))
-			buf.Write(b)
-
-			binary.LittleEndian.PutUint64(b, nonce)
-			buf.Write(b)
-
-			return buf.Bytes()
+			h := base
+			h.Timestamp = ts
+			h.Nonce = nonce
+			return h.SerializeHeader()
 		}
 	}
 }
@@ -69,25 +62,28 @@ func (c *NamecoinConsensus) MineAndApply(stop <-chan struct{}, baseHeader *types
 		return types.Block{}, xerrors.Errorf("invalid base header for namecoin miner")
 	}
 
-	headerBuilder := c.buildHeader(baseHeader.SerializeBase())
-	nonce, ok := MineNonce(headerBuilder, c.powCfg, stop)
-	if !ok {
-		return types.Block{}, ErrMiningAborted
-	}
-	// Rebuild the full block with the winning nonce/timestamp. Timestamp is
-	// baked inside the header builder via the PowHeaderBuilder call.
-	ts := time.Now().Unix()
-	if c.powCfg.TimeSource != nil {
-		ts = c.powCfg.TimeSource().Unix()
-	}
-	hdr := baseHeader
-	hdr.Nonce = nonce
-	hdr.Timestamp = ts
 	// we need to ensure that the order of the transaction is not changed in case of block complexity is less than expected
 	// Requeuing the transaction and Draining them should preserve order otherwise
 	//Hash will be inconsistent between 2 Hash executions
 	pending, order, snapshot := c.txBuffer.Drain()
-	block := AssembleBlock(hdr, pending, c.powCfg.PubKey)
+	// Set the TxRoot on the base header before mining so the header bytes used
+	// for PoW match those used during validation.
+	hdrBase := *baseHeader
+	_ = AssembleBlock(&hdrBase, pending, c.powCfg.PubKey)
+
+	headerBuilder := c.buildHeader(&hdrBase)
+	nonce, ts, ok := MineNonce(headerBuilder, c.powCfg, stop)
+	if !ok {
+		// mining aborted, requeue drained transactions
+		c.txBuffer.Requeue(order, snapshot)
+		return types.Block{}, ErrMiningAborted
+	}
+
+	hdr := hdrBase
+	hdr.Nonce = nonce
+	hdr.Timestamp = ts
+
+	block := AssembleBlock(&hdr, pending, c.powCfg.PubKey)
 	isComplexityValid := IsBlockComplexityValid(block, c.powCfg.Target)
 	if !isComplexityValid {
 		c.txBuffer.Requeue(order, snapshot)
