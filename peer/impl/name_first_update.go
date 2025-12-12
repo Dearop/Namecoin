@@ -29,8 +29,8 @@ func (n NameFirstUpdate) Validate(st *NamecoinState, tx *SignedTransaction) erro
 	storedCommit, ok := st.GetCommitment(tx.From)
 	//TODO: Update, to avoid collisions.
 	if !ok || HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", n.Domain, n.Salt)) != storedCommit {
-		return fmt.Errorf("commitment mismatch for domain %s with commit %s with stored commit %s" ,
-		HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", n.Domain, n.Salt)), n.Domain, storedCommit)
+		return fmt.Errorf("commitment mismatch for domain %s with commit %s with stored commit %s",
+			HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", n.Domain, n.Salt)), n.Domain, storedCommit)
 	}
 
 	if rec, ok := st.getDomain(n.Domain); ok && !st.isExpired(rec, st.CurrentHeight()) {
@@ -49,7 +49,7 @@ func (n NameFirstUpdate) ProcessState(st *NamecoinState, tx *types.Tx) error {
 	}
 
 	//generate txID of the name_new transaction, i.e. with type name_new and commitment
-	
+
 	commit, key, err := n.resolveCommitment(st, tx)
 	if err != nil {
 		return err
@@ -62,10 +62,10 @@ func (n NameFirstUpdate) ProcessState(st *NamecoinState, tx *types.Tx) error {
 
 	effectiveTTLValue := st.effectiveTTL(resolveTTLPreference(n.TTL, commit, st))
 	newExpiresAt := st.CurrentHeight() + effectiveTTLValue
-	
+
 	log.Info().Str("domain", n.Domain).Uint64("ttl_blocks", effectiveTTLValue).Uint64("new_expires_at",
-	 newExpiresAt).Msg("Domain registered with TTL")
-	
+		newExpiresAt).Msg("Domain registered with TTL")
+
 	st.SetDomain(types.NameRecord{
 		Owner:     tx.From,
 		IP:        n.IP,
@@ -106,29 +106,29 @@ func (n NameFirstUpdate) ValidateWithInputs(st *NamecoinState, tx *types.Tx) err
 func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (string, string, error) {
 	// Generate the commitment hash from domain and salt
 	commitment := HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", n.Domain, n.Salt))
-	
+
 	// Get the TTL that was stored with this commitment during name_new
 	ttl := st.GetCommitmentTTL(commitment)
-	
+
 	// Reconstruct the name_new transaction to compute its TxID
 	// The name_new transaction had: type="NameNew", from=tx.From, amount=1, payload={"commitment":"...","ttl":...}
 	payloadBytes := []byte(fmt.Sprintf(`{"commitment":"%s","ttl":%d}`, commitment, ttl))
-	
+
 	nameNewTx := &types.Tx{
 		Type:    "NameNew",
 		From:    tx.From,
 		Amount:  1,
 		Payload: payloadBytes,
 	}
-	
+
 	// Compute the TxID of the original name_new transaction
 	nameNewTxID, err := BuildTransactionID(nameNewTx)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to compute name_new txID: %v", err)
 	}
-	
+
 	log.Info().Str("computed_name_new_txID", nameNewTxID).Str("commitment", commitment).Uint64("ttl", ttl).Msg("Computed name_new TxID for lookup")
-	
+
 	// Look up the commitment using the computed name_new TxID
 	key := OutpointKey(nameNewTxID, 0)
 	storedCommit, ok := st.GetCommitment(key)
