@@ -28,9 +28,9 @@ func TestNamecoinExpiry_PruneAndReregister(t *testing.T) {
 		domain = "foo.bit"
 		salt   = "pepper"
 	)
-	commit := impl.HashString(domain + salt)
+	commit := impl.HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", domain, salt))
 
-	txNew := buildTx(t, impl.NameNewCommandName, owner, impl.NameNew{Commitment: commit})
+	txNew := buildTx(t, impl.NameNewCommandName, owner, impl.NameNew{Commitment: commit, TTL: impl.DefaultDomainTTLBlocks})
 	txFirst := buildTx(t, impl.NameFirstUpdateCommandName, owner, impl.NameFirstUpdate{
 		Domain: domain,
 		Salt:   salt,
@@ -59,8 +59,8 @@ func TestNamecoinExpiry_PruneAndReregister(t *testing.T) {
 
 	// Re-register after expiry should succeed with a new commitment.
 	salt2 := "pepper2"
-	commit2 := impl.HashString(domain + salt2)
-	txNew2 := buildTx(t, impl.NameNewCommandName, owner, impl.NameNew{Commitment: commit2})
+	commit2 := impl.HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", domain, salt2))
+	txNew2 := buildTx(t, impl.NameNewCommandName, owner, impl.NameNew{Commitment: commit2, TTL: impl.DefaultDomainTTLBlocks})
 	txFirst2 := buildTx(t, impl.NameFirstUpdateCommandName, owner, impl.NameFirstUpdate{
 		Domain: domain,
 		Salt:   salt2,
@@ -84,9 +84,9 @@ func TestNamecoinExpiry_UpdateRefreshesTTL(t *testing.T) {
 		domain = "bar.bit"
 		salt   = "salt2"
 	)
-	commit := impl.HashString(domain + salt)
+	commit := impl.HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", domain, salt))
 
-	txNew := buildTx(t, impl.NameNewCommandName, owner, impl.NameNew{Commitment: commit})
+	txNew := buildTx(t, impl.NameNewCommandName, owner, impl.NameNew{Commitment: commit, TTL: impl.DefaultDomainTTLBlocks})
 	txFirst := buildTx(t, impl.NameFirstUpdateCommandName, owner, impl.NameFirstUpdate{
 		Domain: domain,
 		Salt:   salt,
@@ -167,8 +167,8 @@ func TestNamecoinExpiry_StressManyDomains(t *testing.T) {
 // registerDomain registers a domain with NameNew + NameFirstUpdate in a single block at given height.
 func registerDomain(t *testing.T, st *impl.NamecoinState, height uint64, owner, domain, salt, ip string) {
 	t.Helper()
-	commit := impl.HashString(domain + salt)
-	txNew := buildTx(t, impl.NameNewCommandName, owner, impl.NameNew{Commitment: commit})
+	commit := impl.HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", domain, salt))
+	txNew := buildTx(t, impl.NameNewCommandName, owner, impl.NameNew{Commitment: commit, TTL: impl.DefaultDomainTTLBlocks})
 	txFirst := buildTx(t, impl.NameFirstUpdateCommandName, owner, impl.NameFirstUpdate{
 		Domain: domain,
 		Salt:   salt,
@@ -179,4 +179,3 @@ func registerDomain(t *testing.T, st *impl.NamecoinState, height uint64, owner, 
 		Transactions: []types.Tx{txNew, txFirst},
 	}))
 }
-

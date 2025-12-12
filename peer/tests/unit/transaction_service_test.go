@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -51,7 +52,8 @@ func TestTransactionServiceValidateTransactionFirstUpdateCommitmentMismatch(t *t
 	}
 
 	// Set up the correct commitment for initial validation to pass
-	state.SetCommitment(tx.From, impl.HashString(payload.Domain+payload.Salt))
+	correctCommit := impl.HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", payload.Domain, payload.Salt))
+	state.SetCommitment(tx.From, correctCommit)
 
 	require.NoError(t, service.ValidateTransaction(&tx))
 
