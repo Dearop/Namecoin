@@ -217,9 +217,9 @@ describe('Wallet.vue', () => {
       
       localStorage.clear();
       
-      await wrapper.vm.handleFirstUpdate({ domain: 'test.domain', salt: 'salt' });
+      await wrapper.vm.handleFirstUpdate({ domain: 'test.domain', salt: 'salt'});
       
-      expect(wrapper.vm.status).toContain('Miner ID not found');
+      expect(wrapper.vm.status).toContain('Please enter an IP address');
     });
   });
 

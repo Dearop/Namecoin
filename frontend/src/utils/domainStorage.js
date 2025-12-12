@@ -1,6 +1,6 @@
 // Domain storage utilities for tracking pending domains
 
-export function savePendingDomain(minerID, domain, salt, commitment) {
+export function savePendingDomain(minerID, domain, salt, commitment, txid) {
   const key = `pending_domains_${minerID}`;
   const existing = JSON.parse(localStorage.getItem(key) || '[]');
   
@@ -9,6 +9,7 @@ export function savePendingDomain(minerID, domain, salt, commitment) {
     domain,
     salt,
     commitment,
+    txid,
     timestamp: Date.now(),
     status: 'pending' // pending, revealed
   });

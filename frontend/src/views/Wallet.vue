@@ -87,7 +87,7 @@
                 <input 
                   v-model="domain.revealIp" 
                   type="text" 
-                  placeholder="Enter IP address (optional)"
+                  placeholder="Enter IP address"
                   class="ip-input"
                   :disabled="isProcessing"
                 />
@@ -315,8 +315,8 @@ async function handleSubmit() {
     if (response && response.status === 'success') {
       lastTxId.value = completeTx.transactionID;
       
-      // Save pending domain with salt for later reveal
-      savePendingDomain(minerID, domainName.value, salt, hashedDomain);
+      // Save pending domain with salt and namenew txid for later reveal
+      savePendingDomain(minerID, domainName.value, salt, hashedDomain, completeTx.transactionID);
       
       status.value = `Commitment created! Wait for it to be mined in a block before revealing. Check "My Domains" section below.`;
       domainName.value = '';
@@ -336,6 +336,10 @@ async function handleSubmit() {
 
 async function handleFirstUpdate(pending) {
   if (!isWalletLoaded.value) return;
+  if (!pending.revealIp || !pending.revealIp.trim()) {
+    status.value = 'Please enter an IP address';
+    return;
+  }
   
   isProcessing.value = true;
   status.value = 'Revealing domain...';
@@ -355,8 +359,9 @@ async function handleFirstUpdate(pending) {
       payload: {
         domain: pending.domain,
         salt: pending.salt,
-        ip: pending.revealIp ? pending.revealIp.trim() : '',
-        ttl: pending.revealTtl || 0
+        ip: pending.revealIp.trim(),
+        ttl: pending.revealTtl || 0,
+        txid: pending.txid
       },
       pk: wallet.value.publicKey
     });

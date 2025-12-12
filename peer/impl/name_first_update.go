@@ -14,6 +14,7 @@ type NameFirstUpdate struct {
 	Salt   string `json:"salt"`   // Must match the original commitment
 	IP     string `json:"ip"`     // IP address the user wants to bind
 	TTL    uint64 `json:"ttl,omitempty"`
+	TxID   string `json:"txid"` // The txid of the corresponding name_new transaction
 }
 
 // Name implements NamecoinCommand
@@ -103,8 +104,8 @@ func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (str
 
 	commitment := HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", n.Domain, n.Salt))
 	// Use the referenced name_new outpoint (txid:0 in the single-output MVP).
-	in := tx.Inputs[0]
-	key := OutpointKey(in.TxID, 0)
+	log.Info().Msgf("NameFirstUpdate: resolving commitment for input %s", n.TxID)
+	key := OutpointKey(n.TxID, 0)
 
 	storedCommit, ok := st.GetCommitment(key)
 	if !ok {
