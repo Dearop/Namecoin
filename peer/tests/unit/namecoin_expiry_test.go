@@ -17,6 +17,7 @@ func buildTx(t *testing.T, typ, from string, payload any) types.Tx {
 	return types.Tx{
 		From:    from,
 		Type:    typ,
+		Amount:  1,
 		Payload: raw,
 	}
 }

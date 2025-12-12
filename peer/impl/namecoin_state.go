@@ -287,6 +287,9 @@ func (st *NamecoinState) pruneExpired(height uint64) {
 		for _, name := range names {
 			if rec, ok := st.Domains[name]; ok && rec.ExpiresAt == expHeight {
 				delete(st.Domains, name)
+				// Once a domain has fully expired, allow it to be
+				// registered again by clearing its claimed marker.
+				delete(st.ClaimedDomains, name)
 			}
 		}
 		delete(st.expires, expHeight)
