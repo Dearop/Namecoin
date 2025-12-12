@@ -127,7 +127,7 @@ func AssembleBlock(h *types.BlockHeader, pending []types.Tx, minersPubKey string
 
 	txs := append([]types.Tx{rewardTx}, pending...)
 
-	root, err := computeTxRoot(txs)
+	root, err := ComputeTxRoot(txs)
 	if err != nil {
 		panic(fmt.Sprintf("failed to compute TxRoot: %v", err))
 	}
