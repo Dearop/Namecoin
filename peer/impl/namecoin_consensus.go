@@ -3,6 +3,7 @@ package impl
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
 
 	"go.dedis.ch/cs438/peer"
 	"go.dedis.ch/cs438/types"
@@ -56,10 +57,13 @@ func HeaderBuilderFactory() PoWHeaderBuilderFactory {
 
 // MineAndApply mines a block using the provided stop channel, validates it, and
 // applies it. It returns the mined block and any error from validation/apply.
-func (c *NamecoinConsensus) MineAndApply(stop <-chan struct{}, baseHeader *types.BlockHeader) (types.Block, error) {
+func (c *NamecoinConsensus) MineAndApply(stop <-chan struct{}, baseHeader *types.BlockHeader, target *big.Int) (types.Block, error) {
 	// Build the header builder for PoW hashing using the current base header.
 	if baseHeader == nil {
 		return types.Block{}, xerrors.Errorf("invalid base header for namecoin miner")
+	}
+	if target == nil {
+		return types.Block{}, xerrors.Errorf("invalid difficulty target for namecoin miner")
 	}
 
 	// we need to ensure that the order of the transaction is not changed in case of block complexity is less than expected
@@ -69,10 +73,13 @@ func (c *NamecoinConsensus) MineAndApply(stop <-chan struct{}, baseHeader *types
 	// Set the TxRoot on the base header before mining so the header bytes used
 	// for PoW match those used during validation.
 	hdrBase := *baseHeader
+	hdrBase.Difficulty = EncodeDifficulty(target)
 	_ = AssembleBlock(&hdrBase, pending, c.powCfg.PubKey)
 
 	headerBuilder := c.buildHeader(&hdrBase)
-	nonce, ts, ok := MineNonce(headerBuilder, c.powCfg, stop)
+	cfg := c.powCfg
+	cfg.Target = target
+	nonce, ts, ok := MineNonce(headerBuilder, cfg, stop)
 	if !ok {
 		// mining aborted, requeue drained transactions
 		c.txBuffer.Requeue(order, snapshot)
@@ -84,7 +91,7 @@ func (c *NamecoinConsensus) MineAndApply(stop <-chan struct{}, baseHeader *types
 	hdr.Timestamp = ts
 
 	block := AssembleBlock(&hdr, pending, c.powCfg.PubKey)
-	isComplexityValid := IsBlockComplexityValid(block, c.powCfg.Target)
+	isComplexityValid := IsBlockComplexityValid(block, target)
 	if !isComplexityValid {
 		c.txBuffer.Requeue(order, snapshot)
 		return block, xerrors.Errorf("block complexity is not valid")
@@ -105,7 +112,7 @@ var (
 )
 
 func validateConsensusDeps(cfg peer.PoWConfig, buffer *TxBuffer) error {
-	if cfg.Target == nil || buffer == nil {
+	if buffer == nil {
 		return ErrInvalidConfig
 	}
 	return nil

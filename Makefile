@@ -28,7 +28,7 @@ test_unit_hw3:
 	go test -timeout 2m -v -race -run Test_HW3 ./peer/tests/unit
 
 test_unit_POW:
-	go test -timeout 2m -v -race -run 'Test(MineNonce|CheckWork)' ./peer/tests/unit
+	go test -timeout 2m -v -race -run 'Test(MineNonce|CheckWork|EncodeDecodeDifficulty|AdjustDifficultyClamps|IsBlockComplexityValid)' ./peer/tests/unit
 
 test_unit_transaction_service:
 	go test -timeout 2m -v -race -run TestTransactionService ./peer/tests/unit
@@ -62,6 +62,9 @@ test_int_node_dns:
 
 test_int_namecoin_expiry:
 	go test -timeout 5m -v -race -run TestNamecoinExpiryResolver ./peer/tests/integration
+
+test_int_namecoin_pow:
+	go test -timeout 5m -v -race -run 'Test_Namecoin_Integration_' ./peer/tests/integration
 
 # JSONIFY is set to "-json" in CI to format for GitHub, empty for displaying locally
 # || true allows to ignore error code and allow for smoother output logging

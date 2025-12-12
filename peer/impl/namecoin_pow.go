@@ -16,6 +16,11 @@ import (
 type PoWHeaderBuilder func(nonce uint64, ts int64) []byte
 
 var defaultTarget = new(big.Int).Lsh(big.NewInt(1), 240) // Easy default, overridden by config.
+const (
+	defaultTargetBlockTime = 10 * time.Second
+	defaultMaxAdjustUp     = 4.0
+	defaultMaxAdjustDown   = 0.25
+)
 
 // CheckWork returns true if the given header bytes hash below the target.
 func CheckWork(header []byte, target *big.Int) bool {
@@ -29,6 +34,83 @@ func CheckWork(header []byte, target *big.Int) bool {
 	hash := sha256.Sum256(header)
 	num := new(big.Int).SetBytes(hash[:])
 	return num.Cmp(t) <= 0
+}
+
+// EncodeDifficulty renders the target as a fixed-width big-endian slice to be
+// stored in the block header. Nil targets are encoded using the default target.
+func EncodeDifficulty(target *big.Int) []byte {
+	t := effectiveTarget(target)
+	out := make([]byte, 32)
+	b := t.Bytes()
+	switch {
+	case len(b) > len(out):
+		// If the target exceeds 256 bits, encode the max 256-bit value so the
+		// header represents the easiest possible target.
+		for i := range out {
+			out[i] = 0xFF
+		}
+	case len(b) == len(out):
+		copy(out, b)
+	default:
+		copy(out[len(out)-len(b):], b)
+	}
+	return out
+}
+
+// DecodeDifficulty parses a big-endian target stored in the block header.
+// Returns nil if the slice is empty.
+func DecodeDifficulty(b []byte) *big.Int {
+	if len(b) == 0 {
+		return nil
+	}
+	return new(big.Int).SetBytes(b)
+}
+
+// AdjustDifficulty computes the next target given the previous target and the
+// observed spacing between blocks. The adjustment is bounded to avoid large
+// oscillations.
+func AdjustDifficulty(
+	prevTarget *big.Int,
+	spacing time.Duration,
+	targetBlockTime time.Duration,
+	maxAdjustUp, maxAdjustDown float64,
+) *big.Int {
+	if prevTarget == nil {
+		prevTarget = defaultTarget
+	}
+	if targetBlockTime <= 0 {
+		targetBlockTime = defaultTargetBlockTime
+	}
+	if maxAdjustUp <= 0 {
+		maxAdjustUp = defaultMaxAdjustUp
+	}
+	if maxAdjustDown <= 0 {
+		maxAdjustDown = defaultMaxAdjustDown
+	}
+
+	// Normalize spacing; avoid zero/negative durations.
+	if spacing <= 0 {
+		spacing = time.Second
+	}
+
+	ratio := new(big.Rat).SetFloat64(float64(spacing) / float64(targetBlockTime))
+	// Clamp ratio between maxAdjustDown (harder) and maxAdjustUp (easier).
+	minFactor := maxAdjustDown
+	maxFactor := maxAdjustUp
+	if ratioNum, _ := ratio.Float64(); ratioNum < minFactor {
+		ratio = new(big.Rat).SetFloat64(minFactor)
+	} else if ratioNum > maxFactor {
+		ratio = new(big.Rat).SetFloat64(maxFactor)
+	}
+
+	num := new(big.Rat).SetInt(prevTarget)
+	num.Mul(num, ratio)
+
+	out := new(big.Int).Div(num.Num(), num.Denom())
+	if out.Sign() == 0 {
+		out = big.NewInt(1)
+	}
+	return out
 }
 
 // MineNonce runs a simple PoW search by iterating nonces until the header hash

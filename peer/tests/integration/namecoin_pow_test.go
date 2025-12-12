@@ -188,6 +188,8 @@ func Test_Namecoin_Integration_BadPoWBlockRejected(t *testing.T) {
 		Height:   0,
 		PrevHash: nil,
 		Miner:    powCfg.PubKey,
+		// Difficulty must match the chain's expected target.
+		Difficulty: impl.EncodeDifficulty(powCfg.Target),
 	}
 	block := impl.AssembleBlock(&header, nil, powCfg.PubKey)
 
@@ -240,12 +242,14 @@ func Test_Namecoin_Integration_ValidPoWInvalidStructureRejected(t *testing.T) {
 	require.NoError(t, err)
 	headHeightBefore := chainBefore.HeadHeight()
 	headHashBefore := chainBefore.HeadHash()
+	target := chainBefore.NextPowTarget()
 
 	// Build a structurally invalid block: txRoot in header doesn't match transactions.
 	header := types.BlockHeader{
-		Height:   0,
-		PrevHash: nil,
-		Miner:    powCfg.PubKey,
+		Height:     0,
+		PrevHash:   nil,
+		Miner:      powCfg.PubKey,
+		Difficulty: impl.EncodeDifficulty(target),
 	}
 	// Start from a valid block, then mutate transactions without updating TxRoot.
 	validBlock := impl.AssembleBlock(&header, nil, powCfg.PubKey)
@@ -296,9 +300,10 @@ func Test_Namecoin_Integration_SecondBlockSameHeightRejected(t *testing.T) {
 
 	// First genesis-like block (height 0, prevHash nil) should be accepted.
 	header1 := types.BlockHeader{
-		Height:   0,
-		PrevHash: nil,
-		Miner:    miner,
+		Height:     0,
+		PrevHash:   nil,
+		Miner:      miner,
+		Difficulty: impl.EncodeDifficulty(chain.NextPowTarget()),
 	}
 	block1 := impl.AssembleBlock(&header1, nil, miner)
 	require.NoError(t, chain.ApplyBlock(&block1), "expected first genesis block to be accepted")
@@ -316,9 +321,10 @@ func Test_Namecoin_Integration_SecondBlockSameHeightRejected(t *testing.T) {
 	// Second block at the same height 0 should be rejected because the chain
 	// head is no longer nil; it does not extend the current head.
 	header2 := types.BlockHeader{
-		Height:   0,
-		PrevHash: nil,
-		Miner:    miner,
+		Height:     0,
+		PrevHash:   nil,
+		Miner:      miner,
+		Difficulty: impl.EncodeDifficulty(chain.NextPowTarget()),
 	}
 	block2 := impl.AssembleBlock(&header2, nil, miner)
 	err = chain.ApplyBlock(&block2)
@@ -367,9 +373,10 @@ func Test_Namecoin_Integration_NameNewCommitmentPersistsAcrossBlocks(t *testing.
 	txNewID, err := impl.BuildTransactionID(&txNew)
 	require.NoError(t, err)
 	header0 := types.BlockHeader{
-		Height:   0,
-		PrevHash: nil,
-		Miner:    miner,
+		Height:     0,
+		PrevHash:   nil,
+		Miner:      miner,
+		Difficulty: impl.EncodeDifficulty(chain.NextPowTarget()),
 	}
 	block0 := impl.AssembleBlock(&header0, []types.Tx{txNew}, miner)
 	require.NoError(t, chain.ApplyBlock(&block0), "expected name_new block to be accepted")
@@ -385,9 +392,10 @@ func Test_Namecoin_Integration_NameNewCommitmentPersistsAcrossBlocks(t *testing.
 
 	// Block 1 (empty pending set) should keep the commitment intact.
 	header1 := types.BlockHeader{
-		Height:   1,
-		PrevHash: chainAfterFirst.HeadHash(),
-		Miner:    miner,
+		Height:     1,
+		PrevHash:   chainAfterFirst.HeadHash(),
+		Miner:      miner,
+		Difficulty: impl.EncodeDifficulty(chain.NextPowTarget()),
 	}
 	block1 := impl.AssembleBlock(&header1, nil, miner)
 	require.NoError(t, chain.ApplyBlock(&block1), "expected second block to be accepted")

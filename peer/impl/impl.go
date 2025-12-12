@@ -42,7 +42,7 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 	if err != nil {
 		panic(err)
 	}
-	namecoinChain.SetPowTarget(conf.PoWConfig.Target)
+	namecoinChain.ConfigurePow(conf.PoWConfig)
 
 	transactionService := NewTransactionService(namecoinChain.state)
 
@@ -306,7 +306,12 @@ func (n *node) MinerDoWork() error {
 	n.mu.RLock()
 	headHash := n.NamecoinChain.HeadHash()
 	headHeight := n.NamecoinChain.HeadHeight()
+	target := n.NamecoinChain.NextPowTarget()
 	n.mu.RUnlock()
+
+	if target == nil {
+		target = effectiveTarget(n.conf.PoWConfig.Target)
+	}
 
 	nextHeight := headHeight + 1
 	if headHash == nil {
@@ -320,7 +325,7 @@ func (n *node) MinerDoWork() error {
 	}
 
 	// Mine block
-	block, err := n.namecoinConsensus.MineAndApply(n.minerStopCh, &base)
+	block, err := n.namecoinConsensus.MineAndApply(n.minerStopCh, &base, target)
 	if err != nil {
 		return err
 	}

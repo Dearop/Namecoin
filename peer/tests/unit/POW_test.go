@@ -177,6 +177,31 @@ func TestIsBlockComplexityValid(t *testing.T) {
 	}
 }
 
+func TestEncodeDecodeDifficulty(t *testing.T) {
+	target := big.NewInt(1234567890)
+	enc := impl.EncodeDifficulty(target)
+	if len(enc) != 32 {
+		t.Fatalf("expected fixed width encoding, got %d", len(enc))
+	}
+	dec := impl.DecodeDifficulty(enc)
+	if target.Cmp(dec) != 0 {
+		t.Fatalf("expected decoded target %v, got %v", target, dec)
+	}
+}
+
+func TestAdjustDifficultyClamps(t *testing.T) {
+	prev := big.NewInt(1000)
+	higher := impl.AdjustDifficulty(prev, 100*time.Second, 10*time.Second, 4, 0.25)
+	if higher.Cmp(big.NewInt(4000)) != 0 {
+		t.Fatalf("expected adjustment capped to 4x, got %v", higher)
+	}
+
+	lower := impl.AdjustDifficulty(prev, time.Second, 10*time.Second, 4, 0.25)
+	if lower.Cmp(big.NewInt(250)) != 0 {
+		t.Fatalf("expected adjustment capped to 0.25x, got %v", lower)
+	}
+}
+
 // Helpers
 
 func sha256Sum(b []byte) [32]byte {
