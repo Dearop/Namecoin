@@ -33,7 +33,8 @@ func (n NameNew) ValidateWithInputs(_ *NamecoinState, tx *types.Tx) error {
 	return nil
 }
 
-func (n NameNew) ApplyState(st *NamecoinState, _ *types.Tx) error {
+func (n NameNew) ApplyState(st *NamecoinState, tx *types.Tx) error {
+	st.SetCommitment(tx.From, n.Commitment)
 	// Store TTL preference keyed by commitment; applied during firstupdate
 	ttl := n.TTL
 	if ttl == 0 {

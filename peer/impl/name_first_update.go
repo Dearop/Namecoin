@@ -25,13 +25,6 @@ func (n NameFirstUpdate) Validate(st *NamecoinState, tx *SignedTransaction) erro
 	if n.Domain == "" || n.Salt == "" || n.IP == "" {
 		return fmt.Errorf("invalid name_firstupdate payload")
 	}
-	// Must match earlier commitment
-	storedCommit, ok := st.GetCommitment(tx.From)
-	//TODO: Update, to avoid collisions.
-	if !ok || HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", n.Domain, n.Salt)) != storedCommit {
-		return fmt.Errorf("commitment mismatch for domain %s with commit %s with stored commit %s",
-			HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", n.Domain, n.Salt)), n.Domain, storedCommit)
-	}
 
 	if rec, ok := st.getDomain(n.Domain); ok && !st.isExpired(rec, st.CurrentHeight()) {
 		return xerrors.New("domain already exists")
