@@ -94,6 +94,7 @@ func Test_Namecoin_State_ApplyTx_FirstUpdateCreatesDomainAndUpdatesUTXO(t *testi
 		Domain: domain,
 		Salt:   salt,
 		IP:     ip,
+		TxID:   commitTxID,
 	}
 
 	tx := types.Tx{
