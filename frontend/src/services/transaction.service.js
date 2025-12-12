@@ -21,7 +21,6 @@ export async function computeTransactionID(tx) {
     from: tx.from,
     amount: tx.amount,
     payload: tx.payload,
-    pk : tx.pk
   });
   console.log('[DEBUG] computeTransactionID - computed txID:', txID);
   

@@ -22,7 +22,8 @@ func (t *TransactionService) ValidateTransaction(tx *SignedTransaction) error {
 	}
 
 	// 3. Verify signature
-	err = VerifySignature(pubKeyBytes, unsignedBytes, tx.Signature)
+	allUnsignedBytes := tx.SerializeTransactionSignature()
+	err = VerifySignature(pubKeyBytes, allUnsignedBytes, tx.Signature)
 	if err != nil {
 		return err
 	}

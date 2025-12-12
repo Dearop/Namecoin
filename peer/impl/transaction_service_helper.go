@@ -15,7 +15,18 @@ func (t *SignedTransaction) SerializeTransaction() []byte {
 		"from":    t.From,
 		"amount":  t.Amount,
 		"payload": t.Payload,
-		"pk":      t.Pk,
+	}
+
+	b, _ := canonicaljson.Marshal(data)
+	return b
+}
+
+func (t *SignedTransaction) SerializeTransactionSignature() []byte {
+	data := map[string]interface{}{
+		"type":    t.Type,
+		"from":    t.From,
+		"amount":  t.Amount,
+		"payload": t.Payload,
 	}
 
 	b, _ := canonicaljson.Marshal(data)

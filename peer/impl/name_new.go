@@ -3,7 +3,7 @@ package impl
 import (
 	"fmt"
 	"reflect"
-
+	"github.com/rs/zerolog/log"
 	"go.dedis.ch/cs438/types"
 )
 
@@ -54,6 +54,8 @@ func (n NameNew) ProcessTxState(st *NamecoinState, txID string, tx *types.Tx) er
 	}
 
 	key := OutpointKey(txID, 0)
+	//log that we are setting the commitment
+	log.Info().Msgf("NameNew ProcessTxState: setting commitment for key %s to %s", key, n.Commitment)
 	st.SetCommitment(key, n.Commitment)
 
 	return nil
