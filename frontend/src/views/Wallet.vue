@@ -89,7 +89,7 @@
                   type="text" 
                   placeholder="Enter IP address"
                   class="ip-input"
-                  :disabled="isProcessing"
+                  :disabled="domain.isRevealing"
                 />
                 <input 
                   v-model.number="domain.revealTtl" 
@@ -97,12 +97,12 @@
                   min="0"
                   placeholder="TTL (0=default)"
                   class="ttl-input"
-                  :disabled="isProcessing"
+                  :disabled="domain.isRevealing"
                 />
                 <button 
                   @click="handleFirstUpdate(domain)" 
                   class="action-btn primary"
-                  :disabled="isProcessing"
+                  :disabled="domain.isRevealing || !domain.revealIp"
                 >
                   Reveal Domain
                 </button>
@@ -115,7 +115,7 @@
                   type="text" 
                   placeholder="Enter new IP address"
                   class="ip-input"
-                  :disabled="isProcessing"
+                  :disabled="domain.isUpdating"
                 />
                 <input 
                   v-model.number="domain.updateTtl" 
@@ -123,12 +123,12 @@
                   min="0"
                   placeholder="TTL (0=default)"
                   class="ttl-input"
-                  :disabled="isProcessing"
+                  :disabled="domain.isUpdating"
                 />
                 <button 
                   @click="handleUpdate(domain)" 
                   class="action-btn primary"
-                  :disabled="isProcessing || !domain.newIp"
+                  :disabled="domain.isUpdating || !domain.newIp"
                 >
                   Update IP
                 </button>
@@ -173,7 +173,7 @@ import { hashDomainWithSalt, generateTransactionSignature, hashTransaction } fro
 import { buildTransaction, computeTransactionID } from '../services/transaction.service.js';
 import { sendTransaction, getMinerID } from '../services/api.service.js';
 import { generateSalt } from '../utils/hash.js';
-import { savePendingDomain, getPendingDomains, updateDomainStatus } from '../utils/domainStorage.js';
+import { savePendingDomain, getPendingDomains, updateDomainStatus, removePendingDomain } from '../utils/domainStorage.js';
 
 const router = useRouter();
 const isConnected = ref(false);
@@ -213,7 +213,9 @@ function loadMyDomains() {
     revealIp: d.ip || '', // IP for first_update (reveal)
     revealTtl: 0, // TTL for first_update
     newIp: d.ip || '', // IP for update
-    updateTtl: 0 // TTL for update
+    updateTtl: 0, // TTL for update
+    isRevealing: false,
+    isUpdating: false
   }));
 }
 
@@ -341,7 +343,7 @@ async function handleFirstUpdate(pending) {
     return;
   }
   
-  isProcessing.value = true;
+  pending.isRevealing = true;
   status.value = 'Revealing domain...';
   
   try {
@@ -396,9 +398,19 @@ async function handleFirstUpdate(pending) {
     }
   } catch (error) {
     console.error('[Wallet] First update error:', error);
-    status.value = `Error: ${error.message || 'Unknown error occurred'}`;
+    const msg = error.message || 'Unknown error occurred';
+    status.value = `Error: ${msg}`;
+
+    // If backend reports the domain already exists, remove it from pending domains
+    if (msg.toLowerCase().includes('domain already exists')) {
+      const minerID = localStorage.getItem('minerID');
+      if (minerID) {
+        removePendingDomain(minerID, pending.domain);
+        loadMyDomains();
+      }
+    }
   } finally {
-    isProcessing.value = false;
+    pending.isRevealing = false;
   }
 }
 
@@ -409,7 +421,7 @@ async function handleUpdate(domain) {
     return;
   }
   
-  isProcessing.value = true;
+  domain.isUpdating = true;
   status.value = `Updating IP for ${domain.domain}...`;
   
   try {
@@ -461,7 +473,7 @@ async function handleUpdate(domain) {
     console.error('[Wallet] Update error:', error);
     status.value = `Error: ${error.message || 'Unknown error occurred'}`;
   } finally {
-    isProcessing.value = false;
+    domain.isUpdating = false;
   }
 }
 
