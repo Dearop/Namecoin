@@ -140,8 +140,8 @@ func Test_Namecoin_Integration_LongestChain_FiveNodes(t *testing.T) {
 func Test_Namecoin_Integration_LongestChain_PartitionMerge(t *testing.T) {
 	skipIfWIndows(t)
 
-	easyTarget := new(big.Int).Lsh(big.NewInt(1), 247)
-	midTarget := new(big.Int).Lsh(big.NewInt(1), 243)
+	easyTarget := new(big.Int).Lsh(big.NewInt(1), 244)
+	midTarget := new(big.Int).Lsh(big.NewInt(1), 241)
 
 	optsFor := func(target *big.Int, minerID string, hb time.Duration) []z.Option {
 		return []z.Option{
@@ -182,8 +182,9 @@ func Test_Namecoin_Integration_LongestChain_PartitionMerge(t *testing.T) {
 	connectGroup(nodes[2:])
 
 	// Each partition mines independently for a bit.
-	waitForHeight(t, nodes[:2], 3, 15*time.Second)
+	waitForHeight(t, nodes[:2], 5, 15*time.Second)
 	waitForHeight(t, nodes[2:], 3, 15*time.Second)
+	stopMinersFor(t, nodes)
 
 	// Verify each partition is internally consistent but diverged from the other.
 	headA, heightA := waitForCommonHead(t, nodes[:2], 5*time.Second)
@@ -205,7 +206,6 @@ func Test_Namecoin_Integration_LongestChain_PartitionMerge(t *testing.T) {
 
 	// Allow growth on the merged network, then stop miners and ensure convergence.
 	waitForHeight(t, nodes, 6, 15*time.Second)
-	stopMinersFor(t, nodes)
 	time.Sleep(time.Second)
 
 	head, height := waitForCommonHead(t, nodes, 15*time.Second)
