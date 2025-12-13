@@ -35,8 +35,10 @@
               v-model.number="ttl" 
               type="number"
               min="0"
+              step="1"
               placeholder="0 for default"
               :disabled="isProcessing"
+              @input="ttl = Math.max(0, Math.floor(Number(ttl) || 0))"
             />
             <small class="form-hint">Number of blocks the reservation will live. 0 uses default TTL (36,000 blocks).</small>
           </div>
@@ -95,9 +97,11 @@
                   v-model.number="domain.revealTtl" 
                   type="number" 
                   min="0"
+                  step="1"
                   placeholder="TTL (0=default)"
                   class="ttl-input"
                   :disabled="domain.isRevealing"
+                  @input="domain.revealTtl = Math.max(0, Math.floor(Number(domain.revealTtl) || 0))"
                 />
                 <button 
                   @click="handleFirstUpdate(domain)" 
@@ -121,9 +125,11 @@
                   v-model.number="domain.updateTtl" 
                   type="number" 
                   min="0"
+                  step="1"
                   placeholder="TTL (0=default)"
                   class="ttl-input"
                   :disabled="domain.isUpdating"
+                  @input="domain.updateTtl = Math.max(0, Math.floor(Number(domain.updateTtl) || 0))"
                 />
                 <button 
                   @click="handleUpdate(domain)" 
