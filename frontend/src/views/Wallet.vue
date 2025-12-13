@@ -158,7 +158,6 @@
             <div class="domain-name">{{ domain.name }}</div>
             <div class="domain-info">
               <span class="domain-owner">Owner: {{ domain.owner }}</span>
-              <span class="domain-block">Block: {{ domain.blockHeight }}</span>
             </div>
           </div>
         </div>
@@ -523,8 +522,7 @@ async function fetchDomains() {
     domains.value = allDomains.map(record => ({
       name: record.Domain || record.domain,
       owner: record.Owner || record.owner,
-      ip: record.IP || record.ip,
-      blockHeight: record.ExpiresAt || record.expiresAt || 'N/A'
+      ip: record.IP || record.ip
     }));
     
     domainsLoaded.value = true;
