@@ -21,7 +21,7 @@ func Test_Namecoin_Integration_LongestChain_TwoNodes(t *testing.T) {
 	skipIfWIndows(t)
 
 	//easyTarget := new(big.Int).Lsh(big.NewInt(1), 255)
-	hardTarget := new(big.Int).Lsh(big.NewInt(1), 240)
+	hardTarget := new(big.Int).Lsh(big.NewInt(1), 242)
 	sharedTransport := udpFac()
 
 	newOpts := func(minerID string) []z.Option {
@@ -58,7 +58,7 @@ func Test_Namecoin_Integration_LongestChain_TwoNodes(t *testing.T) {
 func Test_Namecoin_Integration_LongestChain_ThreeNodes(t *testing.T) {
 	skipIfWIndows(t)
 
-	fastTarget := new(big.Int).Lsh(big.NewInt(1), 240)
+	fastTarget := new(big.Int).Lsh(big.NewInt(1), 242)
 	baseOpts := func(minerID string) []z.Option {
 		return []z.Option{
 			z.WithPoWConfig(peer.PoWConfig{Target: fastTarget, PubKey: minerID}),
@@ -97,8 +97,8 @@ func Test_Namecoin_Integration_LongestChain_ThreeNodes(t *testing.T) {
 func Test_Namecoin_Integration_LongestChain_FiveNodes(t *testing.T) {
 	skipIfWIndows(t)
 
-	easyTarget := new(big.Int).Lsh(big.NewInt(1), 240)
-	midTarget := new(big.Int).Lsh(big.NewInt(1), 236)
+	easyTarget := new(big.Int).Lsh(big.NewInt(1), 241)
+	midTarget := new(big.Int).Lsh(big.NewInt(1), 239)
 
 	optsFor := func(target *big.Int, minerID string, hb time.Duration) []z.Option {
 		return []z.Option{
@@ -140,8 +140,8 @@ func Test_Namecoin_Integration_LongestChain_FiveNodes(t *testing.T) {
 func Test_Namecoin_Integration_LongestChain_PartitionMerge(t *testing.T) {
 	skipIfWIndows(t)
 
-	easyTarget := new(big.Int).Lsh(big.NewInt(1), 240)
-	midTarget := new(big.Int).Lsh(big.NewInt(1), 236)
+	easyTarget := new(big.Int).Lsh(big.NewInt(1), 242)
+	midTarget := new(big.Int).Lsh(big.NewInt(1), 239)
 
 	optsFor := func(target *big.Int, minerID string, hb time.Duration) []z.Option {
 		return []z.Option{
@@ -182,8 +182,8 @@ func Test_Namecoin_Integration_LongestChain_PartitionMerge(t *testing.T) {
 	connectGroup(nodes[2:])
 
 	// Each partition mines independently for a bit.
-	waitForHeight(t, nodes[:2], 3, 12*time.Second)
-	waitForHeight(t, nodes[2:], 3, 12*time.Second)
+	waitForHeight(t, nodes[:2], 3, 15*time.Second)
+	waitForHeight(t, nodes[2:], 3, 15*time.Second)
 
 	// Verify each partition is internally consistent but diverged from the other.
 	headA, heightA := waitForCommonHead(t, nodes[:2], 5*time.Second)
