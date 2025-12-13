@@ -304,6 +304,9 @@ func (st *NamecoinState) pruneExpired(height uint64) {
 		for _, name := range names {
 			if rec, ok := st.Domains[name]; ok && rec.ExpiresAt == expHeight {
 				delete(st.Domains, name)
+				// Once a domain has fully expired, allow it to be
+				// registered again by clearing its claimed marker.
+				delete(st.ClaimedDomains, name)
 			}
 		}
 		delete(st.expires, expHeight)
@@ -325,12 +328,12 @@ func (st *NamecoinState) ApplyTx(txID string, tx *types.Tx) error {
 
 	// BurnUTXOs first making sure the user hasn't burned the same UTXOs already
 	// First transaction in Block is always Reward to ensure that miner gets reward even if user transaction is reverted
-	err := st.ProcessCommandTransactionStateUpdate(txID, tx)
+	err := st.ApplyCommandUTXO(txID, tx)
 	if err != nil {
 		return err
 	}
 
-	err = st.ProcessCommandStateUpdate(tx)
+	err = st.ApplyCommandState(tx)
 	if err != nil {
 		return err
 	}
@@ -379,20 +382,20 @@ func (st *NamecoinState) MarkAsApplied(txID string) {
 	st.txMap[txID] = struct{}{}
 }
 
-func (st *NamecoinState) ProcessCommandTransactionStateUpdate(txID string, tx *types.Tx) error {
+func (st *NamecoinState) ApplyCommandUTXO(txID string, tx *types.Tx) error {
 	cmd, err := ResolveCommand(tx.Type, tx.Payload)
 	if err != nil {
 		return err
 	}
-	return cmd.ProcessTxState(st, txID, tx)
+	return cmd.ApplyUTXO(st, txID, tx)
 }
 
-func (st *NamecoinState) ProcessCommandStateUpdate(tx *types.Tx) error {
+func (st *NamecoinState) ApplyCommandState(tx *types.Tx) error {
 	cmd, err := ResolveCommand(tx.Type, tx.Payload)
 	if err != nil {
 		return err
 	}
-	return cmd.ProcessState(st, tx)
+	return cmd.ApplyState(st, tx)
 }
 
 // ValidateCommand verifies the payload of a signed transaction based on its type

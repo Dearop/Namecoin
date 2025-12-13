@@ -211,26 +211,43 @@ func (n *node) NamecoinChainState() *NamecoinChain {
 }
 
 // DNSServerAddr returns the bound DNS server address (testing helper).
-func (n *node) DNSServerAddr() string {
+func (n *node) GetDNSAddr() string {
 	if n.dnsServer == nil {
 		return ""
 	}
 	return n.dnsServer.Addr()
 }
 
+func (n *node) GetMinerID() string {
+	return n.conf.PoWConfig.PubKey
+}
+
 func (n *node) HandleNamecoinCommand(buf []byte) error {
+	log.Printf("[DEBUG] Received raw bytes: %s", string(buf))
+
 	var transaction SignedTransaction
 	err := json.Unmarshal(buf, &transaction)
 	if err != nil {
+		log.Printf("[ERROR] Failed to unmarshal transaction: %v", err)
 		return err
 	}
+
+	//log that we received a transaction
+	log.Printf("Received Namecoin transaction: %+v", transaction)
+	log.Printf("[DEBUG] Transaction fields - Type: %s, From: %s, Amount: %d, Payload: %s, TxID: %s",
+		transaction.Type, transaction.From, transaction.Amount, string(transaction.Payload), transaction.TxID)
 
 	err = n.transactionService.ValidateTransaction(&transaction)
 	if err != nil {
 		return err
 	}
 
-	inputs, outputs, err := n.transactionService.VerifyBalance(transaction.TxID, transaction.From, transaction.Amount)
+	// Use the miner's public key for balance verification instead of transaction.From
+	// The miner receives mining rewards, so UTXOs are stored under the miner's key
+	minerPubKey := n.conf.PoWConfig.PubKey
+	log.Printf("[DEBUG] Using miner's public key for balance: %s", minerPubKey)
+
+	inputs, outputs, err := n.transactionService.VerifyBalance(transaction.TxID, minerPubKey, transaction.Amount)
 	if err != nil {
 		return err
 	}

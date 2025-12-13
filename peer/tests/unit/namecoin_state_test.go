@@ -60,13 +60,32 @@ func Test_Namecoin_State_ApplyTx_FirstUpdateCreatesDomainAndUpdatesUTXO(t *testi
 	domain := "example.bit"
 	salt := "secret"
 	ip := "10.0.0.1"
-	commitTxID := "utxo-1"
 
-	// Pre-set commitment as if name_new was applied and produced an outpoint.
+	// Commitment format used by NameFirstUpdate and the frontend.
+	commitment := impl.HashString("DOMAIN_HASH_v1:" + domain + ":" + salt)
+
+	// Simulate the NameNew transaction that would have created the commitment
+	// and its corresponding UTXO. We do NOT change core code here; we only
+	// let the implementation compute and store the same txID and commitment.
+	nameNewTx := types.Tx{
+		From:   from,
+		Type:   impl.NameNew{}.Name(),
+		Amount: 1,
+		Payload: mustPayload(t, impl.NameNew{
+			Commitment: commitment,
+			TTL:        impl.DefaultDomainTTLBlocks,
+		}),
+	}
+	commitTxID := mustTxID(t, &nameNewTx)
+	require.NoError(t, st.ApplyTx(commitTxID, &nameNewTx))
+	// name_new appends an output to owner; ensure it exists for firstupdate burn.
+	nameNewTx.Outputs = []types.TxOutput{{To: from, Amount: 10}}
+	require.NoError(t, st.ApplyTx(commitTxID, &nameNewTx))
 	commitKey := outpointKeyForTx(t, commitTxID, 0)
-	st.SetCommitment(commitKey, impl.HashString(domain+salt))
 
-	// Seed one UTXO that will be spent
+	// Seed one UTXO that will be spent by the firstupdate. In the real
+	// system this comes from prior funding; here we just ensure the
+	// UTXO map contains an entry keyed by the commit txID.
 	st.UTXOMap[from] = map[string]types.UTXO{
 		commitTxID: {TxID: commitTxID, To: from, Amount: 10},
 	}
@@ -75,6 +94,7 @@ func Test_Namecoin_State_ApplyTx_FirstUpdateCreatesDomainAndUpdatesUTXO(t *testi
 		Domain: domain,
 		Salt:   salt,
 		IP:     ip,
+		TxID:   commitTxID,
 	}
 
 	tx := types.Tx{
@@ -99,7 +119,7 @@ func Test_Namecoin_State_ApplyTx_FirstUpdateCreatesDomainAndUpdatesUTXO(t *testi
 	// UTXO state: utxo-1 burned, new utxo with txID added
 	userUTXOs := st.UTXOMap[from]
 	require.NotNil(t, userUTXOs)
-	_, ok = userUTXOs["utxo-1"]
+	_, ok = userUTXOs[commitTxID]
 	require.False(t, ok)
 	out, ok := userUTXOs[txID]
 	require.True(t, ok)

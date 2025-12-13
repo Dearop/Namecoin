@@ -16,8 +16,8 @@ var (
 
 type NamecoinCommand interface {
 	Name() string
-	ProcessState(st *NamecoinState, tx *types.Tx) error
-	ProcessTxState(st *NamecoinState, txID string, tx *types.Tx) error
+	ApplyState(st *NamecoinState, tx *types.Tx) error
+	ApplyUTXO(st *NamecoinState, txID string, tx *types.Tx) error
 	Validate(st *NamecoinState, tx *SignedTransaction) error
 }
 
@@ -43,7 +43,7 @@ func ResolveCommand(command string, payload json.RawMessage) (NamecoinCommand, e
 	return nil, fmt.Errorf("unknown command %s", command)
 }
 
-func ProcessTxStateGeneric(st *NamecoinState, txID string, tx *types.Tx) error {
+func ApplyUTXOGeneric(st *NamecoinState, txID string, tx *types.Tx) error {
 	txIDs := make([]string, len(tx.Inputs))
 	for i, value := range tx.Inputs {
 		txIDs[i] = value.TxID
