@@ -36,6 +36,11 @@ jobs:
           set -euo pipefail
           go test -json -timeout 5m -v -race -run Test_Namecoin ./peer/tests/unit 2>&1 | tee ./${{ github.run_attempt }}/gotest-namecoin-unit.log | gotestfmt
 
+      - name: Run namecoin integration tests
+        run: |
+          set -euo pipefail
+          go test -json -timeout 20m -v -race -run Test_Namecoin ./peer/tests/integration 2>&1 | tee ./${{ github.run_attempt }}/gotest-namecoin-unit.log | gotestfmt
+
       # Upload formatted logs
       - name: Upload namecoin unit test log
         uses: actions/upload-artifact@v4
