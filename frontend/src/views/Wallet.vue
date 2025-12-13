@@ -145,7 +145,7 @@
       <div class="dns-section">
         <h2>Registered Domains</h2>
         <button @click="fetchDomains" class="action-btn">
-          Ih Domains
+          Refresh Domains
         </button>
         <div v-if="domains.length > 0" class="domains-list">
           <div v-for="domain in domains" :key="domain.name" class="domain-item">
@@ -399,14 +399,26 @@ async function handleFirstUpdate(pending) {
   } catch (error) {
     console.error('[Wallet] First update error:', error);
     const msg = error.message || 'Unknown error occurred';
+    const msgLower = msg.toLowerCase();
     status.value = `Error: ${msg}`;
 
-    // If backend reports the domain already exists, remove it from pending domains
-    if (msg.toLowerCase().includes('domain already exists')) {
+    // Remove domain from localStorage if it has errors indicating it's invalid
+    const shouldRemove = 
+      msgLower.includes('domain already exists') ||
+      msgLower.includes('already exists') ||
+      msgLower.includes('already claimed') ||
+      msgLower.includes('already registered') ||
+      msgLower.includes('no matching') ||
+      msgLower.includes('commitment mismatch') ||
+      msgLower.includes('expired');
+
+    if (shouldRemove) {
       const minerID = localStorage.getItem('minerID');
       if (minerID) {
+        console.log(`[Wallet] Removing domain "${pending.domain}" from storage due to error`);
         removePendingDomain(minerID, pending.domain);
         loadMyDomains();
+        fetchDomains();
       }
     }
   } finally {
@@ -471,7 +483,27 @@ async function handleUpdate(domain) {
     }
   } catch (error) {
     console.error('[Wallet] Update error:', error);
-    status.value = `Error: ${error.message || 'Unknown error occurred'}`;
+    const msg = error.message || 'Unknown error occurred';
+    const msgLower = msg.toLowerCase();
+    status.value = `Error: ${msg}`;
+
+    // Remove domain from localStorage if it's expired or non-existent
+    const shouldRemove = 
+      msgLower.includes('non-existent') ||
+      msgLower.includes('expired') ||
+      msgLower.includes('does not exist') ||
+      msgLower.includes('not found') ||
+      msgLower.includes('cannot update domain you do not own');
+
+    if (shouldRemove) {
+      const minerID = localStorage.getItem('minerID');
+      if (minerID) {
+        console.log(`[Wallet] Removing domain "${domain.domain}" from storage due to error`);
+        removePendingDomain(minerID, domain.domain);
+        loadMyDomains();
+        fetchDomains();
+      }
+    }
   } finally {
     domain.isUpdating = false;
   }
