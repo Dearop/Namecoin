@@ -212,7 +212,7 @@ func (n *node) GetMinerID() string {
 }
 
 func (n *node) GetDomains() []types.NameRecord {
-	domainsMap, _ :=  n.NamecoinChain.SnapshotDomains()
+	domainsMap, _ := n.NamecoinChain.SnapshotDomains()
 	domains := make([]types.NameRecord, 0, len(domainsMap))
 	for _, record := range domainsMap {
 		domains = append(domains, record)
@@ -268,7 +268,6 @@ func (n *node) HandleNamecoinCommand(buf []byte) error {
 	if err != nil {
 		return err
 	}
-
 
 	// Register for confirmation before broadcasting
 	log.Printf("[DEBUG] Registering transaction %s for confirmation tracking", txID)
@@ -409,7 +408,8 @@ func (n *node) MinerDoWork() error {
 		}
 	} else {
 		// Notify all transactions in this block that they succeeded
-		log.Printf("[DEBUG] Successfully applied mined block at height %d, notifying %d transactions", block.Header.Height, len(block.Transactions))
+		log.Printf("[DEBUG] Successfully applied mined block at height %d, notifying %d transactions",
+			block.Header.Height, len(block.Transactions))
 		for _, val := range block.Transactions {
 			txID, txErr := BuildTransactionID(&val)
 			if txErr == nil {
@@ -940,7 +940,8 @@ func (n *node) notifyTxConfirmation(txID string, err error) {
 		close(ch)
 		delete(n.pendingTxConfirm, txID)
 	} else {
-		log.Printf("[DEBUG] Attempted to notify txID=%s but not in pending map (may have timed out or already processed)", txID)
+		log.Printf("[DEBUG] Attempted to notify txID=%s but not in pending map "+
+			"(may have timed out or already processed)", txID)
 	}
 }
 

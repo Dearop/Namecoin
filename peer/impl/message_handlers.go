@@ -87,7 +87,8 @@ func (n *node) handleNamecoinBlockMessage(message types.Message, packet transpor
 		return xerrors.Errorf("unexpected message type")
 	}
 
-	log.Printf("[DEBUG] Received block at height %d with %d transactions", msg.Block.Header.Height, len(msg.Block.Transactions))
+	log.Printf("[DEBUG] Received block at height %d with %d transactions",
+	 msg.Block.Header.Height, len(msg.Block.Transactions))
 
 	n.StopMiner()
 
@@ -118,7 +119,8 @@ func (n *node) handleNamecoinBlockMessage(message types.Message, packet transpor
 		return err
 	}
 
-	log.Printf("[DEBUG] Successfully applied received block at height %d, notifying %d transactions", msg.Block.Header.Height, len(msg.Block.Transactions))
+	log.Printf("[DEBUG] Successfully applied received block at height %d, notifying %d transactions",
+	 msg.Block.Header.Height, len(msg.Block.Transactions))
 	// Notify all transactions in this block that they succeeded
 	for _, val := range msg.Block.Transactions {
 		txID, txErr := BuildTransactionID(&val)
