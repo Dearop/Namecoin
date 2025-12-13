@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rs/zerolog"
+	zlog "github.com/rs/zerolog/log"
 	"go.dedis.ch/cs438/peer"
 	"go.dedis.ch/cs438/peer/dns"
 	"go.dedis.ch/cs438/transport"
@@ -20,15 +22,16 @@ import (
 // It initializes the routing table, sequence tracking, and rumor storage.
 func NewPeer(conf peer.Configuration) peer.Peer {
 	node := &node{conf: conf, stopCh: make(chan struct{})}
+	addr := ""
 	node.mu.Lock()
 	node.routingTable = make(map[string]string)
 	node.lastSeq = make(map[string]uint)
 	node.rumors = make(map[string]map[uint]types.Rumor)
 	node.pendingAcks = make(map[string]*pendingAck)
 	if conf.Socket != nil {
-		nodeAddr := conf.Socket.GetAddress()
-		if nodeAddr != "" {
-			node.routingTable[nodeAddr] = nodeAddr
+		addr = conf.Socket.GetAddress()
+		if addr != "" {
+			node.routingTable[addr] = addr
 		}
 	}
 	consensus, err := NewNamecoinConsensus(conf.PoWConfig, NewTxBuffer())
@@ -42,11 +45,16 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 	if err != nil {
 		panic(err)
 	}
+	if addr != "" {
+		logger := zlog.With().Str("node", addr).Logger()
+		namecoinChain.state.SetLogger(logger)
+		node.logger = logger
+	}
 	namecoinChain.SetPowTarget(conf.PoWConfig.Target)
 
 	transactionService := NewTransactionService(namecoinChain.state)
 
-	node.NamecoinChain = namecoinChain
+	node.NamecoinChainService = NewChainService(namecoinChain)
 	node.namecoinConsensus = consensus
 	node.transactionService = transactionService
 	node.namecoinDNS = NewNamecoinDNS()
@@ -97,19 +105,23 @@ type node struct {
 	tlcBroadcasted map[uint]bool
 
 	// Namecoin
-	namecoinConsensus  *NamecoinConsensus
-	NamecoinChain      *NamecoinChain
-	transactionService *TransactionService
-	namecoinDNS        *NamecoinDNS
-	dnsServer          *dns.Server
+	namecoinConsensus    *NamecoinConsensus
+	NamecoinChainService *ChainService
+	transactionService   *TransactionService
+	namecoinDNS          *NamecoinDNS
+	dnsServer            *dns.Server
 
 	// MinerPubKey
-	minerStopCh chan struct{}
-	minerWG     sync.WaitGroup
+	minerMu       sync.Mutex
+	minerStopCh   chan struct{}
+	minerWG       sync.WaitGroup
+	minerDisabled bool
 
 	// Step completion waiters
 	stepWaitMu  sync.Mutex
 	stepWaiters map[uint][]chan struct{}
+
+	logger zerolog.Logger
 }
 
 // Start implements peer.Service.
@@ -167,6 +179,10 @@ func (n *node) Start() error {
 	}
 
 	if n.conf.EnableMiner {
+		// Allow mining when the node starts.
+		n.minerMu.Lock()
+		n.minerDisabled = false
+		n.minerMu.Unlock()
 		n.StartMiner()
 	}
 
@@ -191,7 +207,7 @@ func (n *node) ResolveDomain(domain string) types.DNSResponse {
 
 // NamecoinChainState returns the underlying Namecoin chain (testing helper).
 func (n *node) NamecoinChainState() *NamecoinChain {
-	return n.NamecoinChain
+	return n.NamecoinChainService.GetLongestChain()
 }
 
 // DNSServerAddr returns the bound DNS server address (testing helper).
@@ -274,56 +290,85 @@ type pendingAck struct {
 }
 
 func (n *node) StartMiner() {
-	n.mu.Lock()
-	if n.minerStopCh != nil {
-		// MinerPubKey already running
-		n.mu.Unlock()
+	n.minerMu.Lock()
+	if n.minerDisabled {
+		n.minerMu.Unlock()
 		return
 	}
-	n.minerStopCh = make(chan struct{})
+	if n.minerStopCh != nil {
+		// MinerPubKey already running
+		n.minerMu.Unlock()
+		return
+	}
+	stopCh := make(chan struct{})
+	n.minerStopCh = stopCh
 	n.minerWG.Add(1)
-	n.mu.Unlock()
+	n.minerMu.Unlock()
 
-	go func() {
+	go func(stop <-chan struct{}) {
 		defer n.minerWG.Done()
 
 		for {
-			select {
-			case <-n.minerStopCh:
+			if err := n.MinerDoWork(stop); errors.Is(err, ErrMiningAborted) {
 				return
+			}
 
+			select {
+			case <-stop:
+				return
 			default:
-				err := n.MinerDoWork()
-				if errors.Is(err, ErrMiningAborted) {
-					break
-				}
-
-				continue
 			}
 		}
-	}()
+	}(stopCh)
 }
 
 func (n *node) StopMiner() {
-	n.mu.Lock()
-	if n.minerStopCh != nil {
-		close(n.minerStopCh)
+	n.minerMu.Lock()
+	if n.minerStopCh == nil {
+		n.minerMu.Unlock()
+		return
 	}
-	n.mu.Unlock()
+
+	n.logger.Debug().Msg("StopMiner has been called")
+	close(n.minerStopCh)
+	n.minerStopCh = nil
+	n.minerMu.Unlock()
 
 	n.minerWG.Wait()
-
-	n.mu.Lock()
-	n.minerStopCh = nil
-	n.mu.Unlock()
 }
 
-func (n *node) MinerDoWork() error {
+func (n *node) DisableMiner() {
+	n.minerMu.Lock()
+	if n.minerDisabled {
+		n.minerMu.Unlock()
+		return
+	}
+	n.logger.Debug().Msg("DisableMiner has been called")
+	n.minerDisabled = true
+	stopCh := n.minerStopCh
+	n.minerStopCh = nil
+	n.minerMu.Unlock()
+
+	if stopCh != nil {
+		close(stopCh)
+		n.minerWG.Wait()
+	}
+}
+
+func (n *node) EnableMiner() {
+	n.minerMu.Lock()
+	n.minerDisabled = false
+	n.minerMu.Unlock()
+}
+
+func (n *node) MinerDoWork(stop <-chan struct{}) error {
+	// Bail out quickly if stop was already signaled.
+	if stopped(stop) {
+		return ErrMiningAborted
+	}
+
 	// Build base header from current chain head
-	n.mu.RLock()
-	headHash := n.NamecoinChain.HeadHash()
-	headHeight := n.NamecoinChain.HeadHeight()
-	n.mu.RUnlock()
+	headHash, headHeight := n.NamecoinChainService.HeadSnapshot()
 
 	nextHeight := headHeight + 1
 	if headHash == nil {
@@ -337,12 +382,28 @@ func (n *node) MinerDoWork() error {
 	}
 
 	// Mine block
-	block, err := n.namecoinConsensus.MineAndApply(n.minerStopCh, &base)
+	block, err := n.namecoinConsensus.MineAndApply(stop, &base)
 	if err != nil {
 		return err
 	}
 
-	log.Printf("Mined block: %v", block)
+	// If we were asked to stop while mining, drop the freshly mined block
+	// instead of applying/broadcasting it.
+	if stopped(stop) {
+		return ErrMiningAborted
+	}
+
+	// Apply block locally before gossiping it so height advances even if
+	// networking/logging is slow.
+	changed, err := n.NamecoinChainService.AppendBlockToLongestChain(&block)
+	if err != nil {
+		return err
+	}
+
+	if !changed {
+		// Our block lost the race → drop it silently
+		return nil
+	}
 
 	// Broadcast mined block
 	msg := types.NamecoinBlockMessage{
@@ -358,13 +419,16 @@ func (n *node) MinerDoWork() error {
 	if err != nil {
 		return err
 	}
-	// Apply block locally
-	if err = n.NamecoinChain.ApplyBlock(&block); err != nil {
-		// should not happen; log but continue
-		log.Printf("Error applying mined block: %v", err)
-	}
-
 	return nil
+}
+
+func stopped(stop <-chan struct{}) bool {
+	select {
+	case <-stop:
+		return true
+	default:
+		return false
+	}
 }
 
 // acceptExpectedRumors processes expected rumors and returns those that were newly accepted.
@@ -549,6 +613,7 @@ func (n *node) Stop() error {
 	if err := n.validateNode(false); err != nil {
 		return err
 	}
+	n.StopMiner()
 	// Stop DNS server first to avoid new work during shutdown.
 	if n.dnsServer != nil {
 		_ = n.dnsServer.Close()

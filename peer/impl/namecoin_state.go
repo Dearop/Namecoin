@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"go.dedis.ch/cs438/types"
 )
@@ -44,7 +45,8 @@ type NamecoinState struct {
 	// To deduplicate transactions. Subject to discuss, but now suggest as a temp solution
 	txMap map[string]struct{}
 
-	mu sync.RWMutex
+	logger zerolog.Logger
+	mu     sync.RWMutex
 }
 
 func (c *NamecoinChain) State() *NamecoinState {
@@ -65,7 +67,22 @@ func NewState() *NamecoinState {
 		txMap:          make(map[string]struct{}),
 		// Clamp default TTL to the configured max to avoid unbounded domain lifetimes.
 		domainTTL: clampTTL(DefaultDomainTTLBlocks),
+		logger:    log.Logger,
 	}
+}
+
+// SetLogger tags all state debug logs with the provided logger (e.g., per-node address).
+func (st *NamecoinState) SetLogger(l zerolog.Logger) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.logger = l
+}
+
+// CloneLogger returns a copy of the logger for use in cloned/forked states.
+func (st *NamecoinState) CloneLogger() zerolog.Logger {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.logger
 }
 
 func (st *NamecoinState) GetDomainOwner(domain string) string {
@@ -306,10 +323,8 @@ func (st *NamecoinState) ApplyTx(txID string, tx *types.Tx) error {
 	}
 
 	if os.Getenv("GLOG") != "no" {
-		log.Debug().Msgf("applying tx type: %s with ID: %s", tx.Type, txID)
+		st.logger.Debug().Msgf("applying tx type: %s with ID: %s", tx.Type, txID)
 	}
-	// Reduce noise in tests: log at debug level for normal tx application.
-	log.Debug().Msgf("applying tx type: %s with ID: %s", tx.Type, txID)
 
 	// BurnUTXOs first making sure the user hasn't burned the same UTXOs already
 	// First transaction in Block is always Reward to ensure that miner gets reward even if user transaction is reverted
