@@ -13,10 +13,15 @@ type chainReader interface {
 	SnapshotDomains() (map[string]types.NameRecord, uint64)
 }
 
+type longestChainProvider interface {
+	GetLongestChain() *NamecoinChain
+}
+
 type NamecoinDNS struct {
 	requestChan  chan types.DNSRequest
 	responseChan chan types.DNSResponse
 	reader       chainReader
+	provider     longestChainProvider
 	mu           sync.RWMutex
 	startOnce    sync.Once
 	stop         chan struct{}
@@ -46,7 +51,7 @@ func (dns *NamecoinDNS) Start(n *node) {
 	dns.startOnce.Do(func() {
 		if n != nil {
 			dns.mu.Lock()
-			dns.reader = n.NamecoinChain
+			dns.provider = n.NamecoinChainService
 			dns.mu.Unlock()
 		}
 		go func() {
@@ -68,6 +73,7 @@ func (dns *NamecoinDNS) Start(n *node) {
 func (dns *NamecoinDNS) BindReader(r chainReader) {
 	dns.mu.Lock()
 	dns.reader = r
+	dns.provider = nil
 	dns.mu.Unlock()
 }
 
@@ -79,7 +85,12 @@ func (dns *NamecoinDNS) resolve(request types.DNSRequest) types.DNSResponse {
 
 	dns.mu.RLock()
 	reader := dns.reader
+	provider := dns.provider
 	dns.mu.RUnlock()
+
+	if provider != nil {
+		reader = provider.GetLongestChain()
+	}
 
 	if reader == nil {
 		return resp

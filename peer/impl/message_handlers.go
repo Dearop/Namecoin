@@ -88,26 +88,11 @@ func (n *node) handleNamecoinBlockMessage(message types.Message, packet transpor
 	}
 
 	log.Printf("[DEBUG] Received block at height %d with %d transactions",
-	 msg.Block.Header.Height, len(msg.Block.Transactions))
+		msg.Block.Header.Height, len(msg.Block.Transactions))
 
-	n.StopMiner()
-
-	// remove tx from txBuffer.
-	for _, val := range msg.Block.Transactions {
-		txID, err := BuildTransactionID(&val)
-		if err != nil {
-			return err
-		}
-
-		n.namecoinConsensus.txBuffer.Remove(txID)
-	}
-
-	err := n.NamecoinChain.ApplyBlock(&msg.Block)
-
-	n.StartMiner()
-
+	changed, err := n.NamecoinChainService.AppendBlockToLongestChain(&msg.Block)
 	if err != nil {
-		log.Printf("[ERROR] Failed to apply received block at height %d: %v", msg.Block.Header.Height, err)
+		log.Printf("[ERROR] Failed to append block at height %d: %v", msg.Block.Header.Height, err)
 		// Notify all transactions in this block that they failed
 		log.Printf("[DEBUG] Notifying %d transactions in FAILED received block", len(msg.Block.Transactions))
 		for _, val := range msg.Block.Transactions {
@@ -119,8 +104,26 @@ func (n *node) handleNamecoinBlockMessage(message types.Message, packet transpor
 		return err
 	}
 
+	if !changed {
+		// The longest chain has not been changed, no need to stop miner because some branch side branch popped up
+		// this was causing a miner rerun and decreasing overall miner efficiency, sometimes producing blocks out of order
+		return nil
+	}
+
+	// Remove tx from txBuffer
+	for _, val := range msg.Block.Transactions {
+		txID, err := BuildTransactionID(&val)
+		if err != nil {
+			return err
+		}
+		n.namecoinConsensus.txBuffer.Remove(txID)
+	}
+
+	n.StopMiner()
+	n.StartMiner()
+
 	log.Printf("[DEBUG] Successfully applied received block at height %d, notifying %d transactions",
-	 msg.Block.Header.Height, len(msg.Block.Transactions))
+		msg.Block.Header.Height, len(msg.Block.Transactions))
 	// Notify all transactions in this block that they succeeded
 	for _, val := range msg.Block.Transactions {
 		txID, txErr := BuildTransactionID(&val)
