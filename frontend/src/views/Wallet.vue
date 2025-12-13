@@ -145,7 +145,7 @@
       <div class="dns-section">
         <h2>Registered Domains</h2>
         <button @click="fetchDomains" class="action-btn">
-          Refresh Domains
+          Ih Domains
         </button>
         <div v-if="domains.length > 0" class="domains-list">
           <div v-for="domain in domains" :key="domain.name" class="domain-item">
@@ -171,7 +171,7 @@ import { useWallet } from '../composables/useWallet.js';
 import { useTransaction } from '../composables/useTransaction.js';
 import { hashDomainWithSalt, generateTransactionSignature, hashTransaction } from '../services/crypto.service.js';
 import { buildTransaction, computeTransactionID } from '../services/transaction.service.js';
-import { sendTransaction, getMinerID } from '../services/api.service.js';
+import { sendTransaction, getMinerID, fetchRegisteredDomains } from '../services/api.service.js';
 import { generateSalt } from '../utils/hash.js';
 import { savePendingDomain, getPendingDomains, updateDomainStatus, removePendingDomain } from '../utils/domainStorage.js';
 
@@ -479,14 +479,20 @@ async function handleUpdate(domain) {
 
 async function fetchDomains() {
   try {
-    // Since backend doesn't provide blockchain state API,
-    // we'll just show domains that the user has registered
-    domainsLoaded.value = true;
-    domains.value = [];
+    const allDomains = await fetchRegisteredDomains();
     
-    // Update owned domains list
-    loadMyDomains();
+    // Map the domain records to display format
+    domains.value = allDomains.map(record => ({
+      name: record.Domain || record.domain,
+      owner: record.Owner || record.owner,
+      ip: record.IP || record.ip,
+      blockHeight: record.ExpiresAt || record.expiresAt || 'N/A'
+    }));
+    
+    domainsLoaded.value = true;
+    console.log('[Wallet] Fetched domains:', domains.value);
   } catch (error) {
+    console.error('[Wallet] Error fetching domains:', error);
     status.value = `Error fetching domains: ${error.message}`;
     domainsLoaded.value = true;
   }

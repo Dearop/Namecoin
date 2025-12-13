@@ -211,6 +211,15 @@ func (n *node) GetMinerID() string {
 	return n.conf.PoWConfig.PubKey
 }
 
+func (n *node) GetDomains() []types.NameRecord {
+	domainsMap, _ :=  n.NamecoinChain.SnapshotDomains()
+	domains := make([]types.NameRecord, 0, len(domainsMap))
+	for _, record := range domainsMap {
+		domains = append(domains, record)
+	}
+	return domains
+}
+
 func (n *node) HandleNamecoinCommand(buf []byte) error {
 	log.Printf("[DEBUG] Received raw bytes: %s", string(buf))
 
