@@ -140,8 +140,8 @@ func Test_Namecoin_Integration_LongestChain_FiveNodes(t *testing.T) {
 func Test_Namecoin_Integration_LongestChain_PartitionMerge(t *testing.T) {
 	skipIfWIndows(t)
 
-	easyTarget := new(big.Int).Lsh(big.NewInt(1), 245)
-	midTarget := new(big.Int).Lsh(big.NewInt(1), 242)
+	easyTarget := new(big.Int).Lsh(big.NewInt(1), 247)
+	midTarget := new(big.Int).Lsh(big.NewInt(1), 243)
 
 	optsFor := func(target *big.Int, minerID string, hb time.Duration) []z.Option {
 		return []z.Option{
