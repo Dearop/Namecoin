@@ -312,6 +312,7 @@ func (c *NamecoinChain) forkUpToHeight(height uint64, storeOverride storage.Stor
 	}
 
 	state := NewState()
+	state.SetLogger(c.state.CloneLogger())
 	headHash, _, headHeight := ReplayBlocks(state, blocks, nil)
 	if headHeight != height {
 		return nil, fmt.Errorf("replay stopped at height %d (expected %d)", headHeight, height)
@@ -456,7 +457,8 @@ func (c *NamecoinChain) ValidateBlock(
 		return fmt.Errorf("txRoot mismatch")
 	}
 
-	if err = validateWorkForTarget(blk, target); err != nil {
+	validationTarget := selectPowTarget(blk, target)
+	if err = validateWorkForTarget(blk, validationTarget); err != nil {
 		return err
 	}
 
@@ -468,4 +470,13 @@ func validateWorkForTarget(blk *types.Block, target *big.Int) error {
 		return fmt.Errorf("block hash above target")
 	}
 	return nil
+}
+
+// selectPowTarget picks the target to validate work against, preferring the block's
+// encoded difficulty when present, falling back to the chain's target.
+func selectPowTarget(blk *types.Block, chainTarget *big.Int) *big.Int {
+	if blk != nil && len(blk.Header.Difficulty) > 0 {
+		return new(big.Int).SetBytes(blk.Header.Difficulty)
+	}
+	return chainTarget
 }

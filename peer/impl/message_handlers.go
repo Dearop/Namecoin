@@ -87,25 +87,27 @@ func (n *node) handleNamecoinBlockMessage(message types.Message, packet transpor
 		return xerrors.Errorf("unexpected message type")
 	}
 
-	n.StopMiner()
+	changed, err := n.NamecoinChainService.AppendBlockToLongestChain(&msg.Block)
+	if err != nil {
+		return err
+	}
 
-	// remove tx from txBuffer.
+	if !changed {
+		// The longest chain has not been changed, no need to stop miner because some branch side branch popped up
+		// this was causing a miner rerun and decreasing overall miner efficiency, sometimes producing blocks out of order
+		return nil
+	}
+
 	for _, val := range msg.Block.Transactions {
 		txID, err := BuildTransactionID(&val)
 		if err != nil {
 			return err
 		}
-
 		n.namecoinConsensus.txBuffer.Remove(txID)
 	}
 
-	err := n.NamecoinChainService.AppendBlockToLongestChain(&msg.Block)
-
+	n.StopMiner()
 	n.StartMiner()
-
-	if err != nil {
-		return err
-	}
 
 	return nil
 }

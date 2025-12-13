@@ -11,29 +11,43 @@ import (
 )
 
 func NewChainService(chain *NamecoinChain) *ChainService {
-	chains := make([]*NamecoinChain, 0, 1)
-	chains = append(chains, chain)
-
-	return &ChainService{
-		Chains:            chains,
+	cs := &ChainService{
+		Chains:            []*NamecoinChain{chain},
 		LongestChainIndex: 0,
+		orphansByPrev:     make(map[string][]*types.Block),
+		blockIndex:        make(map[string]*blockMeta),
 	}
+	cs.indexChainUnlocked(chain)
+	return cs
 }
 
 type ChainService struct {
 	Chains            []*NamecoinChain
 	LongestChainIndex int
 	mu                sync.RWMutex
+
+	// orphansByPrev maps PrevHash(hex) -> blocks waiting for that parent.
+	orphansByPrev map[string][]*types.Block
+
+	// blockIndex keeps every known block by hash (across forks) with its height and chains.
+	blockIndex map[string]*blockMeta
 }
+
+type blockMeta struct {
+	height uint64
+	chains map[*NamecoinChain]struct{}
+}
+
+// -------------------- Public API --------------------
 
 func (s *ChainService) AppendChain(chain *NamecoinChain) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	s.Chains = append(s.Chains, chain)
+	s.indexChainUnlocked(chain)
 }
 
-func (s *ChainService) AppendBlockToLongestChain(block *types.Block) error {
+func (s *ChainService) AppendBlockToLongestChain(block *types.Block) (changedCanonical bool, err error) {
 	return s.AppendBlockToChain(s.LongestChainIndex, block)
 }
 
@@ -43,95 +57,244 @@ func (s *ChainService) GetLongestChain() *NamecoinChain {
 	return s.Chains[s.LongestChainIndex]
 }
 
-func (s *ChainService) AppendBlockToChain(index int, block *types.Block) error {
+func (s *ChainService) HeadSnapshot() (hash []byte, height uint64) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	chain := s.Chains[s.LongestChainIndex]
+	return CloneBytes(chain.headHash), chain.headHeight
+}
+
+// ReplayLongestChainBack forks the current longest chain back to the given origin hash.
+// Returns ErrUnknownParent if the origin hash is not known.
+func (s *ChainService) ReplayLongestChainBack(originHash []byte) (*NamecoinChain, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	err := s.Chains[index].ApplyBlock(block)
-
-	var ve *ChainFollowError
-	if !errors.As(err, &ve) {
-		return err
+	if originHash == nil {
+		return nil, ErrUnknownParent
 	}
 
-	// if we receive ChainFollowError then we assume that there was another branch created.
-	// it can have an undefined number of blocks after the branch was discovered (network partition).
-	// we check if there is a branch, head block of which is ancestor for incoming.
+	meta, ok := s.blockIndex[hashKeyHex(originHash)]
+	if !ok || meta == nil {
+		return nil, ErrUnknownParent
+	}
 
-	originChain, err := s.GetOriginChain(index, block)
+	var base *NamecoinChain
+	for ch := range meta.chains {
+		base = ch
+		break
+	}
+	if base == nil && s.LongestChainIndex < len(s.Chains) {
+		base = s.Chains[s.LongestChainIndex]
+	}
+	if base == nil {
+		return nil, ErrUnknownParent
+	}
+
+	// If the head already matches, return it directly.
+	if bytes.Equal(base.headHash, originHash) {
+		return base, nil
+	}
+
+	fork, err := base.forkUpToHeight(meta.height, newOverlayStore(base.store))
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	if err := originChain.ApplyBlock(block); err != nil {
-		return err
-	}
-
-	s.maybePromoteLongest(originChain)
-	return nil
+	s.Chains = append(s.Chains, fork)
+	s.indexChainUnlocked(fork)
+	return fork, nil
 }
 
-func (s *ChainService) GetOriginChain(index int, block *types.Block) (*NamecoinChain, error) {
-	if block.Header.Height == 0 {
-		// New competing genesis: spin up an empty chain to attach this block.
-		originChain := s.newEmptyChainFrom(s.Chains[index])
-		s.Chains = append(s.Chains, originChain)
+// AppendBlockToChain tries to incorporate block into our known DAG.
+// Returns changedCanonical=true iff the *canonical head* (longest chain head) changed.
+func (s *ChainService) AppendBlockToChain(
+	index int,
+	block *types.Block,
+) (bool, error) {
 
-		return originChain, nil
-	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	for _, chain := range s.Chains {
-		if bytes.Equal(chain.headHash, block.Header.PrevHash) {
-			return chain, nil
+	beforeHash := CloneBytes(s.Chains[s.LongestChainIndex].headHash)
+	beforeHeight := s.Chains[s.LongestChainIndex].headHeight
+
+	firstErr := s.processPendingBlocksUnlocked(index, block)
+
+	changed := s.canonicalChangedUnlocked(beforeHash, beforeHeight)
+	return changed, firstErr
+}
+
+func (s *ChainService) processPendingBlocksUnlocked(
+	index int,
+	initial *types.Block,
+) error {
+
+	pending := []*types.Block{initial}
+	var firstErr error
+
+	for len(pending) > 0 {
+		blk := pending[0]
+		pending = pending[1:]
+
+		children, err := s.processSingleBlockUnlocked(index, blk)
+		if err != nil && firstErr == nil {
+			firstErr = err
 		}
+
+		pending = append(pending, children...)
 	}
 
-	// replay back main branch
-	originChain, err := s.ReplayLongestChainBack(block.Header.PrevHash)
+	return firstErr
+}
 
-	if originChain == nil {
+func (s *ChainService) processSingleBlockUnlocked(
+	index int,
+	blk *types.Block,
+) ([]*types.Block, error) {
+
+	if blk == nil {
+		return nil, nil
+	}
+
+	// Already known → just drain waiting children
+	if s.blockKnownUnlocked(blk.Hash, blk.Header.Height) {
+		return s.popWaitingChildrenUnlocked(blk.Hash), nil
+	}
+
+	origin, err := s.ensureChainForParentUnlocked(index, blk)
+	if err != nil {
+		return s.handleParentErrorUnlocked(blk, err)
+	}
+
+	if err := origin.ApplyBlock(blk); err != nil {
+		return s.handleApplyErrorUnlocked(blk, err)
+	}
+
+	// Successfully attached
+	s.registerBlockUnlocked(origin, blk)
+	s.maybePromoteLongest(origin)
+
+	return s.popWaitingChildrenUnlocked(blk.Hash), nil
+}
+
+func (s *ChainService) handleParentErrorUnlocked(
+	blk *types.Block,
+	err error,
+) ([]*types.Block, error) {
+
+	if errors.Is(err, ErrUnknownParent) {
+		s.storeOrphanUnlocked(blk)
+		return nil, nil
+	}
+	return nil, err
+}
+
+func (s *ChainService) handleApplyErrorUnlocked(
+	blk *types.Block,
+	err error,
+) ([]*types.Block, error) {
+
+	var fe *ChainFollowError
+	if errors.As(err, &fe) {
+		s.storeOrphanUnlocked(blk)
+		return nil, nil
+	}
+	return nil, err
+}
+
+func (s *ChainService) canonicalChangedUnlocked(beforeHash []byte, beforeHeight uint64) bool {
+	after := s.Chains[s.LongestChainIndex]
+	if beforeHeight != after.headHeight {
+		return true
+	}
+	return !bytes.Equal(beforeHash, after.headHash)
+}
+
+// -------------------- Orphans --------------------
+
+var ErrUnknownParent = errors.New("unknown parent")
+
+func hashKeyHex(b []byte) string {
+	if b == nil {
+		return ""
+	}
+	return fmt.Sprintf("%x", b)
+}
+
+func (s *ChainService) storeOrphanUnlocked(block *types.Block) {
+	// Genesis blocks shouldn't be treated as orphans.
+	if block == nil || block.Header.Height == 0 || block.Header.PrevHash == nil {
+		return
+	}
+
+	// IMPORTANT: do not store caller-owned pointer; make a copy.
+	bc := cloneBlock(block)
+
+	k := hashKeyHex(bc.Header.PrevHash)
+	s.orphansByPrev[k] = append(s.orphansByPrev[k], bc)
+}
+
+// popWaitingChildrenUnlocked returns and clears children that were waiting for parentHash.
+func (s *ChainService) popWaitingChildrenUnlocked(parentHash []byte) []*types.Block {
+	if parentHash == nil {
+		return nil
+	}
+	k := hashKeyHex(parentHash)
+	waiting := s.orphansByPrev[k]
+	if len(waiting) == 0 {
+		return nil
+	}
+	delete(s.orphansByPrev, k)
+	return waiting
+}
+
+// -------------------- Parent lookup / fork creation --------------------
+
+// ensureChainForParentUnlocked returns a chain whose head hash equals block.Header.PrevHash,
+// creating a fork if the parent exists in the middle of some chain. Returns ErrUnknownParent
+// if we don't know the parent yet.
+func (s *ChainService) ensureChainForParentUnlocked(
+	index int,
+	blk *types.Block,
+) (*NamecoinChain, error) {
+
+	if blk == nil {
+		return nil, fmt.Errorf("nil block")
+	}
+
+	if blk.Header.Height == 0 {
+		return s.handleGenesisUnlocked(index)
+	}
+
+	parentHash := blk.Header.PrevHash
+	if parentHash == nil {
+		return nil, ErrUnknownParent
+	}
+
+	// 1) Parent already a chain head
+	if ch := s.findHeadByHashUnlocked(parentHash); ch != nil {
+		return ch, nil
+	}
+
+	// 2) Parent must be indexed
+	meta, err := s.getParentMetaUnlocked(parentHash)
+	if err != nil {
 		return nil, err
 	}
 
-	return originChain, nil
+	// 3) Reuse or fork deterministically
+	return s.forkFromParentMetaUnlocked(meta)
 }
 
-func (s *ChainService) ReplayLongestChainBack(prevHash []byte) (*NamecoinChain, error) {
-	longestChain := s.Chains[s.LongestChainIndex]
-	startHeight := longestChain.HeadHeight()
-
-	if startHeight == 0 {
-		return nil, fmt.Errorf("height is already 0")
-	}
-
-	for h := startHeight - 1; ; {
-		blkAtHeight, blkErr := longestChain.blockAtHeight(h)
-		if blkErr != nil {
-			return nil, blkErr
-		}
-
-		if bytes.Equal(blkAtHeight.Hash, prevHash) {
-			originChain, blkErr := longestChain.forkUpToHeight(h, newOverlayStore(longestChain.store))
-			if blkErr != nil {
-				return nil, blkErr
-			}
-			s.Chains = append(s.Chains, originChain)
-			return originChain, nil
-		}
-
-		if h == 0 {
-			break
-		}
-		h--
-	}
-
-	return nil, fmt.Errorf("block origin has not been found")
-}
+// -------------------- Longest-chain selection --------------------
 
 func (s *ChainService) newEmptyChainFrom(ref *NamecoinChain) *NamecoinChain {
+	state := NewState()
+	state.SetLogger(ref.state.CloneLogger())
 	return &NamecoinChain{
 		store:      newOverlayStore(ref.store),
-		state:      NewState(),
+		state:      state,
 		headHash:   nil,
 		headHeight: 0,
 		powTarget:  ref.powTargetSnapshot(),
@@ -139,23 +302,153 @@ func (s *ChainService) newEmptyChainFrom(ref *NamecoinChain) *NamecoinChain {
 }
 
 func (s *ChainService) maybePromoteLongest(candidate *NamecoinChain) {
-	currentLongest := s.Chains[s.LongestChainIndex]
-	if candidate.HeadHeight() < currentLongest.HeadHeight() {
+	current := s.Chains[s.LongestChainIndex]
+
+	// Strictly greater only; ties must NOT flip-flop.
+	if candidate.HeadHeight() <= current.HeadHeight() {
 		return
 	}
 
+	// If candidate was using an overlay store, commit it since it becomes canonical.
 	if ov, ok := candidate.store.(*overlayStore); ok {
 		ov.Commit()
 		candidate.store = ov.base
 	}
 
-	for i, chain := range s.Chains {
-		if chain == candidate {
+	for i, ch := range s.Chains {
+		if ch == candidate {
 			s.LongestChainIndex = i
-			break
+			return
 		}
 	}
 }
+
+// -------------------- Block indexing helpers --------------------
+
+func (s *ChainService) registerBlockUnlocked(chain *NamecoinChain, blk *types.Block) {
+	if blk == nil || blk.Hash == nil {
+		return
+	}
+
+	key := hashKeyHex(blk.Hash)
+	meta, ok := s.blockIndex[key]
+	if !ok || meta == nil {
+		meta = &blockMeta{
+			height: blk.Header.Height,
+			chains: make(map[*NamecoinChain]struct{}),
+		}
+		s.blockIndex[key] = meta
+	}
+	meta.chains[chain] = struct{}{}
+}
+
+func (s *ChainService) blockKnownUnlocked(hash []byte, height uint64) bool {
+	if hash == nil {
+		return false
+	}
+	meta, ok := s.blockIndex[hashKeyHex(hash)]
+	if !ok || meta == nil {
+		return false
+	}
+	return meta.height == height
+}
+
+func (s *ChainService) indexChainUnlocked(chain *NamecoinChain) {
+	if chain == nil {
+		return
+	}
+	head := chain.HeadHeight()
+	for h := uint64(0); h <= head; h++ {
+		blk, err := chain.blockAtHeight(h)
+		if err != nil || blk == nil {
+			continue
+		}
+		s.registerBlockUnlocked(chain, blk)
+	}
+}
+
+func (s *ChainService) handleGenesisUnlocked(index int) (*NamecoinChain, error) {
+	for _, c := range s.Chains {
+		if c.headHash == nil && c.headHeight == 0 {
+			return c, nil
+		}
+	}
+
+	if index < 0 || index >= len(s.Chains) {
+		return nil, ErrUnknownParent
+	}
+
+	origin := s.newEmptyChainFrom(s.Chains[index])
+	s.Chains = append(s.Chains, origin)
+	return origin, nil
+}
+
+func (s *ChainService) findHeadByHashUnlocked(hash []byte) *NamecoinChain {
+	for _, c := range s.Chains {
+		if bytes.Equal(c.headHash, hash) {
+			return c
+		}
+	}
+	return nil
+}
+
+func (s *ChainService) getParentMetaUnlocked(
+	parentHash []byte,
+) (*blockMeta, error) {
+
+	meta, ok := s.blockIndex[hashKeyHex(parentHash)]
+	if !ok || meta == nil {
+		return nil, ErrUnknownParent
+	}
+	return meta, nil
+}
+
+func (s *ChainService) forkFromParentMetaUnlocked(
+	meta *blockMeta,
+) (*NamecoinChain, error) {
+
+	parentHeight := meta.height
+
+	// Pick deterministic base (longest chain containing parent)
+	var base *NamecoinChain
+	for ch := range meta.chains {
+		if base == nil || ch.HeadHeight() > base.HeadHeight() {
+			base = ch
+		}
+	}
+
+	if base == nil {
+		return nil, ErrUnknownParent
+	}
+
+	origin, err := base.forkUpToHeight(
+		parentHeight,
+		newOverlayStore(base.store),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	s.Chains = append(s.Chains, origin)
+	s.indexChainUnlocked(origin)
+
+	return origin, nil
+}
+
+func cloneBlock(b *types.Block) *types.Block {
+	if b == nil {
+		return nil
+	}
+	cp := *b
+	cp.Header.PrevHash = CloneBytes(b.Header.PrevHash)
+	cp.Header.TxRoot = CloneBytes(b.Header.TxRoot)
+	cp.Header.Difficulty = CloneBytes(b.Header.Difficulty)
+	cp.Hash = CloneBytes(b.Hash)
+	cp.Transactions = append([]types.Tx(nil), b.Transactions...)
+	return &cp
+}
+
+// -------------------- overlayStore --------------------
 
 // overlayStore reads through to base but keeps branch writes in-memory until committed.
 type overlayStore struct {
