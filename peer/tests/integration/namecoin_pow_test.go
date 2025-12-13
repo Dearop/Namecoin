@@ -354,7 +354,7 @@ func Test_Namecoin_Integration_NameNewCommitmentPersistsAcrossBlocks(t *testing.
 	miner := "miner-commit"
 	domain := "example.bit"
 	salt := "secret"
-	commitment := impl.HashString(domain + salt)
+	commitment := impl.HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", domain, salt))
 
 	// Block 0 with a single name_new.
 	payloadNew, err := json.Marshal(impl.NameNew{Commitment: commitment})

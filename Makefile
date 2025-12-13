@@ -88,3 +88,43 @@ lint:
 
 vet:
 	go vet ./...
+
+.PHONY: frontend test_frontend test_frontend_coverage clean clean_frontend run
+
+# Default proxy and node addresses for development
+PROXYADDR ?= 127.0.0.1:8080
+NODEADDR ?= 127.0.0.1:9000
+
+# Run both backend and frontend together
+run:
+	@echo "=========================================="
+	@echo "Starting Peerster System"
+	@echo "=========================================="
+	@echo "Backend: http://$(PROXYADDR)"
+	@echo "Frontend: http://localhost:5173"
+	@echo "=========================================="
+	@echo ""
+	@trap 'kill 0' SIGINT; \
+		(cd gui && echo "\033[34m[BACKEND]\033[0m Starting..." && go run gui.go start --proxyaddr $(PROXYADDR) --nodeaddr $(NODEADDR) 2>&1 | sed 's/^/\x1b[34m[BACKEND]\x1b[0m /') & \
+		(cd frontend && npm install --silent && echo "\033[32m[FRONTEND]\033[0m Starting on http://localhost:5173..." && VITE_BACKEND_URL=http://$(PROXYADDR) npm run dev 2>&1 | sed 's/^/\x1b[32m[FRONTEND]\x1b[0m /') & \
+		wait
+
+frontend:
+	cd frontend && npm install && npm run dev
+
+test_frontend:
+	cd frontend && \
+		npm install && \
+		npm run test -- --coverage=false
+
+test_frontend_coverage:
+	cd frontend && \
+		npm install && \
+		npm run test -- --coverage=true
+
+clean_frontend:
+	rm -rf frontend/coverage
+	rm -rf frontend/node_modules
+	rm -rf frontend/dist
+
+clean: clean_frontend
