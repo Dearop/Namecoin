@@ -444,21 +444,24 @@ func (n *node) MinerDoWork(stop <-chan struct{}) error {
 				n.notifyTxConfirmation(txID, err)
 			}
 		}
-	} else {
-		// Notify all transactions in this block that they succeeded
-		log.Printf("[DEBUG] Successfully applied mined block at height %d, notifying %d transactions",
-			block.Header.Height, len(block.Transactions))
-		for _, val := range block.Transactions {
-			txID, txErr := BuildTransactionID(&val)
-			if txErr == nil {
-				n.notifyTxConfirmation(txID, nil)
-			}
-		}
+		return err
 	}
 
 	if !changed {
 		// Our block lost the race → drop it silently
 		return nil
+	}
+
+	// Only notify transactions if the block actually extended the longest chain
+	log.Printf("[DEBUG] Successfully applied mined block at height %d, notifying %d transactions",
+		block.Header.Height, len(block.Transactions))
+	for _, val := range block.Transactions {
+		if val.Type != "Reward" {
+			txID, txErr := BuildTransactionID(&val)
+			if txErr == nil {
+				n.notifyTxConfirmation(txID, nil)
+			}
+		}
 	}
 
 	// Broadcast mined block
@@ -475,7 +478,7 @@ func (n *node) MinerDoWork(stop <-chan struct{}) error {
 	if err != nil {
 		return err
 	}
-	
+
 	return nil
 }
 
