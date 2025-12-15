@@ -74,35 +74,6 @@ func powParamsFromConfig(cfg peer.PoWConfig) powParams {
 	return p
 }
 
-func loadStoredNamecoinBlocks(store storage.Store) ([]loadedBlock, []byte) {
-	storedHeadHash := CloneBytes(store.Get(NamecoinLastBlockKey))
-	blocks := make([]loadedBlock, 0, store.Len())
-	store.ForEach(func(key string, val []byte) bool {
-		if !strings.HasPrefix(key, NamecoinBlockPrefix) {
-			return true
-		}
-
-		h, err := parseNamecoinBlockHeight(key)
-		if err != nil {
-			warnf("load namecoin chain: skipping malformed block key %q: %v", key, err)
-			return true
-		}
-
-		blocks = append(blocks, loadedBlock{
-			Height: h,
-			Key:    key,
-			Raw:    CloneBytes(val),
-		})
-		return true
-	})
-
-	// Order by height from genesis to head
-	sort.Slice(blocks, func(i, j int) bool {
-		return blocks[i].Height < blocks[j].Height
-	})
-
-	return blocks, storedHeadHash
-}
 
 func rebuildPowState(blocks []loadedBlock, headHeight uint64) (*big.Int, powParams, int64) {
 	powTarget := effectiveTarget(nil)
