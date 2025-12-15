@@ -36,6 +36,9 @@ test_unit_transaction_service:
 test_unit_wallet_manager:
 	go test -timeout 2m -v -race -run 'Test(VerifyBalance|TokenBalanceManager)' ./peer/tests/unit
 
+test_unit_namecoin_chain_service:
+	go test -timeout 2m -v -race -run 'Test_NamecoinChainService' ./peer/tests/unit
+
 test_unit_namecoin_resolver:
 	go test -timeout 2m -v -race -run 'TestNamecoinDNS' ./peer/tests/unit
 
@@ -65,6 +68,9 @@ test_int_node_dns:
 
 test_int_namecoin_expiry:
 	go test -timeout 5m -v -race -run TestNamecoinExpiryResolver ./peer/tests/integration
+
+test_int_namecoin_longest_chain:
+	go test -timeout 5m -v -race -run Test_Namecoin_Integration_LongestChain ./peer/tests/integration
 
 test_int_namecoin_pow:
 	go test -timeout 5m -v -race -run 'Test_Namecoin_Integration' ./peer/tests/integration
@@ -97,3 +103,43 @@ lint:
 
 vet:
 	go vet ./...
+
+.PHONY: frontend test_frontend test_frontend_coverage clean clean_frontend run
+
+# Default proxy and node addresses for development
+PROXYADDR ?= 127.0.0.1:8080
+NODEADDR ?= 127.0.0.1:9000
+
+# Run both backend and frontend together
+run:
+	@echo "=========================================="
+	@echo "Starting Peerster System"
+	@echo "=========================================="
+	@echo "Backend: http://$(PROXYADDR)"
+	@echo "Frontend: http://localhost:5173"
+	@echo "=========================================="
+	@echo ""
+	@trap 'kill 0' SIGINT; \
+		(cd gui && echo "\033[34m[BACKEND]\033[0m Starting..." && go run gui.go start --proxyaddr $(PROXYADDR) --nodeaddr $(NODEADDR) 2>&1 | sed 's/^/\x1b[34m[BACKEND]\x1b[0m /') & \
+		(cd frontend && npm install --silent && echo "\033[32m[FRONTEND]\033[0m Starting on http://localhost:5173..." && VITE_BACKEND_URL=http://$(PROXYADDR) npm run dev 2>&1 | sed 's/^/\x1b[32m[FRONTEND]\x1b[0m /') & \
+		wait
+
+frontend:
+	cd frontend && npm install && npm run dev
+
+test_frontend:
+	cd frontend && \
+		npm install && \
+		npm run test -- --coverage=false
+
+test_frontend_coverage:
+	cd frontend && \
+		npm install && \
+		npm run test -- --coverage=true
+
+clean_frontend:
+	rm -rf frontend/coverage
+	rm -rf frontend/node_modules
+	rm -rf frontend/dist
+
+clean: clean_frontend

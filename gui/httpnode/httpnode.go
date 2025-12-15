@@ -97,6 +97,7 @@ func NewHTTPNode(node peer.Peer, conf peer.Configuration) Proxy {
 	mux.Handle("/blockchain", http.HandlerFunc(blockchain.BlockchainHandler()))
 
 	mux.Handle("/namecoin/handle", http.HandlerFunc(namecoin.NewHandler()))
+	mux.Handle("/namecoin/minerid", http.HandlerFunc(namecoin.MinerIDHandler()))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not authorized", http.StatusBadGateway)
