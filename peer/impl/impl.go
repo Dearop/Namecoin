@@ -408,14 +408,10 @@ func (n *node) EnableMiner() {
 }
 
 func (n *node) MinerDoWork(stop <-chan struct{}) error {
-	// Bail out quickly if stop was already signaled.
 	if stopped(stop) {
 		return ErrMiningAborted
 	}
-
-	// Build base header from current chain head
 	headHash, headHeight := n.NamecoinChainService.HeadSnapshot()
-
 	nextHeight := headHeight + 1
 	if headHash == nil {
 		nextHeight = 0
@@ -426,55 +422,61 @@ func (n *node) MinerDoWork(stop <-chan struct{}) error {
 		Miner:     n.conf.PoWConfig.PubKey,
 		Timestamp: time.Now().Unix(),
 	}
-
-	// Mine block
 	block, err := n.namecoinConsensus.MineAndApply(stop, &base)
 	if err != nil {
 		return err
 	}
-
-	// If we were asked to stop while mining, drop the freshly mined block
-	// instead of applying/broadcasting it.
 	if stopped(stop) {
 		return ErrMiningAborted
 	}
-
-	// Apply block locally before gossiping it so height advances even if
-	// networking/logging is slow.
 	changed, err := n.NamecoinChainService.AppendBlockToLongestChain(&block)
 	if err != nil {
-		// should not happen; log but continue
-		log.Printf("Error applying mined block: %v", err)
-		// Notify all transactions in this block that they failed
-		log.Printf("[DEBUG] Notifying %d transactions in FAILED mined block", len(block.Transactions))
-		for _, val := range block.Transactions {
-			txID, txErr := BuildTransactionID(&val)
-			if txErr == nil {
-				n.notifyTxConfirmation(txID, err)
-			}
-		}
+		n.notifyAllBlockTxs(block.Transactions, err)
 		return err
 	}
-
 	if !changed {
-		// Our block lost the race → notify failures but DON'T requeue
-		// Requeuing risks double-spending if transactions are in the winning block
-		log.Printf("[DEBUG] Mined block lost race, notifying %d transactions as failed", len(block.Transactions))
-
-		// Notify all transactions that they were not included in canonical chain
-		// Users can resubmit if needed, and validation will prevent double-spending
-		for _, val := range block.Transactions {
-			if val.Type != "Reward" {
-				txID, txErr := BuildTransactionID(&val)
-				if txErr == nil {
-					n.notifyTxConfirmation(txID, xerrors.New("block lost race, transaction not in canonical chain"))
-				}
-			}
-		}
+		n.notifyBlockRaceLost(block.Transactions)
 		return nil
 	}
+	n.notifyBlockMined(block)
+	msg := types.NamecoinBlockMessage{Block: block}
+	wire, err := n.conf.MessageRegistry.MarshalMessage(msg)
+	if err != nil {
+		return err
+	}
+	err = n.broadcastWithOptions(wire, true)
+	if err != nil {
+		return err
+	}
+	return nil
+}
 
-	// Only notify transactions if the block actually extended the longest chain
+// notifyAllBlockTxs notifies all transactions in a block with the given error
+func (n *node) notifyAllBlockTxs(txs []types.Tx, err error) {
+	log.Printf("[DEBUG] Notifying %d transactions in block with error: %v", len(txs), err)
+	for _, val := range txs {
+		txID, txErr := BuildTransactionID(&val)
+		if txErr == nil {
+			n.notifyTxConfirmation(txID, err)
+		}
+	}
+}
+
+// notifyBlockRaceLost notifies all non-reward transactions that block lost the race
+func (n *node) notifyBlockRaceLost(txs []types.Tx) {
+	log.Printf("[DEBUG] Mined block lost race, notifying %d transactions as failed", len(txs))
+	for _, val := range txs {
+		if val.Type != "Reward" {
+			txID, txErr := BuildTransactionID(&val)
+			if txErr == nil {
+				n.notifyTxConfirmation(txID, xerrors.New("block lost race, transaction not in canonical chain"))
+			}
+		}
+	}
+}
+
+// notifyBlockMined notifies all non-reward transactions that block was mined successfully
+func (n *node) notifyBlockMined(block types.Block) {
 	log.Printf("[DEBUG] Successfully applied mined block at height %d, notifying %d transactions",
 		block.Header.Height, len(block.Transactions))
 	for _, val := range block.Transactions {
@@ -485,23 +487,6 @@ func (n *node) MinerDoWork(stop <-chan struct{}) error {
 			}
 		}
 	}
-
-	// Broadcast mined block
-	msg := types.NamecoinBlockMessage{
-		Block: block,
-	}
-
-	wire, err := n.conf.MessageRegistry.MarshalMessage(msg)
-	if err != nil {
-		return err
-	}
-
-	err = n.broadcastWithOptions(wire, true)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func stopped(stop <-chan struct{}) bool {
