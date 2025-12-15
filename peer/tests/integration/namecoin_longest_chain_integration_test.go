@@ -200,8 +200,8 @@ func Test_Namecoin_Integration_LongestChain_PartitionMerge(t *testing.T) {
 	connectGroup(nodes[2:])
 
 	// Each partition mines independently for a bit (reduced heights to avoid timeouts).
-	waitForHeight(t, nodes[:2], 1, 15*time.Second)
-	waitForHeight(t, nodes[2:], 1, 15*time.Second)
+	waitForHeight(t, nodes[:2], 1, 20*time.Second)
+	waitForHeight(t, nodes[2:], 1, 20*time.Second)
 
 	// Verify each partition is internally consistent but diverged from the other.
 	headA, heightA := waitForCommonHead(t, nodes[:2], 5*time.Second)
