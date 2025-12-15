@@ -309,15 +309,24 @@ func (n *node) HandleNamecoinCommand(buf []byte) error {
 		return err
 	}
 
-	// Wait for transaction to be included in a block (no timeout)
-	log.Printf("[DEBUG] Waiting for transaction %s to be included in block (no timeout)", txID)
-	err = <-confirmCh
-	if err != nil {
-		log.Printf("[ERROR] Transaction %s failed block inclusion: %v", txID, err)
-		return xerrors.Errorf("transaction failed to be included in block: %w", err)
+	// Wait for transaction to be included in a block (5 minute timeout)
+	log.Printf("[DEBUG] Waiting for transaction %s to be included in block (5 minute timeout)", txID)
+	timeout := time.NewTimer(30 * time.Second)
+	defer timeout.Stop()
+
+	select {
+	case err = <-confirmCh:
+		if err != nil {
+			log.Printf("[ERROR] Transaction %s failed block inclusion: %v", txID, err)
+			return xerrors.Errorf("transaction failed to be included in block: %w", err)
+		}
+		log.Printf("[SUCCESS] Transaction %s confirmed in block", txID)
+		return nil
+	case <-timeout.C:
+		log.Printf("[TIMEOUT] Transaction %s timed out after 5 minutes", txID)
+		n.unregisterTxConfirmation(txID)
+		return xerrors.Errorf("transaction %s confirmation timed out after 5 minutes", txID)
 	}
-	log.Printf("[SUCCESS] Transaction %s confirmed in block", txID)
-	return nil
 }
 
 type pendingAck struct {
@@ -448,7 +457,20 @@ func (n *node) MinerDoWork(stop <-chan struct{}) error {
 	}
 
 	if !changed {
-		// Our block lost the race → drop it silently
+		// Our block lost the race → notify failures but DON'T requeue
+		// Requeuing risks double-spending if transactions are in the winning block
+		log.Printf("[DEBUG] Mined block lost race, notifying %d transactions as failed", len(block.Transactions))
+
+		// Notify all transactions that they were not included in canonical chain
+		// Users can resubmit if needed, and validation will prevent double-spending
+		for _, val := range block.Transactions {
+			if val.Type != "Reward" {
+				txID, txErr := BuildTransactionID(&val)
+				if txErr == nil {
+					n.notifyTxConfirmation(txID, xerrors.New("block lost race, transaction not in canonical chain"))
+				}
+			}
+		}
 		return nil
 	}
 
