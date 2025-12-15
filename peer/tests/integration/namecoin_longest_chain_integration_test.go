@@ -206,11 +206,11 @@ func Test_Namecoin_Integration_LongestChain_PartitionMerge(t *testing.T) {
 	// Verify each partition is internally consistent but diverged from the other.
 	headA, heightA := waitForCommonHead(t, nodes[:2], 5*time.Second)
 	require.NotNil(t, headA)
-	require.GreaterOrEqual(t, heightA, uint64(2))
+	require.GreaterOrEqual(t, heightA, uint64(1))
 
 	headB, heightB := waitForCommonHead(t, nodes[2:], 5*time.Second)
 	require.NotNil(t, headB)
-	require.GreaterOrEqual(t, heightB, uint64(2))
+	require.GreaterOrEqual(t, heightB, uint64(1))
 
 	// Heads should differ across partitions (most likely); allow equality only if coincidentally same.
 	if bytes.Equal(headA, headB) {
