@@ -389,7 +389,6 @@ func (st *NamecoinState) replaceWith(snapshot *NamecoinState) {
 	st.Domains = snapshot.Domains
 	st.expires = snapshot.expires
 	st.Commitments = snapshot.Commitments
-	st.commitmentTTLs = snapshot.commitmentTTLs
 	st.UTXOMap = snapshot.UTXOMap
 	st.txMap = snapshot.txMap
 	st.currentHeight = snapshot.currentHeight

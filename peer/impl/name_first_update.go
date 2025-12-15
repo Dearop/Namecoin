@@ -44,7 +44,7 @@ func (n NameFirstUpdate) ApplyState(st *NamecoinState, tx *types.Tx) error {
 
 	//generate txID of the name_new transaction, i.e. with type name_new and commitment
 
-	commit, key, err := n.resolveCommitment(st, tx)
+	_, rec, key, err := n.resolveCommitment(st, tx)
 	if err != nil {
 		return err
 	}
@@ -54,7 +54,7 @@ func (n NameFirstUpdate) ApplyState(st *NamecoinState, tx *types.Tx) error {
 		return xerrors.New("Domain already exists")
 	}
 
-	effectiveTTLValue := st.effectiveTTL(resolveTTLPreference(n.TTL, commit, st))
+	effectiveTTLValue := st.effectiveTTL(resolveTTLPreference(n.TTL, rec.TTL))
 	newExpiresAt := st.CurrentHeight() + effectiveTTLValue
 
 	log.Info().Str("domain", n.Domain).Uint64("ttl_blocks", effectiveTTLValue).Uint64("new_expires_at",
@@ -72,16 +72,11 @@ func (n NameFirstUpdate) ApplyState(st *NamecoinState, tx *types.Tx) error {
 	return nil
 }
 
-func resolveTTLPreference(txTTL uint64, commitment string, st *NamecoinState) uint64 {
+func resolveTTLPreference(txTTL uint64, storedTTL uint64) uint64 {
 	if txTTL != 0 {
 		return txTTL
 	}
-	if commitment != "" {
-		if pref := st.GetCommitmentTTL(commitment); pref != 0 {
-			return pref
-		}
-	}
-	return 0
+	return storedTTL
 }
 
 func (n NameFirstUpdate) ApplyUTXO(st *NamecoinState, txID string, tx *types.Tx) error {
@@ -90,29 +85,49 @@ func (n NameFirstUpdate) ApplyUTXO(st *NamecoinState, txID string, tx *types.Tx)
 
 // ValidateWithInputs performs commitment checks requiring full tx inputs.
 func (n NameFirstUpdate) ValidateWithInputs(st *NamecoinState, tx *types.Tx) error {
-	_, _, err := n.resolveCommitment(st, tx)
+	_, rec, _, err := n.resolveCommitment(st, tx)
+	if err != nil {
+		return err
+	}
+	// Reject if the commitment is too old.
+	if rec.Height > 0 && st.CurrentHeight() > rec.Height {
+		if st.CurrentHeight()-rec.Height > MaxFirstUpdateDepth {
+			return fmt.Errorf("commitment too old for firstupdate")
+		}
+	}
 	if rec, ok := st.getDomain(n.Domain); ok && !st.isExpired(rec, st.CurrentHeight()) {
 		return xerrors.New("domain already exists")
 	}
-	return err
+	return nil
 }
 
-func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (string, string, error) {
-	if len(tx.Inputs) == 0 {
-		return "", "", fmt.Errorf("name_firstupdate requires at least one input")
-	}
-
+func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (string, CommitmentRecord, string, error) {
 	commitment := HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", n.Domain, n.Salt))
-	// Use the referenced name_new outpoint (txid:0 in the single-output MVP).
-	log.Info().Msgf("NameFirstUpdate: resolving commitment for input %s", n.TxID)
-	key := OutpointKey(n.TxID, 0)
 
-	storedCommit, ok := st.GetCommitment(key)
+	commitTxID := n.TxID
+	commitVout := uint32(0)
+	if commitTxID == "" {
+		if len(tx.Inputs) == 0 {
+			return "", CommitmentRecord{}, "", fmt.Errorf("missing name_new reference: no payload txid and no inputs")
+		}
+		// Backwards-compatible fallback: older clients encode the commitment reference
+		// as the first input outpoint.
+		commitTxID = tx.Inputs[0].TxID
+		commitVout = tx.Inputs[0].Index
+	}
+
+	// Use the referenced name_new outpoint (txid:vout).
+	log.Info().Msgf("NameFirstUpdate: resolving commitment for input %s", commitTxID)
+	key := OutpointKey(commitTxID, commitVout)
+
+	rec, ok := st.GetCommitment(key)
 	if !ok {
-		return "", "", fmt.Errorf("no matching name_new commitment with key %s", key)
+		return "", CommitmentRecord{}, "", fmt.Errorf("no matching name_new commitment with key %s", key)
 	}
-	if commitment != storedCommit {
-		return "", "", fmt.Errorf("commitment mismatch for domain %s", n.Domain)
+	if commitment != rec.Commit {
+		return "", CommitmentRecord{}, "", fmt.Errorf("commitment mismatch for domain %s", n.Domain)
 	}
-	return storedCommit, key, nil
+	return rec.Commit, rec, key, nil
 }
+
+const MaxFirstUpdateDepth uint64 = 25

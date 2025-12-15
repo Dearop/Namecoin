@@ -74,7 +74,6 @@ func powParamsFromConfig(cfg peer.PoWConfig) powParams {
 	return p
 }
 
-
 func rebuildPowState(blocks []loadedBlock, headHeight uint64) (*big.Int, powParams, int64) {
 	powTarget := effectiveTarget(nil)
 	params := powParamsFromConfig(peer.PoWConfig{})
@@ -224,11 +223,11 @@ func parseNamecoinBlockHeight(key string) (uint64, error) {
 
 // ---- Helpers ----
 // ComputeTxRoot recomputes the txRoot from the block's transactions
-// MVP: SHA-256 over the JSON encoding of each tx in order.
+// MVP: SHA-256 over the canonical JSON encoding of each tx in order.
 func ComputeTxRoot(txs []types.Tx) ([]byte, error) {
 	h := sha256.New()
 	for i := range txs {
-		b, err := SerializeTransaction(&txs[i])
+		b, err := SerializeTransactionForTxRoot(&txs[i])
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal tx %d for root: %w", i, err)
 		}
@@ -511,14 +510,12 @@ func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
 	c.mu.Unlock()
 
 	blockTarget := DecodeDifficulty(blk.Header.Difficulty)
-	// validate on state copy
-	err := c.ValidateBlock(currentHeadHeight, currentHeadHash, blk, target)
-	if err != nil {
-		return err
+	if blockTarget == nil {
+		blockTarget = cloneBigInt(c.powTarget)
 	}
-
-	// try to apply on a state clone to ensure safety
-	if err = clonedState.applyBlockInPlace(blk); err != nil {
+	// validate + apply on state copy
+	err := c.ValidateBlock(currentHeadHeight, currentHeadHash, blk, target, clonedState)
+	if err != nil {
 		return err
 	}
 
@@ -531,7 +528,13 @@ func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if err = c.ValidateBlock(c.headHeight, c.headHash, blk, c.powTarget); err != nil {
+	// Ensure the chain head didn't change since we validated/applied on the clone.
+	if c.headHeight != currentHeadHeight || !bytes.Equal(c.headHash, currentHeadHash) {
+		return fmt.Errorf("chain head changed during ApplyBlock")
+	}
+
+	err = c.ValidateBlockHeader(c.headHeight, c.headHash, blk, c.powTarget)
+	if err != nil {
 		return err
 	}
 
@@ -566,7 +569,9 @@ func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
 	return nil
 }
 
-func (c *NamecoinChain) ValidateBlock(
+// ValidateBlockHeader validates only block header-level properties (linkage, TxRoot, PoW),
+// without applying transactions.
+func (c *NamecoinChain) ValidateBlockHeader(
 	currentHeadHeight uint64,
 	currentHeadHash []byte,
 	blk *types.Block,
@@ -587,12 +592,205 @@ func (c *NamecoinChain) ValidateBlock(
 		return fmt.Errorf("txRoot mismatch")
 	}
 
-	validationTarget := selectPowTarget(blk, target)
+	validationTarget, err := enforceDifficultyTarget(blk, target)
+	if err != nil {
+		return err
+	}
 	if err = validateWorkForTarget(blk, validationTarget); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+// ValidateBlock validates a candidate Namecoin block against the current chain head and
+// applies all transactions onto the provided state snapshot (which must be a clone).
+func (c *NamecoinChain) ValidateBlock(
+	currentHeadHeight uint64,
+	currentHeadHash []byte,
+	blk *types.Block,
+	target *big.Int,
+	stateSnapshot *NamecoinState,
+) error {
+	if stateSnapshot == nil {
+		return fmt.Errorf("validate namecoin blk: nil state snapshot")
+	}
+
+	if err := c.ValidateBlockHeader(currentHeadHeight, currentHeadHash, blk, target); err != nil {
+		return err
+	}
+
+	if err := applyBlockStrict(stateSnapshot, blk); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func applyBlockStrict(st *NamecoinState, blk *types.Block) error {
+	if blk == nil {
+		return fmt.Errorf("apply block: nil")
+	}
+
+	st.setHeight(blk.Header.Height)
+	st.pruneExpired(blk.Header.Height)
+
+	for i := range blk.Transactions {
+		tx := &blk.Transactions[i]
+		txID, err := BuildTransactionID(tx)
+		if err != nil {
+			return err
+		}
+
+		if st.IsTxApplied(txID) {
+			return fmt.Errorf("tx already applied: %s", txID)
+		}
+
+		if err := validateTxStrict(st, txID, tx); err != nil {
+			return fmt.Errorf("tx %d (%s) invalid: %w", i, txID, err)
+		}
+
+		if err := st.ApplyCommandUTXO(txID, tx); err != nil {
+			return fmt.Errorf("apply tx %d (%s) UTXO: %w", i, txID, err)
+		}
+		if err := st.ApplyCommandState(tx); err != nil {
+			return fmt.Errorf("apply tx %d (%s) state: %w", i, txID, err)
+		}
+
+		st.MarkAsApplied(txID)
+	}
+
+	return nil
+}
+
+func validateTxStrict(st *NamecoinState, txID string, tx *types.Tx) error {
+	if tx == nil {
+		return fmt.Errorf("nil tx")
+	}
+
+	// Validate command payload fields on the signed-tx view.
+	stx := &SignedTransaction{
+		Type:      tx.Type,
+		From:      tx.From,
+		Amount:    tx.Amount,
+		Payload:   tx.Payload,
+		Pk:        tx.Pk,
+		TxID:      tx.TxID,
+		Signature: tx.Signature,
+	}
+	if err := st.ValidateCommand(stx); err != nil {
+		return err
+	}
+
+	// Reward is special: no signature required.
+	if tx.Type == RewardCommandName {
+		if tx.TxID != "" && tx.TxID != txID {
+			return fmt.Errorf("reward txid mismatch: expected %s, got %s", txID, tx.TxID)
+		}
+		if len(tx.Outputs) > 1 {
+			return fmt.Errorf("reward tx: expected 0 or 1 output, got %d", len(tx.Outputs))
+		}
+		return nil
+	}
+
+	// Require signature and ownership binding for all non-reward txs.
+	if tx.Pk == "" || tx.Signature == "" || tx.TxID == "" {
+		return fmt.Errorf("missing on-chain signature metadata")
+	}
+	if tx.TxID != txID {
+		return fmt.Errorf("txid mismatch: expected %s, got %s", txID, tx.TxID)
+	}
+
+	pubKeyBytes, err := decodeHex(tx.Pk)
+	if err != nil {
+		return fmt.Errorf("invalid public key format")
+	}
+	expectedFrom := HashHex(pubKeyBytes)
+	if tx.From != expectedFrom {
+		return fmt.Errorf("from does not match pk hash")
+	}
+
+	sigPreimage := (&SignedTransaction{
+		Type:    tx.Type,
+		From:    tx.From,
+		Amount:  tx.Amount,
+		Payload: tx.Payload,
+	}).SerializeTransactionSignature()
+	if err := VerifySignature(pubKeyBytes, sigPreimage, tx.Signature); err != nil {
+		return err
+	}
+
+	// Enforce single-output MVP.
+	if len(tx.Outputs) > 1 {
+		return fmt.Errorf("expected 0 or 1 output, got %d", len(tx.Outputs))
+	}
+	for _, in := range tx.Inputs {
+		if in.Index != 0 {
+			return fmt.Errorf("unsupported input index %d (MVP only supports vout=0)", in.Index)
+		}
+	}
+
+	// Enforce input availability and deterministic change output.
+	totalIn, err := sumInputAmounts(st, tx.From, tx.Inputs)
+	if err != nil {
+		return err
+	}
+	if totalIn < tx.Amount {
+		return fmt.Errorf("insufficient funds")
+	}
+
+	leftover := totalIn - tx.Amount
+	if leftover == 0 {
+		if len(tx.Outputs) != 0 {
+			return fmt.Errorf("unexpected change output")
+		}
+	} else {
+		if len(tx.Outputs) != 1 {
+			return fmt.Errorf("missing change output")
+		}
+		out := tx.Outputs[0]
+		if out.To != tx.From {
+			return fmt.Errorf("change output must pay back to sender")
+		}
+		if out.Amount != leftover {
+			return fmt.Errorf("invalid change amount")
+		}
+	}
+
+	// Validate any command invariants that depend on formed inputs/outputs.
+	return st.ValidateCommandWithInputs(tx)
+}
+
+func sumInputAmounts(st *NamecoinState, from string, inputs []types.TxInput) (uint64, error) {
+	if len(inputs) == 0 {
+		return 0, nil
+	}
+
+	seen := make(map[string]struct{}, len(inputs))
+	var total uint64
+
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	userUTXOs := st.UTXOMap[from]
+	if userUTXOs == nil {
+		return 0, fmt.Errorf("no utxos for sender")
+	}
+
+	for _, in := range inputs {
+		if _, ok := seen[in.TxID]; ok {
+			return 0, fmt.Errorf("duplicate input %s", in.TxID)
+		}
+		seen[in.TxID] = struct{}{}
+
+		utxo, ok := userUTXOs[in.TxID]
+		if !ok {
+			return 0, fmt.Errorf("input utxo not found")
+		}
+		total += utxo.Amount
+	}
+
+	return total, nil
 }
 
 func validateWorkForTarget(blk *types.Block, target *big.Int) error {
@@ -602,11 +800,21 @@ func validateWorkForTarget(blk *types.Block, target *big.Int) error {
 	return nil
 }
 
-// selectPowTarget picks the target to validate work against, preferring the block's
-// encoded difficulty when present, falling back to the chain's target.
-func selectPowTarget(blk *types.Block, chainTarget *big.Int) *big.Int {
-	if blk != nil && len(blk.Header.Difficulty) > 0 {
-		return new(big.Int).SetBytes(blk.Header.Difficulty)
+// enforceDifficultyTarget returns the target to validate against and rejects
+// blocks that try to claim an easier difficulty than the chain expects.
+func enforceDifficultyTarget(blk *types.Block, chainTarget *big.Int) (*big.Int, error) {
+	if blk == nil {
+		return nil, fmt.Errorf("nil block")
 	}
-	return chainTarget
+	blkTarget := DecodeDifficulty(blk.Header.Difficulty)
+	if blkTarget == nil {
+		// If no difficulty is set on the block, fall back to chain target.
+		return chainTarget, nil
+	}
+	if chainTarget != nil && blkTarget.Cmp(chainTarget) > 0 {
+		// Larger target = easier work -> reject difficulty spoofing.
+		return nil, fmt.Errorf("block difficulty easier than expected")
+	}
+	// Accept blocks that are equal or harder (smaller/equal target).
+	return blkTarget, nil
 }

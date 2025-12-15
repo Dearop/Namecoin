@@ -56,7 +56,7 @@ func TestTransactionServiceValidateTransactionFirstUpdateCommitmentMismatch(t *t
 
 	// Set up the correct commitment for initial validation to pass
 	correctCommit := impl.HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", payload.Domain, payload.Salt))
-	state.SetCommitment(tx.From, correctCommit)
+	state.SetCommitment(tx.From, correctCommit, 0, 0)
 
 	require.NoError(t, service.ValidateTransaction(&tx))
 
@@ -73,7 +73,7 @@ func TestTransactionServiceValidateTransactionFirstUpdateCommitmentMismatch(t *t
 	}
 
 	commitKey := impl.OutpointKey(inputs[0].TxID, inputs[0].Index)
-	state.SetCommitment(commitKey, impl.HashString("different"))
+	state.SetCommitment(commitKey, impl.HashString("different"), 0, 0)
 
 	if err := service.ValidateTxCommand(&txToValidate); err == nil {
 		t.Fatalf("expected validation to fail when commitment does not match")

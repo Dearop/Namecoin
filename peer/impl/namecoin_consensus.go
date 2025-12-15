@@ -79,9 +79,7 @@ func (c *NamecoinConsensus) MineAndApply(
 	hdrBase := *baseHeader
 	// Embed the difficulty used for mining into the header so validators can
 	// verify using the same target regardless of local config.
-	if c.powCfg.Target != nil {
-		hdrBase.Difficulty = c.powCfg.Target.Bytes()
-	}
+	hdrBase.Difficulty = target.Bytes()
 	_ = AssembleBlock(&hdrBase, pending, c.powCfg.PubKey)
 
 	headerBuilder := c.buildHeader(&hdrBase)

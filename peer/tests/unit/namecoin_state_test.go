@@ -49,7 +49,8 @@ func Test_Namecoin_State_ApplyTx_NameNewSetsCommitmentOnly(t *testing.T) {
 	key := outpointKeyForTx(t, txID, 0)
 	commit, ok := st.GetCommitment(key)
 	require.True(t, ok)
-	require.Equal(t, "commit-123", commit)
+	require.Equal(t, "commit-123", commit.Commit)
+	require.Equal(t, impl.DefaultDomainTTLBlocks, commit.TTL)
 	require.False(t, st.IsDomainExists("example.bit"))
 	require.True(t, st.IsTxApplied(txID))
 }

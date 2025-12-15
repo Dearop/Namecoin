@@ -392,7 +392,7 @@ func Test_Namecoin_Integration_NameNewCommitmentPersistsAcrossBlocks(t *testing.
 	key := impl.OutpointKey(txNewID, 0)
 	commit, ok := state.GetCommitment(key)
 	require.True(t, ok)
-	require.Equal(t, commitment, commit, "expected commitment to persist after first block")
+	require.Equal(t, commitment, commit.Commit, "expected commitment to persist after first block")
 
 	// Block 1 (empty pending set) should keep the commitment intact.
 	header1 := types.BlockHeader{
@@ -410,5 +410,5 @@ func Test_Namecoin_Integration_NameNewCommitmentPersistsAcrossBlocks(t *testing.
 	stateFinal := chainFinal.State()
 	commitFinal, ok := stateFinal.GetCommitment(key)
 	require.True(t, ok)
-	require.Equal(t, commitment, commitFinal, "expected commitment to persist across blocks")
+	require.Equal(t, commitment, commitFinal.Commit, "expected commitment to persist across blocks")
 }

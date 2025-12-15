@@ -96,12 +96,15 @@ func (n *node) handleNamecoinTransactionMessage(message types.Message, packet tr
 	}
 
 	tx := types.Tx{
-		From:    signed.From,
-		Type:    signed.Type,
-		Inputs:  inputs,
-		Outputs: outputs,
-		Amount:  signed.Amount,
-		Payload: signed.Payload,
+		From:      signed.From,
+		Type:      signed.Type,
+		Inputs:    inputs,
+		Outputs:   outputs,
+		Amount:    signed.Amount,
+		Payload:   signed.Payload,
+		Pk:        signed.Pk,
+		TxID:      signed.TxID,
+		Signature: signed.Signature,
 	}
 	if err := n.transactionService.ValidateTxCommand(&tx); err != nil {
 		return err
