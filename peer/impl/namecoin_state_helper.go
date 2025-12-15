@@ -24,15 +24,11 @@ func SerializeTransaction(tx *types.Tx) ([]byte, error) {
 	data := struct {
 		Type    string           `json:"type"`
 		From    string           `json:"from"`
-		Inputs  []types.TxInput  `json:"inputs"`
-		Outputs []types.TxOutput `json:"outputs"`
 		Amount  uint64           `json:"amount"`
 		Payload json.RawMessage  `json:"payload"`
 	}{
 		Type:    tx.Type,
 		From:    tx.From,
-		Inputs:  tx.Inputs,
-		Outputs: tx.Outputs,
 		Amount:  tx.Amount,
 		Payload: tx.Payload,
 	}

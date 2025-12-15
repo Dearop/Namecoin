@@ -115,4 +115,4 @@ func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (str
 		return "", "", fmt.Errorf("commitment mismatch for domain %s", n.Domain)
 	}
 	return storedCommit, key, nil
- }
+}
