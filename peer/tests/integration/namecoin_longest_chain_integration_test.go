@@ -332,17 +332,3 @@ func stopMinersFor(t *testing.T, nodes []z.TestNode) {
 		}
 	}
 }
-
-func startMinersFor(t *testing.T, nodes []z.TestNode) {
-	t.Helper()
-
-	for _, node := range nodes {
-		if miner, ok := node.Peer.(interface {
-			EnableMiner()
-			StartMiner()
-		}); ok {
-			miner.EnableMiner()
-			miner.StartMiner()
-		}
-	}
-}

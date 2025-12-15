@@ -107,7 +107,8 @@ func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (str
 	in := tx.Inputs[0]
 	refTxID := in.TxID
 	if n.TxID != "" && n.TxID != refTxID {
-		return "", "", fmt.Errorf("name_firstupdate txid mismatch: input refers to %s but payload specifies %s", refTxID, n.TxID)
+		return "", "", fmt.Errorf("name_firstupdate txid mismatch: input refers to %s but payload specifies %s",
+			refTxID, n.TxID)
 	}
 	if refTxID == "" {
 		return "", "", fmt.Errorf("name_firstupdate missing reference txid")
