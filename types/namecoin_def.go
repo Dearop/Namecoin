@@ -128,8 +128,13 @@ func (b *Block) Unmarshal(data []byte) error {
 
 // NamecoinTransactionMessage message for broadcasting UTXO across the nodes
 type NamecoinTransactionMessage struct {
-	Tx   Tx
-	TxID string
+	Type      string
+	From      string
+	Amount    uint64
+	Payload   json.RawMessage
+	Pk        string
+	TxID      string
+	Signature string
 }
 
 type NamecoinBlockMessage struct {

@@ -291,8 +291,13 @@ func (n *node) HandleNamecoinCommand(buf []byte) error {
 	confirmCh := n.registerTxConfirmation(txID)
 
 	msg := types.NamecoinTransactionMessage{
-		TxID: transaction.TxID,
-		Tx:   tx,
+		Type:      transaction.Type,
+		From:      transaction.From,
+		Amount:    transaction.Amount,
+		Payload:   transaction.Payload,
+		Pk:        transaction.Pk,
+		TxID:      transaction.TxID,
+		Signature: transaction.Signature,
 	}
 
 	marshaled, err := n.conf.MessageRegistry.MarshalMessage(msg)

@@ -76,7 +76,47 @@ func (n *node) handleNamecoinTransactionMessage(message types.Message, packet tr
 		return xerrors.Errorf("unexpected message type")
 	}
 
-	n.namecoinConsensus.txBuffer.Add(msg.Tx, msg.TxID)
+	// Validate signed transaction and derive UTXO inputs/outputs before accepting into mempool.
+	signed := SignedTransaction{
+		Type:      msg.Type,
+		From:      msg.From,
+		Amount:    msg.Amount,
+		Payload:   msg.Payload,
+		Pk:        msg.Pk,
+		TxID:      msg.TxID,
+		Signature: msg.Signature,
+	}
+	if err := n.transactionService.ValidateTransaction(&signed); err != nil {
+		return err
+	}
+
+	inputs, outputs, err := n.transactionService.VerifyBalance(signed.TxID, signed.From, signed.Amount)
+	if err != nil {
+		return err
+	}
+
+	tx := types.Tx{
+		From:    signed.From,
+		Type:    signed.Type,
+		Inputs:  inputs,
+		Outputs: outputs,
+		Amount:  signed.Amount,
+		Payload: signed.Payload,
+	}
+	if err := n.transactionService.ValidateTxCommand(&tx); err != nil {
+		return err
+	}
+
+	// Ensure the TxID provided over the network matches the one computed by the backend.
+	txID, err := BuildTransactionID(&tx)
+	if err != nil {
+		return err
+	}
+	if txID != signed.TxID {
+		return xerrors.Errorf("txId mismatch: expected %s, got %s", txID, signed.TxID)
+	}
+
+	n.namecoinConsensus.txBuffer.Add(tx, txID)
 	return nil
 }
 
