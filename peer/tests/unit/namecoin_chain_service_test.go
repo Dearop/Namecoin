@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"go.dedis.ch/cs438/peer"
 	"go.dedis.ch/cs438/peer/impl"
 	"go.dedis.ch/cs438/storage"
 	"go.dedis.ch/cs438/types"
@@ -321,7 +322,12 @@ func Test_NamecoinChainServiceProcessesOrphans(t *testing.T) {
 
 func newTestChain(store storage.Store) *impl.NamecoinChain {
 	c := impl.NewNamecoinChain(store)
-	c.SetPowTarget(new(big.Int).Lsh(big.NewInt(1), 256)) // accept any hash
+	easy := new(big.Int).Lsh(big.NewInt(1), 256) // accept any hash
+	c.ConfigurePow(peer.PoWConfig{
+		Target:                      easy,
+		DisableDifficultyAdjustment: true,
+	})
+	c.SetPowTarget(easy)
 	return c
 }
 
@@ -332,9 +338,10 @@ func makeBlock(height uint64, prev []byte, nonce ...uint64) *types.Block {
 	}
 	b := types.Block{
 		Header: types.BlockHeader{
-			Height:   height,
-			PrevHash: impl.CloneBytes(prev),
-			Nonce:    n,
+			Height:     height,
+			PrevHash:   impl.CloneBytes(prev),
+			Nonce:      n,
+			Difficulty: impl.EncodeDifficulty(new(big.Int).Lsh(big.NewInt(1), 256)),
 		},
 	}
 	txRoot, err := impl.ComputeTxRoot(nil)

@@ -120,7 +120,12 @@ func (n *node) handleNamecoinBlockMessage(message types.Message, packet transpor
 	}
 
 	n.StopMiner()
-	n.StartMiner()
+	n.minerMu.Lock()
+	disabled := n.minerDisabled
+	n.minerMu.Unlock()
+	if !disabled {
+		n.StartMiner()
+	}
 
 	log.Printf("[DEBUG] Successfully applied received block at height %d, notifying %d transactions",
 		msg.Block.Header.Height, len(msg.Block.Transactions))

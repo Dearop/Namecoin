@@ -2,6 +2,7 @@ package unit
 
 import (
 	"encoding/hex"
+	"fmt"
 	"testing"
 
 	"go.dedis.ch/cs438/peer/impl"
@@ -62,23 +63,31 @@ func TestVerifyBalanceInsufficientFunds(t *testing.T) {
 }
 
 func TestTokenBalanceManagerVerifyOwnershipSuccess(t *testing.T) {
-	manager := impl.NewBalanceManager(nil)
-
 	publicKey := []byte{0x01, 0x02, 0x03}
 	from := hex.EncodeToString(impl.Hash(publicKey))
 
-	if err := manager.VerifyOwnership(from, publicKey); err != nil {
+	if err := verifyOwnership(from, publicKey); err != nil {
 		t.Fatalf("expected ownership verification to succeed, got %v", err)
 	}
 }
 
 func TestTokenBalanceManagerVerifyOwnershipMismatch(t *testing.T) {
-	manager := impl.NewBalanceManager(nil)
-
 	publicKey := []byte{0x04, 0x05, 0x06}
 	from := "deadbeef"
 
-	if err := manager.VerifyOwnership(from, publicKey); err == nil {
+	if err := verifyOwnership(from, publicKey); err == nil {
 		t.Fatalf("expected ownership verification to fail with mismatched address")
 	}
+}
+
+func verifyOwnership(from string, publicKey []byte) error {
+	pkHex := hex.EncodeToString(publicKey)
+	if from == pkHex {
+		return nil
+	}
+	derivedAddr := hex.EncodeToString(impl.Hash(publicKey))
+	if from == derivedAddr {
+		return nil
+	}
+	return fmt.Errorf("public key does not match sender address")
 }

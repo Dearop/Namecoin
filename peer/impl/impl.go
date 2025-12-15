@@ -50,7 +50,7 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 		namecoinChain.state.SetLogger(logger)
 		node.logger = logger
 	}
-	namecoinChain.SetPowTarget(conf.PoWConfig.Target)
+	namecoinChain.ConfigurePow(conf.PoWConfig)
 
 	transactionService := NewTransactionService(namecoinChain.state)
 
@@ -223,6 +223,11 @@ func (n *node) GetDNSAddr() string {
 	return n.dnsServer.Addr()
 }
 
+// DNSServerAddr returns the bound DNS server address (alias for tests).
+func (n *node) DNSServerAddr() string {
+	return n.GetDNSAddr()
+}
+
 func (n *node) GetMinerID() string {
 	return n.conf.PoWConfig.PubKey
 }
@@ -309,9 +314,9 @@ func (n *node) HandleNamecoinCommand(buf []byte) error {
 		return err
 	}
 
-	// Wait for transaction to be included in a block (5 minute timeout)
-	log.Printf("[DEBUG] Waiting for transaction %s to be included in block (5 minute timeout)", txID)
-	timeout := time.NewTimer(30 * time.Second)
+	// Wait for transaction to be included in a block (1 minute timeout)
+	log.Printf("[DEBUG] Waiting for transaction %s to be included in block (1 minute timeout)", txID)
+	timeout := time.NewTimer(60 * time.Second)
 	defer timeout.Stop()
 
 	select {
@@ -325,7 +330,7 @@ func (n *node) HandleNamecoinCommand(buf []byte) error {
 	case <-timeout.C:
 		log.Printf("[TIMEOUT] Transaction %s timed out after 5 minutes", txID)
 		n.unregisterTxConfirmation(txID)
-		return xerrors.Errorf("transaction %s confirmation timed out after 5 minutes", txID)
+		return xerrors.Errorf("transaction %s confirmation timed out after 1 minutes", txID)
 	}
 }
 
@@ -408,10 +413,26 @@ func (n *node) EnableMiner() {
 }
 
 func (n *node) MinerDoWork(stop <-chan struct{}) error {
+	n.minerMu.Lock()
+	disabled := n.minerDisabled
+	n.minerMu.Unlock()
+	if disabled || stop == nil {
+		return ErrMiningAborted
+	}
+
+	// Bail out quickly if stop was already signaled.
 	if stopped(stop) {
 		return ErrMiningAborted
 	}
 	headHash, headHeight := n.NamecoinChainService.HeadSnapshot()
+	n.mu.RLock()
+	target := n.NamecoinChainService.GetLongestChain().NextPowTarget()
+	n.mu.RUnlock()
+
+	if target == nil {
+		target = effectiveTarget(n.conf.PoWConfig.Target)
+	}
+
 	nextHeight := headHeight + 1
 	if headHash == nil {
 		nextHeight = 0
@@ -422,7 +443,9 @@ func (n *node) MinerDoWork(stop <-chan struct{}) error {
 		Miner:     n.conf.PoWConfig.PubKey,
 		Timestamp: time.Now().Unix(),
 	}
-	block, err := n.namecoinConsensus.MineAndApply(stop, &base)
+
+	// Mine block
+	block, err := n.namecoinConsensus.MineAndApply(stop, &base, target)
 	if err != nil {
 		return err
 	}

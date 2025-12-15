@@ -48,7 +48,10 @@ func (s *ChainService) AppendChain(chain *NamecoinChain) {
 }
 
 func (s *ChainService) AppendBlockToLongestChain(block *types.Block) (changedCanonical bool, err error) {
-	return s.AppendBlockToChain(s.LongestChainIndex, block)
+	s.mu.RLock()
+	idx := s.LongestChainIndex
+	s.mu.RUnlock()
+	return s.AppendBlockToChain(idx, block)
 }
 
 func (s *ChainService) GetLongestChain() *NamecoinChain {

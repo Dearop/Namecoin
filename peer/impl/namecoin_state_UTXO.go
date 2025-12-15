@@ -19,12 +19,20 @@ func (st *NamecoinState) BurnUTXO(from string, txIDs []string) error {
 		return xerrors.Errorf("burn txID %s not found", from)
 	}
 
+	seen := make(map[string]struct{}, len(txIDs))
 	for _, txID := range txIDs {
+		if _, dup := seen[txID]; dup {
+			return xerrors.Errorf("duplicate utxo input %s", txID)
+		}
+		seen[txID] = struct{}{}
+
 		// burn UTXOs corresponding to TxID
 		if _, ok := userUTXOs[txID]; !ok {
-			return xerrors.Errorf("burn txID %s not found", from)
+			return xerrors.Errorf("burn txID %s not found", txID)
 		}
+	}
 
+	for txID := range seen {
 		delete(userUTXOs, txID)
 	}
 
@@ -57,26 +65,27 @@ func (st *NamecoinState) GetUTXOsToBurn(txID, from string, amount uint64) ([]str
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 
-	userUTXOs := st.UTXOMap[from]
+	userUTXOs, ok := st.UTXOMap[from]
+	if !ok || len(userUTXOs) == 0 {
+		return make([]string, 0), make([]types.UTXO, 0), xerrors.New("insufficient funds")
+	}
 	UTXOsToBurn := make([]string, 0)
 
-	total := int(amount)
-	// deduct until we burn enough UTXOs to pay
+	var burned uint64
 	for key, utxo := range userUTXOs {
-		total -= int(utxo.Amount)
+		burned += utxo.Amount
 		UTXOsToBurn = append(UTXOsToBurn, key)
 
-		if total <= 0 {
+		if burned >= amount {
 			break
 		}
 	}
 
-	// if amount still > 0 means that the user has not enough UTXOs to burn, revert
-	if total > 0 {
+	if burned < amount {
 		return make([]string, 0), make([]types.UTXO, 0), xerrors.New("insufficient funds")
 	}
 
-	leftOver := 0 - total
+	leftOver := burned - amount
 
 	if leftOver == 0 {
 		return UTXOsToBurn, make([]types.UTXO, 0), nil
@@ -85,7 +94,7 @@ func (st *NamecoinState) GetUTXOsToBurn(txID, from string, amount uint64) ([]str
 	leftOverUTXO := types.UTXO{
 		TxID:   txID,
 		To:     from,
-		Amount: uint64(leftOver),
+		Amount: leftOver,
 	}
 
 	// safe to return transactionIDS because we create only one UTXO per transaction

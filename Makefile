@@ -28,19 +28,22 @@ test_unit_hw3:
 	go test -timeout 2m -v -race -run Test_HW3 ./peer/tests/unit
 
 test_unit_POW:
-	go test -timeout 2m -v -race -run 'Test(MineNonce|CheckWork)' ./peer/tests/unit
+	go test -timeout 2m -v -race -run 'Test(MineNonce|CheckWork|EncodeDecodeDifficulty|AdjustDifficultyClamps|IsBlockComplexityValid)' ./peer/tests/unit
 
 test_unit_transaction_service:
 	go test -timeout 2m -v -race -run TestTransactionService ./peer/tests/unit
 
 test_unit_wallet_manager:
-	go test -timeout 2m -v -race -run TestTokenWalletManager ./peer/tests/unit
+	go test -timeout 2m -v -race -run 'Test(VerifyBalance|TokenBalanceManager)' ./peer/tests/unit
 
 test_unit_namecoin_chain_service:
 	go test -timeout 2m -v -race -run 'Test_NamecoinChainService' ./peer/tests/unit
 
 test_unit_namecoin_resolver:
 	go test -timeout 2m -v -race -run 'TestNamecoinDNS' ./peer/tests/unit
+
+test_unit_namecoin_state:
+	go test -timeout 2m -v -race -run 'Test_Namecoin' ./peer/tests/unit
 
 test_unit_namecoin_expiry:
 	go test -timeout 2m -v -race -run 'TestNamecoinExpiry' ./peer/tests/unit
@@ -68,6 +71,19 @@ test_int_namecoin_expiry:
 
 test_int_namecoin_longest_chain:
 	go test -timeout 5m -v -race -run Test_Namecoin_Integration_LongestChain ./peer/tests/integration
+
+test_int_namecoin_pow:
+	go test -timeout 5m -v -race -run 'Test_Namecoin_Integration' ./peer/tests/integration
+
+# Aggregate Namecoin test runner: runs unit + integration suites.
+test_namecoin_unit: test_unit_namecoin_resolver test_unit_namecoin_expiry test_unit_POW test_unit_transaction_service test_unit_wallet_manager test_unit_namecoin_state test_unit_namecoin_chain_service
+
+test_namecoin_integration: test_int_namecoin_dns test_int_node_dns test_int_namecoin_expiry test_int_namecoin_longest_chain test_int_namecoin_pow test_int_namecoin_verification
+
+test_namecoin: test_namecoin_unit test_namecoin_integration
+
+test_int_namecoin_verification:
+	go test -timeout 5m -v -race -run TestNamecoinBlockValidation ./peer/tests/integration
 
 # JSONIFY is set to "-json" in CI to format for GitHub, empty for displaying locally
 # || true allows to ignore error code and allow for smoother output logging

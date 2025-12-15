@@ -153,7 +153,10 @@ func buildSignedTransaction(t *testing.T, from string, privateKey ed25519.Privat
 		Pk:      hex.EncodeToString(publicKey),
 	}
 
-	unsignedBytes := tx.SerializeTransaction()
+	unsignedBytes, err := tx.SerializeTransaction()
+	if err != nil {
+		t.Fatalf("failed to serialize unsigned tx: %v", err)
+	}
 	tx.TxID = impl.HashHex(unsignedBytes)
 
 	sig := ed25519.Sign(privateKey, impl.Hash(unsignedBytes))

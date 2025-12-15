@@ -11,7 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
+	"go.dedis.ch/cs438/peer"
 	"go.dedis.ch/cs438/storage"
 	"go.dedis.ch/cs438/types"
 )
@@ -42,6 +44,83 @@ type NamecoinChain struct {
 	headHash   []byte
 	headHeight uint64
 	powTarget  *big.Int
+	powParams  powParams
+	headTS     int64
+}
+
+type powParams struct {
+	targetBlockTime time.Duration
+	maxAdjustUp     float64
+	maxAdjustDown   float64
+	dynamic         bool
+}
+
+func powParamsFromConfig(cfg peer.PoWConfig) powParams {
+	p := powParams{
+		targetBlockTime: cfg.TargetBlockTime,
+		maxAdjustUp:     cfg.MaxAdjustUp,
+		maxAdjustDown:   cfg.MaxAdjustDown,
+		dynamic:         !cfg.DisableDifficultyAdjustment,
+	}
+	if p.targetBlockTime <= 0 {
+		p.targetBlockTime = defaultTargetBlockTime
+	}
+	if p.maxAdjustUp <= 0 {
+		p.maxAdjustUp = defaultMaxAdjustUp
+	}
+	if p.maxAdjustDown <= 0 {
+		p.maxAdjustDown = defaultMaxAdjustDown
+	}
+	return p
+}
+
+
+func rebuildPowState(blocks []loadedBlock, headHeight uint64) (*big.Int, powParams, int64) {
+	powTarget := effectiveTarget(nil)
+	params := powParamsFromConfig(peer.PoWConfig{})
+	var (
+		headTS   int64
+		havePrev bool
+	)
+
+	for _, lb := range blocks {
+		if lb.Height > headHeight {
+			break
+		}
+		blk, err := decodeLoadedBlock(lb)
+		if err != nil {
+			warnf("load namecoin chain: skipping block for difficulty rebuild at height %d: %v", lb.Height, err)
+			continue
+		}
+		blkTarget := DecodeDifficulty(blk.Header.Difficulty)
+		if blkTarget == nil {
+			blkTarget = powTarget
+		}
+
+		if !havePrev {
+			powTarget = cloneBigInt(blkTarget)
+		} else if powTarget != nil && blkTarget != nil && powTarget.Cmp(blkTarget) != 0 {
+			warnf("load namecoin chain: header difficulty mismatch at height %d", blk.Header.Height)
+			powTarget = cloneBigInt(blkTarget)
+		}
+
+		if havePrev && params.dynamic {
+			spacing := time.Duration(blk.Header.Timestamp-headTS) * time.Second
+			powTarget = AdjustDifficulty(
+				powTarget,
+				spacing,
+				params.targetBlockTime,
+				params.maxAdjustUp,
+				params.maxAdjustDown,
+			)
+		}
+		headTS = blk.Header.Timestamp
+		havePrev = true
+	}
+	if powTarget == nil {
+		powTarget = effectiveTarget(nil)
+	}
+	return powTarget, params, headTS
 }
 
 func (c *NamecoinChain) HeadHash() []byte {
@@ -54,6 +133,35 @@ func (c *NamecoinChain) HeadHeight() uint64 {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.headHeight
+}
+
+// NextPowTarget returns a copy of the target difficulty the chain expects for
+// the next block to be mined.
+func (c *NamecoinChain) NextPowTarget() *big.Int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return cloneBigInt(c.powTarget)
+}
+
+// HeadTimestamp returns the timestamp of the current head block (0 if none).
+func (c *NamecoinChain) HeadTimestamp() int64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.headTS
+}
+
+// ConfigurePow sets the tuning parameters for PoW adjustment. If the chain has
+// no blocks yet, it also seeds the target from the provided config.
+func (c *NamecoinChain) ConfigurePow(cfg peer.PoWConfig) {
+	params := powParamsFromConfig(cfg)
+	seed := effectiveTarget(cfg.Target)
+
+	c.mu.Lock()
+	c.powParams = params
+	if c.powTarget == nil || (c.headHash == nil && c.headHeight == 0) {
+		c.powTarget = cloneBigInt(seed)
+	}
+	c.mu.Unlock()
 }
 
 // SnapshotDomains returns a copy of the current domains map along with the chain height.
@@ -212,6 +320,8 @@ func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
 			state:      state,
 			headHash:   nil,
 			headHeight: 0,
+			powTarget:  effectiveTarget(nil),
+			powParams:  powParamsFromConfig(peer.PoWConfig{}),
 		}, nil
 	}
 
@@ -234,11 +344,16 @@ func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
 		store.Set(NamecoinLastBlockKey, headHash)
 	}
 
+	powTarget, params, headTS := rebuildPowState(blocks, headHeight)
+
 	return &NamecoinChain{
 		store:      store,
 		state:      state,
 		headHash:   headHash,
 		headHeight: headHeight,
+		powTarget:  powTarget,
+		powParams:  params,
+		headTS:     headTS,
 	}, nil
 }
 
@@ -392,8 +507,10 @@ func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
 	currentHeadHeight := c.headHeight
 	currentHeadHash := CloneBytes(c.headHash)
 	clonedState := c.state.Clone()
+	prevTS := c.headTS
 	c.mu.Unlock()
 
+	blockTarget := DecodeDifficulty(blk.Header.Difficulty)
 	// validate on state copy
 	err := c.ValidateBlock(currentHeadHeight, currentHeadHash, blk, target)
 	if err != nil {
@@ -401,7 +518,7 @@ func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
 	}
 
 	// try to apply on a state clone to ensure safety
-	if err = clonedState.ApplyBlock(blk); err != nil {
+	if err = clonedState.applyBlockInPlace(blk); err != nil {
 		return err
 	}
 
@@ -414,14 +531,13 @@ func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	err = c.ValidateBlock(c.headHeight, c.headHash, blk, c.powTarget)
-	if err != nil {
+	if err = c.ValidateBlock(c.headHeight, c.headHash, blk, c.powTarget); err != nil {
 		return err
 	}
 
-	if err = c.state.ApplyBlock(blk); err != nil {
-		return err
-	}
+	// Swap in the validated state rather than reapplying to avoid partial writes
+	// if a later error bubbles up.
+	c.state.replaceWith(clonedState)
 
 	// Persist block to block store
 	blockKey := EncodeNamecoinBlockKey(blk.Header.Height)
@@ -432,6 +548,20 @@ func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
 
 	c.headHash = CloneBytes(blk.Hash)
 	c.headHeight = blk.Header.Height
+	c.headTS = blk.Header.Timestamp
+	// Prepare target for the next block using observed spacing.
+	if c.powParams.dynamic && prevTS != 0 {
+		spacing := time.Duration(blk.Header.Timestamp-prevTS) * time.Second
+		c.powTarget = AdjustDifficulty(
+			blockTarget,
+			spacing,
+			c.powParams.targetBlockTime,
+			c.powParams.maxAdjustUp,
+			c.powParams.maxAdjustDown,
+		)
+	} else {
+		c.powTarget = cloneBigInt(blockTarget)
+	}
 
 	return nil
 }

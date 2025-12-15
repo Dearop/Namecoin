@@ -1,6 +1,7 @@
 package impl
 
 import (
+	"encoding/json"
 	"fmt"
 
 	canonicaljson "github.com/gibson042/canonicaljson-go"
@@ -20,11 +21,16 @@ func BuildTransactionID(tx *types.Tx) (string, error) {
 
 // SerializeTransaction serializes Tx using canonical JSON (matches frontend)
 func SerializeTransaction(tx *types.Tx) ([]byte, error) {
-	data := map[string]interface{}{
-		"type":    tx.Type,
-		"from":    tx.From,
-		"amount":  tx.Amount,
-		"payload": tx.Payload,
+	data := struct {
+		Type    string           `json:"type"`
+		From    string           `json:"from"`
+		Amount  uint64           `json:"amount"`
+		Payload json.RawMessage  `json:"payload"`
+	}{
+		Type:    tx.Type,
+		From:    tx.From,
+		Amount:  tx.Amount,
+		Payload: tx.Payload,
 	}
 
 	b, err := canonicaljson.Marshal(data)

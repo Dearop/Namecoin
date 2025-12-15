@@ -1,4 +1,4 @@
-name: namecoin_expiry_unit_test
+name: namecoin_verification_integration_test
 
 on:
   push
@@ -26,14 +26,14 @@ jobs:
         run: |
           mkdir -p ./${{ github.run_attempt }}
 
-      - name: Run Namecoin expiry unit tests
+      - name: Run Namecoin verification integration tests
         run: |
           set -euo pipefail
-          go test -json -timeout 5m -v -race -run 'TestNamecoinExpiry' ./peer/tests/unit 2>&1 | tee ./${{ github.run_attempt }}/gotest-namecoin-expiry-unit.log | gotestfmt
+          go test -json -timeout 5m -v -race -run 'TestNamecoinBlockValidation' ./peer/tests/integration 2>&1 | tee ./${{ github.run_attempt }}/gotest-namecoin-verification-int.log | gotestfmt
 
-      - name: Upload Namecoin expiry unit test log
+      - name: Upload Namecoin verification integration test log
         uses: actions/upload-artifact@v4
         with:
-          name: namecoin-expiry-unit-test-log
-          path: ./${{ github.run_attempt }}/gotest-namecoin-expiry-unit.log
+          name: namecoin-verification-integration-test-log
+          path: ./${{ github.run_attempt }}/gotest-namecoin-verification-int.log
           if-no-files-found: error

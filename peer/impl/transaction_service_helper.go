@@ -4,21 +4,27 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 
 	canonicaljson "github.com/gibson042/canonicaljson-go"
 )
 
-func (t *SignedTransaction) SerializeTransaction() []byte {
-	data := map[string]interface{}{
-		"type":    t.Type,
-		"from":    t.From,
-		"amount":  t.Amount,
-		"payload": t.Payload,
+func (t *SignedTransaction) SerializeTransaction() ([]byte, error) {
+	data := struct {
+		Type    string          `json:"type"`
+		From    string          `json:"from"`
+		Amount  uint64          `json:"amount"`
+		Payload json.RawMessage `json:"payload"`
+	}{
+		Type:    t.Type,
+		From:    t.From,
+		Amount:  t.Amount,
+		Payload: t.Payload,
 	}
 
-	b, _ := canonicaljson.Marshal(data)
-	return b
+	b, err := canonicaljson.Marshal(data)
+	return b, err
 }
 
 func (t *SignedTransaction) SerializeTransactionSignature() []byte {
