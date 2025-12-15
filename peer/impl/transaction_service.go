@@ -25,7 +25,10 @@ func (t *TransactionService) ValidateTransaction(tx *SignedTransaction) error {
 	}
 
 	// 3. Verify signature
-	allUnsignedBytes := tx.SerializeTransactionSignature()
+	allUnsignedBytes, err := tx.SerializeTransactionSignature()
+	if err != nil {
+		return fmt.Errorf("failed to serialize transaction for signature: %w", err)
+	}
 	err = VerifySignature(pubKeyBytes, allUnsignedBytes, tx.Signature)
 	if err != nil {
 		return err

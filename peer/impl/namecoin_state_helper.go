@@ -1,6 +1,7 @@
 package impl
 
 import (
+	"encoding/json"
 	"fmt"
 
 	canonicaljson "github.com/gibson042/canonicaljson-go"
