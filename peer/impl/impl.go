@@ -50,7 +50,7 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 		namecoinChain.state.SetLogger(logger)
 		node.logger = logger
 	}
-	namecoinChain.SetPowTarget(conf.PoWConfig.Target)
+	namecoinChain.ConfigurePow(conf.PoWConfig)
 
 	transactionService := NewTransactionService(namecoinChain.state)
 
@@ -218,6 +218,11 @@ func (n *node) GetDNSAddr() string {
 	return n.dnsServer.Addr()
 }
 
+// DNSServerAddr returns the bound DNS server address (alias for tests).
+func (n *node) DNSServerAddr() string {
+	return n.GetDNSAddr()
+}
+
 func (n *node) GetMinerID() string {
 	return n.conf.PoWConfig.PubKey
 }
@@ -362,13 +367,28 @@ func (n *node) EnableMiner() {
 }
 
 func (n *node) MinerDoWork(stop <-chan struct{}) error {
+	n.minerMu.Lock()
+	stopCh := n.minerStopCh
+	disabled := n.minerDisabled
+	n.minerMu.Unlock()
+	if disabled || stopCh == nil {
+		return ErrMiningAborted
+	}
+
 	// Bail out quickly if stop was already signaled.
-	if stopped(stop) {
+	if stopped(stopCh) {
 		return ErrMiningAborted
 	}
 
 	// Build base header from current chain head
 	headHash, headHeight := n.NamecoinChainService.HeadSnapshot()
+	n.mu.RLock()
+	target := n.NamecoinChainService.GetLongestChain().NextPowTarget()
+	n.mu.RUnlock()
+
+	if target == nil {
+		target = effectiveTarget(n.conf.PoWConfig.Target)
+	}
 
 	nextHeight := headHeight + 1
 	if headHash == nil {
@@ -382,14 +402,14 @@ func (n *node) MinerDoWork(stop <-chan struct{}) error {
 	}
 
 	// Mine block
-	block, err := n.namecoinConsensus.MineAndApply(stop, &base)
+	block, err := n.namecoinConsensus.MineAndApply(stopCh, &base, target)
 	if err != nil {
 		return err
 	}
 
 	// If we were asked to stop while mining, drop the freshly mined block
 	// instead of applying/broadcasting it.
-	if stopped(stop) {
+	if stopped(stopCh) {
 		return ErrMiningAborted
 	}
 

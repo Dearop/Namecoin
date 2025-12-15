@@ -98,11 +98,11 @@ func (n NameFirstUpdate) ValidateWithInputs(st *NamecoinState, tx *types.Tx) err
 }
 
 func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (string, string, error) {
-	commitment := HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", n.Domain, n.Salt))
 	if len(tx.Inputs) == 0 {
 		return "", "", fmt.Errorf("name_firstupdate requires at least one input")
 	}
 
+	commitment := HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", n.Domain, n.Salt))
 	// Prefer the referenced input in the transaction; fall back to the payload field if present.
 	in := tx.Inputs[0]
 	refTxID := in.TxID

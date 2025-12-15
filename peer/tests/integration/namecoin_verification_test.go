@@ -48,9 +48,10 @@ func TestNamecoinBlockValidationRejectsBadTxRoot(t *testing.T) {
 
 	blk := types.Block{
 		Header: types.BlockHeader{
-			Height:    0,
-			TxRoot:    []byte("bogus-root"),
-			Timestamp: time.Now().Unix(),
+			Height:     0,
+			TxRoot:     []byte("bogus-root"),
+			Timestamp:  time.Now().Unix(),
+			Difficulty: impl.EncodeDifficulty(chain.NextPowTarget()),
 		},
 		Transactions: txs,
 	}
@@ -75,9 +76,10 @@ func TestNamecoinBlockValidationRejectsInvalidWork(t *testing.T) {
 
 	genesis := types.Block{
 		Header: types.BlockHeader{
-			Height:    0,
-			TxRoot:    root,
-			Timestamp: time.Now().Unix(),
+			Height:     0,
+			TxRoot:     root,
+			Timestamp:  time.Now().Unix(),
+			Difficulty: impl.EncodeDifficulty(chain.NextPowTarget()),
 		},
 		Transactions: txs,
 	}
@@ -89,10 +91,11 @@ func TestNamecoinBlockValidationRejectsInvalidWork(t *testing.T) {
 	chain.SetPowTarget(big.NewInt(1))
 	badWork := types.Block{
 		Header: types.BlockHeader{
-			Height:    1,
-			PrevHash:  genesis.Hash,
-			TxRoot:    root,
-			Timestamp: time.Now().Unix(),
+			Height:     1,
+			PrevHash:   genesis.Hash,
+			TxRoot:     root,
+			Timestamp:  time.Now().Unix(),
+			Difficulty: impl.EncodeDifficulty(chain.NextPowTarget()),
 		},
 		Transactions: txs,
 	}

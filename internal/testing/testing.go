@@ -197,6 +197,7 @@ func newConfigTemplate() configTemplate {
 			PubKey:   "test-miner",
 		},
 		enableMiner: false,
+		dnsAddr:     "127.0.0.1:0", // bind ephemeral DNS port by default for integration tests
 	}
 }
 

@@ -18,10 +18,7 @@ func (t *SignedTransaction) SerializeTransaction() ([]byte, error) {
 	}
 
 	b, err := canonicaljson.Marshal(data)
-	if err != nil {
-		return nil, err
-	}
-	return b, nil
+	return b, err
 }
 
 func (t *SignedTransaction) SerializeTransactionSignature() ([]byte, error) {
@@ -36,7 +33,7 @@ func (t *SignedTransaction) SerializeTransactionSignature() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return b, nil
+	return b, err
 }
 
 func Hash(bytes []byte) []byte {

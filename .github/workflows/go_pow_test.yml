@@ -34,7 +34,7 @@ jobs:
       - name: Run PoW unit tests
         run: |
           set -euo pipefail
-          go test -json -timeout 5m -v -race -run 'Test(MineNonce|CheckWork)' ./peer/tests/unit 2>&1 | tee ./${{ github.run_attempt }}/gotest-pow-unit.log | gotestfmt
+          go test -json -timeout 5m -v -race -run 'Test(MineNonce|CheckWork|EncodeDecodeDifficulty|AdjustDifficultyClamps|IsBlockComplexityValid)' ./peer/tests/unit 2>&1 | tee ./${{ github.run_attempt }}/gotest-pow-unit.log | gotestfmt
 
       # Upload formatted logs
       - name: Upload PoW unit test log

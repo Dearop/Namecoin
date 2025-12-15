@@ -40,6 +40,7 @@ func TestNamecoinExpiry_PruneAndReregister(t *testing.T) {
 		Domain: domain,
 		Salt:   salt,
 		IP:     "1.2.3.4",
+		TxID:   txNewID,
 	})
 	txFirst.Inputs = []types.TxInput{{TxID: txNewID, Index: 0}}
 	txFirst.Outputs = []types.TxOutput{{To: owner, Amount: 1}}
@@ -75,6 +76,7 @@ func TestNamecoinExpiry_PruneAndReregister(t *testing.T) {
 		Domain: domain,
 		Salt:   salt2,
 		IP:     "2.2.2.2",
+		TxID:   txNew2ID,
 	})
 	txFirst2.Inputs = []types.TxInput{{TxID: txNew2ID, Index: 0}}
 	txFirst2.Outputs = []types.TxOutput{{To: owner, Amount: 1}}
@@ -106,6 +108,7 @@ func TestNamecoinExpiry_UpdateRefreshesTTL(t *testing.T) {
 		Domain: domain,
 		Salt:   salt,
 		IP:     "5.6.7.8",
+		TxID:   txNewID,
 	})
 	txFirst.Inputs = []types.TxInput{{TxID: txNewID, Index: 0}}
 	txFirst.Outputs = []types.TxOutput{{To: owner, Amount: 1}}
@@ -193,6 +196,7 @@ func registerDomain(t *testing.T, st *impl.NamecoinState, height uint64, owner, 
 		Domain: domain,
 		Salt:   salt,
 		IP:     ip,
+		TxID:   txNewID,
 	})
 	txFirst.Inputs = []types.TxInput{{TxID: txNewID, Index: 0}}
 	txFirst.Outputs = []types.TxOutput{{To: owner, Amount: 1}}
