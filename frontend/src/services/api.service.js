@@ -74,3 +74,35 @@ export async function getMinerID() {
     throw error;
   }
 }
+
+export async function getDNSRecord(){
+  try {
+    const baseURL = getBaseURL();
+    const response = await fetch(`${baseURL}/namecoin/dns`);
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return await response.json(); 
+  }catch (error) {
+    console.error('[API] Get DNS record failed:', error);
+    throw error;
+  }
+}
+
+export async function fetchRegisteredDomains() {
+  try {
+    const baseURL = getBaseURL();
+    const response = await fetch(`${baseURL}/namecoin/dns`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('[API] Fetch registered domains failed:', error);
+    throw error;
+  }
+}

@@ -116,6 +116,7 @@ vet:
 # Default proxy and node addresses for development
 PROXYADDR ?= 127.0.0.1:8080
 NODEADDR ?= 127.0.0.1:9000
+FRONTENDPORT ?= 5173
 
 # Run both backend and frontend together
 run:
@@ -123,13 +124,53 @@ run:
 	@echo "Starting Peerster System"
 	@echo "=========================================="
 	@echo "Backend: http://$(PROXYADDR)"
-	@echo "Frontend: http://localhost:5173"
+	@echo "Frontend: http://localhost:$(FRONTENDPORT)"
 	@echo "=========================================="
 	@echo ""
 	@trap 'kill 0' SIGINT; \
 		(cd gui && echo "\033[34m[BACKEND]\033[0m Starting..." && go run gui.go start --proxyaddr $(PROXYADDR) --nodeaddr $(NODEADDR) 2>&1 | sed 's/^/\x1b[34m[BACKEND]\x1b[0m /') & \
-		(cd frontend && npm install --silent && echo "\033[32m[FRONTEND]\033[0m Starting on http://localhost:5173..." && VITE_BACKEND_URL=http://$(PROXYADDR) npm run dev 2>&1 | sed 's/^/\x1b[32m[FRONTEND]\x1b[0m /') & \
+		(cd frontend && npm install --silent && echo "\033[32m[FRONTEND]\033[0m Starting on http://localhost:$(FRONTENDPORT)..." && VITE_BACKEND_URL=http://$(PROXYADDR) npm run dev -- --port $(FRONTENDPORT) 2>&1 | sed 's/^/\x1b[32m[FRONTEND]\x1b[0m /') & \
 		wait
+
+# Run two nodes with frontends for NameCoin testing
+run_two_nodes:
+	@echo "=========================================="
+	@echo "Starting Two NameCoin Nodes"
+	@echo "=========================================="
+	@echo "Node 1 - Backend: http://127.0.0.1:8080"
+	@echo "Node 1 - Frontend: http://localhost:5173"
+	@echo ""
+	@echo "Node 2 - Backend: http://127.0.0.1:8081"
+	@echo "Node 2 - Frontend: http://localhost:5174"
+	@echo "=========================================="
+	@echo "Press Ctrl+C to stop all nodes"
+	@echo "=========================================="
+	@echo ""
+	@echo "\033[36m[SETUP]\033[0m Cleaning up old blockchain data..."
+	@rm -rf /tmp/node1 /tmp/node2
+	@echo "\033[36m[SETUP]\033[0m Fresh start - both nodes will share the same blockchain"
+	@echo ""
+	@cleanup() { \
+		echo ""; \
+		echo "\033[31m[SHUTDOWN]\033[0m Stopping all processes..."; \
+		pkill -P $$$$ 2>/dev/null || true; \
+		kill 0 2>/dev/null || true; \
+		sleep 1; \
+		echo "\033[31m[SHUTDOWN]\033[0m All nodes stopped"; \
+		exit 0; \
+	}; \
+	trap cleanup SIGINT SIGTERM; \
+	(cd gui && echo "\033[34m[NODE1-BACKEND]\033[0m Starting..." && go run gui.go start --proxyaddr 127.0.0.1:8080 --nodeaddr 127.0.0.1:9000 --storagefolder /tmp/node1 --antientropy 10s --heartbeat 5s 2>&1 | sed 's/^/\x1b[34m[NODE1-BACKEND]\x1b[0m /') & \
+	(cd frontend && npm install --silent && echo "\033[32m[NODE1-FRONTEND]\033[0m Starting on http://localhost:5173..." && VITE_BACKEND_URL=http://127.0.0.1:8080 npm run dev -- --port 5173 2>&1 | sed 's/^/\x1b[32m[NODE1-FRONTEND]\x1b[0m /') & \
+	(cd gui && sleep 2 && echo "\033[35m[NODE2-BACKEND]\033[0m Starting..." && go run gui.go start --proxyaddr 127.0.0.1:8081 --nodeaddr 127.0.0.1:9001 --storagefolder /tmp/node2 --antientropy 10s --heartbeat 5s 2>&1 | sed 's/^/\x1b[35m[NODE2-BACKEND]\x1b[0m /') & \
+	(cd frontend && sleep 3 && echo "\033[33m[NODE2-FRONTEND]\033[0m Starting on http://localhost:5174..." && VITE_BACKEND_URL=http://127.0.0.1:8081 npm run dev -- --port 5174 2>&1 | sed 's/^/\x1b[33m[NODE2-FRONTEND]\x1b[0m /') & \
+	(sleep 8 && echo "\033[36m[CONNECTOR]\033[0m Connecting nodes..." && \
+		curl -s -X POST http://127.0.0.1:8080/messaging/peers -H "Content-Type: application/json" -d '["127.0.0.1:9001"]' > /dev/null && \
+		echo "\033[36m[CONNECTOR]\033[0m Node 1 added Node 2 as peer" && \
+		curl -s -X POST http://127.0.0.1:8081/messaging/peers -H "Content-Type: application/json" -d '["127.0.0.1:9000"]' > /dev/null && \
+		echo "\033[36m[CONNECTOR]\033[0m Node 2 added Node 1 as peer" && \
+		echo "\033[36m[CONNECTOR]\033[0m ✓ Nodes are now connected on the same blockchain!") & \
+	wait
 
 frontend:
 	cd frontend && npm install && npm run dev
