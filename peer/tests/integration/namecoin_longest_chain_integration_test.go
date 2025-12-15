@@ -205,6 +205,7 @@ func Test_Namecoin_Integration_LongestChain_PartitionMerge(t *testing.T) {
 	addAllPeers(nodes)
 
 	// Allow growth on the merged network, then stop miners and ensure convergence.
+	startMinersFor(t, nodes)
 	waitForHeight(t, nodes, 6, 15*time.Second)
 	time.Sleep(time.Second)
 
@@ -311,6 +312,20 @@ func stopMinersFor(t *testing.T, nodes []z.TestNode) {
 	for _, node := range nodes {
 		if miner, ok := node.Peer.(interface{ DisableMiner() }); ok {
 			miner.DisableMiner()
+		}
+	}
+}
+
+func startMinersFor(t *testing.T, nodes []z.TestNode) {
+	t.Helper()
+
+	for _, node := range nodes {
+		if miner, ok := node.Peer.(interface {
+			EnableMiner()
+			StartMiner()
+		}); ok {
+			miner.EnableMiner()
+			miner.StartMiner()
 		}
 	}
 }

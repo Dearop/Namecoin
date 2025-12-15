@@ -98,14 +98,23 @@ func (n NameFirstUpdate) ValidateWithInputs(st *NamecoinState, tx *types.Tx) err
 }
 
 func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (string, string, error) {
+	commitment := HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", n.Domain, n.Salt))
 	if len(tx.Inputs) == 0 {
 		return "", "", fmt.Errorf("name_firstupdate requires at least one input")
 	}
 
-	commitment := HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", n.Domain, n.Salt))
-	// Use the referenced name_new outpoint (txid:0 in the single-output MVP).
-	log.Info().Msgf("NameFirstUpdate: resolving commitment for input %s", n.TxID)
-	key := OutpointKey(n.TxID, 0)
+	// Prefer the referenced input in the transaction; fall back to the payload field if present.
+	in := tx.Inputs[0]
+	refTxID := in.TxID
+	if n.TxID != "" && n.TxID != refTxID {
+		return "", "", fmt.Errorf("name_firstupdate txid mismatch: input refers to %s but payload specifies %s", refTxID, n.TxID)
+	}
+	if refTxID == "" {
+		return "", "", fmt.Errorf("name_firstupdate missing reference txid")
+	}
+
+	log.Info().Msgf("NameFirstUpdate: resolving commitment for input %s", refTxID)
+	key := OutpointKey(refTxID, in.Index)
 
 	storedCommit, ok := st.GetCommitment(key)
 	if !ok {
