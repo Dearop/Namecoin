@@ -17,7 +17,8 @@ func TestTransactionServiceValidateTransactionSignatureMismatch(t *testing.T) {
 	service := impl.NewTransactionService(impl.NewState())
 	pub, priv := mustMakeKeyPair(t)
 
-	tx := buildSignedTransaction(t, "minerAddr", priv, impl.NameNew{}.Name(), 2, impl.NameNew{Commitment: "commitment"}, pub)
+	from := hex.EncodeToString(impl.Hash(pub))
+	tx := buildSignedTransaction(t, from, priv, impl.NameNew{}.Name(), 2, impl.NameNew{Commitment: "commitment"}, pub)
 	tx.Signature = "deadbeef"
 
 	if err := service.ValidateTransaction(&tx); err == nil {
@@ -29,7 +30,8 @@ func TestTransactionServiceValidateTransactionSignatureMatch(t *testing.T) {
 	service := impl.NewTransactionService(impl.NewState())
 	pub, priv := mustMakeKeyPair(t)
 
-	tx := buildSignedTransaction(t, "minerAddr", priv, impl.NameNew{}.Name(), 2, impl.NameNew{Commitment: "commitment"}, pub)
+	from := hex.EncodeToString(impl.Hash(pub))
+	tx := buildSignedTransaction(t, from, priv, impl.NameNew{}.Name(), 2, impl.NameNew{Commitment: "commitment"}, pub)
 	if err := service.ValidateTransaction(&tx); err != nil {
 		t.Fatalf("expected validation to succeed, got %v", err)
 	}
@@ -39,6 +41,7 @@ func TestTransactionServiceValidateTransactionFirstUpdateCommitmentMismatch(t *t
 	state := impl.NewState()
 	service := impl.NewTransactionService(state)
 	pub, priv := mustMakeKeyPair(t)
+	from := hex.EncodeToString(impl.Hash(pub))
 
 	payload := impl.NameFirstUpdate{
 		Domain: "example.test",
@@ -46,7 +49,7 @@ func TestTransactionServiceValidateTransactionFirstUpdateCommitmentMismatch(t *t
 		IP:     "10.0.0.1",
 	}
 
-	tx := buildSignedTransaction(t, "minerAddr", priv, impl.NameFirstUpdate{}.Name(), 3, payload, pub)
+	tx := buildSignedTransaction(t, from, priv, impl.NameFirstUpdate{}.Name(), 3, payload, pub)
 	state.UTXOMap[tx.From] = map[string]types.UTXO{
 		"funds-1": {TxID: "funds-1", To: tx.From, Amount: tx.Amount},
 	}
@@ -81,13 +84,14 @@ func TestTransactionServiceValidateTransactionNameUpdateWrongOwner(t *testing.T)
 	state := impl.NewState()
 	service := impl.NewTransactionService(state)
 	pub, priv := mustMakeKeyPair(t)
+	from := hex.EncodeToString(impl.Hash(pub))
 	payload := impl.NameUpdate{
 		Domain: "foo.test",
 		IP:     "192.0.2.1",
 	}
 
 	state.Domains[payload.Domain] = types.NameRecord{Owner: "other-owner"}
-	tx := buildSignedTransaction(t, "minerAddr", priv, impl.NameUpdate{}.Name(), 1, payload, pub)
+	tx := buildSignedTransaction(t, from, priv, impl.NameUpdate{}.Name(), 1, payload, pub)
 
 	if err := service.ValidateTransaction(&tx); err == nil {
 		t.Fatalf("expected validation to fail when sender does not own the domain")

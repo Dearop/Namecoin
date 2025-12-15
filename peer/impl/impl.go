@@ -262,12 +262,7 @@ func (n *node) HandleNamecoinCommand(buf []byte) error {
 		return err
 	}
 
-	// Use the miner's public key for balance verification instead of transaction.From
-	// The miner receives mining rewards, so UTXOs are stored under the miner's key
-	minerPubKey := n.conf.PoWConfig.PubKey
-	log.Printf("[DEBUG] Using miner's public key for balance: %s", minerPubKey)
-
-	inputs, outputs, err := n.transactionService.VerifyBalance(transaction.TxID, minerPubKey, transaction.Amount)
+	inputs, outputs, err := n.transactionService.VerifyBalance(transaction.TxID, transaction.From, transaction.Amount)
 	if err != nil {
 		return err
 	}

@@ -13,6 +13,12 @@ func (t *TransactionService) ValidateTransaction(tx *SignedTransaction) error {
 		return fmt.Errorf("invalid public key format")
 	}
 
+	// 1b. Enforce address ownership: From must be the hash of the public key.
+	// address := hex(sha256(pkBytes)).
+	if err := t.TokenManager.VerifyOwnership(tx.From, pubKeyBytes); err != nil {
+		return err
+	}
+
 	// 2. Recompute TxID from unsigned transaction
 	unsignedBytes, err := tx.SerializeTransaction()
 	if err != nil {
