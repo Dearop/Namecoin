@@ -4,6 +4,7 @@ import {
   sendTransaction,
   getTransactionStatus,
   getMinerID,
+  fetchRegisteredDomains,
 } from '../../services/api.service.js';
 
 // Mock fetch globally
@@ -212,6 +213,73 @@ describe('api.service.js', () => {
       fetch.mockRejectedValueOnce(new Error('Network error'));
 
       await expect(getMinerID()).rejects.toThrow('Network error');
+    });
+  });
+
+  describe('fetchRegisteredDomains', () => {
+    it('should fetch registered domains successfully', async () => {
+      const mockDomains = [
+        {
+          Domain: 'example.com',
+          Owner: 'owner123',
+          IP: '192.168.1.1',
+          ExpiresAt: 1000
+        },
+        {
+          Domain: 'test.com',
+          Owner: 'owner456',
+          IP: '10.0.0.1',
+          ExpiresAt: 2000
+        }
+      ];
+
+      fetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockDomains,
+      });
+
+      const result = await fetchRegisteredDomains();
+
+      expect(result).toEqual(mockDomains);
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8080/namecoin/dns');
+    });
+
+    it('should return empty array when no domains registered', async () => {
+      fetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => [],
+      });
+
+      const result = await fetchRegisteredDomains();
+
+      expect(result).toEqual([]);
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8080/namecoin/dns');
+    });
+
+    it('should throw error on non-ok response', async () => {
+      fetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+      });
+
+      await expect(fetchRegisteredDomains()).rejects.toThrow('HTTP error! status: 500');
+    });
+
+    it('should handle network errors', async () => {
+      fetch.mockRejectedValueOnce(new Error('Network error'));
+
+      await expect(fetchRegisteredDomains()).rejects.toThrow('Network error');
+    });
+
+    it('should use correct endpoint', async () => {
+      fetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => [],
+      });
+
+      await fetchRegisteredDomains();
+
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8080/namecoin/dns');
     });
   });
 });

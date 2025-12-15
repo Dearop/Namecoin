@@ -35,8 +35,10 @@
               v-model.number="ttl" 
               type="number"
               min="0"
+              step="1"
               placeholder="0 for default"
               :disabled="isProcessing"
+              @input="ttl = Math.max(0, Math.floor(Number(ttl) || 0))"
             />
             <small class="form-hint">Number of blocks the reservation will live. 0 uses default TTL (36,000 blocks).</small>
           </div>
@@ -89,20 +91,22 @@
                   type="text" 
                   placeholder="Enter IP address"
                   class="ip-input"
-                  :disabled="isProcessing"
+                  :disabled="domain.isRevealing"
                 />
                 <input 
                   v-model.number="domain.revealTtl" 
                   type="number" 
                   min="0"
+                  step="1"
                   placeholder="TTL (0=default)"
                   class="ttl-input"
-                  :disabled="isProcessing"
+                  :disabled="domain.isRevealing"
+                  @input="domain.revealTtl = Math.max(0, Math.floor(Number(domain.revealTtl) || 0))"
                 />
                 <button 
                   @click="handleFirstUpdate(domain)" 
                   class="action-btn primary"
-                  :disabled="isProcessing"
+                  :disabled="domain.isRevealing || !domain.revealIp"
                 >
                   Reveal Domain
                 </button>
@@ -115,20 +119,22 @@
                   type="text" 
                   placeholder="Enter new IP address"
                   class="ip-input"
-                  :disabled="isProcessing"
+                  :disabled="domain.isUpdating"
                 />
                 <input 
                   v-model.number="domain.updateTtl" 
                   type="number" 
                   min="0"
+                  step="1"
                   placeholder="TTL (0=default)"
                   class="ttl-input"
-                  :disabled="isProcessing"
+                  :disabled="domain.isUpdating"
+                  @input="domain.updateTtl = Math.max(0, Math.floor(Number(domain.updateTtl) || 0))"
                 />
                 <button 
                   @click="handleUpdate(domain)" 
                   class="action-btn primary"
-                  :disabled="isProcessing || !domain.newIp"
+                  :disabled="domain.isUpdating || !domain.newIp"
                 >
                   Update IP
                 </button>
@@ -152,7 +158,6 @@
             <div class="domain-name">{{ domain.name }}</div>
             <div class="domain-info">
               <span class="domain-owner">Owner: {{ domain.owner }}</span>
-              <span class="domain-block">Block: {{ domain.blockHeight }}</span>
             </div>
           </div>
         </div>
@@ -171,9 +176,9 @@ import { useWallet } from '../composables/useWallet.js';
 import { useTransaction } from '../composables/useTransaction.js';
 import { hashDomainWithSalt, generateTransactionSignature, hashTransaction } from '../services/crypto.service.js';
 import { buildTransaction, computeTransactionID } from '../services/transaction.service.js';
-import { sendTransaction, getMinerID } from '../services/api.service.js';
+import { sendTransaction, getMinerID, fetchRegisteredDomains } from '../services/api.service.js';
 import { generateSalt } from '../utils/hash.js';
-import { savePendingDomain, getPendingDomains, updateDomainStatus } from '../utils/domainStorage.js';
+import { savePendingDomain, getPendingDomains, updateDomainStatus, removePendingDomain } from '../utils/domainStorage.js';
 
 const router = useRouter();
 const isConnected = ref(false);
@@ -213,7 +218,9 @@ function loadMyDomains() {
     revealIp: d.ip || '', // IP for first_update (reveal)
     revealTtl: 0, // TTL for first_update
     newIp: d.ip || '', // IP for update
-    updateTtl: 0 // TTL for update
+    updateTtl: 0, // TTL for update
+    isRevealing: false,
+    isUpdating: false
   }));
 }
 
@@ -341,7 +348,7 @@ async function handleFirstUpdate(pending) {
     return;
   }
   
-  isProcessing.value = true;
+  pending.isRevealing = true;
   status.value = 'Revealing domain...';
   
   try {
@@ -396,9 +403,31 @@ async function handleFirstUpdate(pending) {
     }
   } catch (error) {
     console.error('[Wallet] First update error:', error);
-    status.value = `Error: ${error.message || 'Unknown error occurred'}`;
+    const msg = error.message || 'Unknown error occurred';
+    const msgLower = msg.toLowerCase();
+    status.value = `Error: ${msg}`;
+
+    // Remove domain from localStorage if it has errors indicating it's invalid
+    const shouldRemove = 
+      msgLower.includes('domain already exists') ||
+      msgLower.includes('already exists') ||
+      msgLower.includes('already claimed') ||
+      msgLower.includes('already registered') ||
+      msgLower.includes('no matching') ||
+      msgLower.includes('commitment mismatch') ||
+      msgLower.includes('expired');
+
+    if (shouldRemove) {
+      const minerID = localStorage.getItem('minerID');
+      if (minerID) {
+        console.log(`[Wallet] Removing domain "${pending.domain}" from storage due to error`);
+        removePendingDomain(minerID, pending.domain);
+        loadMyDomains();
+        fetchDomains();
+      }
+    }
   } finally {
-    isProcessing.value = false;
+    pending.isRevealing = false;
   }
 }
 
@@ -409,7 +438,7 @@ async function handleUpdate(domain) {
     return;
   }
   
-  isProcessing.value = true;
+  domain.isUpdating = true;
   status.value = `Updating IP for ${domain.domain}...`;
   
   try {
@@ -459,22 +488,47 @@ async function handleUpdate(domain) {
     }
   } catch (error) {
     console.error('[Wallet] Update error:', error);
-    status.value = `Error: ${error.message || 'Unknown error occurred'}`;
+    const msg = error.message || 'Unknown error occurred';
+    const msgLower = msg.toLowerCase();
+    status.value = `Error: ${msg}`;
+
+    // Remove domain from localStorage if it's expired or non-existent
+    const shouldRemove = 
+      msgLower.includes('non-existent') ||
+      msgLower.includes('expired') ||
+      msgLower.includes('does not exist') ||
+      msgLower.includes('not found') ||
+      msgLower.includes('cannot update domain you do not own');
+
+    if (shouldRemove) {
+      const minerID = localStorage.getItem('minerID');
+      if (minerID) {
+        console.log(`[Wallet] Removing domain "${domain.domain}" from storage due to error`);
+        removePendingDomain(minerID, domain.domain);
+        loadMyDomains();
+        fetchDomains();
+      }
+    }
   } finally {
-    isProcessing.value = false;
+    domain.isUpdating = false;
   }
 }
 
 async function fetchDomains() {
   try {
-    // Since backend doesn't provide blockchain state API,
-    // we'll just show domains that the user has registered
-    domainsLoaded.value = true;
-    domains.value = [];
+    const allDomains = await fetchRegisteredDomains();
     
-    // Update owned domains list
-    loadMyDomains();
+    // Map the domain records to display format
+    domains.value = allDomains.map(record => ({
+      name: record.Domain || record.domain,
+      owner: record.Owner || record.owner,
+      ip: record.IP || record.ip
+    }));
+    
+    domainsLoaded.value = true;
+    console.log('[Wallet] Fetched domains:', domains.value);
   } catch (error) {
+    console.error('[Wallet] Error fetching domains:', error);
     status.value = `Error fetching domains: ${error.message}`;
     domainsLoaded.value = true;
   }

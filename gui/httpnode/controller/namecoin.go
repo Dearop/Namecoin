@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -80,6 +81,36 @@ func (n Namecoin) MinerIDHandler() http.HandlerFunc {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(fmt.Sprintf(`{"minerID":"%s"}`, minerID)))
+		default:
+			http.Error(w, "forbidden method", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func (n Namecoin) DomainsHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Set CORS headers
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		switch r.Method {
+		case http.MethodOptions:
+			// Handle preflight request
+			w.WriteHeader(http.StatusOK)
+			return
+		case http.MethodGet:
+			domains := n.node.GetDomains()
+			// Convert domains to JSON
+			jsonData, err := json.Marshal(domains)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("failed to marshal domains: %v", err),
+					http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write(jsonData)
 		default:
 			http.Error(w, "forbidden method", http.StatusMethodNotAllowed)
 		}
