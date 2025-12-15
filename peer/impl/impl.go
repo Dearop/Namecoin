@@ -268,12 +268,15 @@ func (n *node) HandleNamecoinCommand(buf []byte) error {
 	}
 
 	tx := types.Tx{
-		From:    transaction.From,
-		Type:    transaction.Type,
-		Inputs:  inputs,
-		Outputs: outputs,
-		Amount:  transaction.Amount,
-		Payload: transaction.Payload,
+		From:      transaction.From,
+		Type:      transaction.Type,
+		Inputs:    inputs,
+		Outputs:   outputs,
+		Amount:    transaction.Amount,
+		Payload:   transaction.Payload,
+		Pk:        transaction.Pk,
+		TxID:      transaction.TxID,
+		Signature: transaction.Signature,
 	}
 
 	if err := n.transactionService.ValidateTxCommand(&tx); err != nil {

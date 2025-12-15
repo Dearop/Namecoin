@@ -41,6 +41,45 @@ func SerializeTransaction(tx *types.Tx) ([]byte, error) {
 	return b, err
 }
 
+// SerializeTransactionForTxRoot serializes the full on-chain transaction data that
+// must be committed to by the block TxRoot (including inputs/outputs and auth fields).
+func SerializeTransactionForTxRoot(tx *types.Tx) ([]byte, error) {
+	inputs := make([]map[string]interface{}, len(tx.Inputs))
+	for i, in := range tx.Inputs {
+		inputs[i] = map[string]interface{}{
+			"txid":  in.TxID,
+			"index": in.Index,
+		}
+	}
+
+	outputs := make([]map[string]interface{}, len(tx.Outputs))
+	for i, out := range tx.Outputs {
+		outputs[i] = map[string]interface{}{
+			"to":     out.To,
+			"amount": out.Amount,
+		}
+	}
+
+	data := map[string]interface{}{
+		"type":      tx.Type,
+		"from":      tx.From,
+		"amount":    tx.Amount,
+		"payload":   tx.Payload,
+		"inputs":    inputs,
+		"outputs":   outputs,
+		"pk":        tx.Pk,
+		"txid":      tx.TxID,
+		"signature": tx.Signature,
+	}
+
+	b, err := canonicaljson.Marshal(data)
+	if err != nil {
+		return make([]byte, 0), err
+	}
+
+	return b, err
+}
+
 //--------------------------------------------------
 // Domain Expiration
 // linter unused error

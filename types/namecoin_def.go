@@ -42,6 +42,12 @@ type Tx struct {
 	// primary amount
 	Amount  uint64
 	Payload json.RawMessage
+
+	// On-chain authentication metadata (MVP).
+	// For Reward transactions these may be empty.
+	Pk        string
+	TxID      string
+	Signature string
 }
 
 // BlockHeader captures the PoW header fields that are hashed when
