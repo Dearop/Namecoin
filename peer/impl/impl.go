@@ -368,15 +368,14 @@ func (n *node) EnableMiner() {
 
 func (n *node) MinerDoWork(stop <-chan struct{}) error {
 	n.minerMu.Lock()
-	stopCh := n.minerStopCh
 	disabled := n.minerDisabled
 	n.minerMu.Unlock()
-	if disabled || stopCh == nil {
+	if disabled || stop == nil {
 		return ErrMiningAborted
 	}
 
 	// Bail out quickly if stop was already signaled.
-	if stopped(stopCh) {
+	if stopped(stop) {
 		return ErrMiningAborted
 	}
 
@@ -402,14 +401,14 @@ func (n *node) MinerDoWork(stop <-chan struct{}) error {
 	}
 
 	// Mine block
-	block, err := n.namecoinConsensus.MineAndApply(stopCh, &base, target)
+	block, err := n.namecoinConsensus.MineAndApply(stop, &base, target)
 	if err != nil {
 		return err
 	}
 
 	// If we were asked to stop while mining, drop the freshly mined block
 	// instead of applying/broadcasting it.
-	if stopped(stopCh) {
+	if stopped(stop) {
 		return ErrMiningAborted
 	}
 
