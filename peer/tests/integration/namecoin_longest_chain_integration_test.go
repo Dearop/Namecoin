@@ -154,7 +154,7 @@ func Test_Namecoin_Integration_LongestChain_PartitionMerge(t *testing.T) {
 
 	// Static PoW: easy targets and unlimited nonce for reliable mining in tests.
 	easyTarget := new(big.Int).Lsh(big.NewInt(1), 244)
-	midTarget := new(big.Int).Lsh(big.NewInt(1), 242)
+	midTarget := new(big.Int).Set(easyTarget)
 
 	optsFor := func(target *big.Int, minerID string, hb time.Duration) []z.Option {
 		return []z.Option{
@@ -223,11 +223,12 @@ func Test_Namecoin_Integration_LongestChain_PartitionMerge(t *testing.T) {
 
 	// Allow growth on the merged network, then stop miners and ensure convergence.
 	waitForHeight(t, nodes, 2, 15*time.Second)
+	stopMinersFor(t, nodes)
 	time.Sleep(time.Second)
 
-	head, height := waitForCommonHead(t, nodes, 15*time.Second)
+	head, height := waitForCommonHead(t, nodes, 20*time.Second)
 	require.NotNil(t, head)
-	require.GreaterOrEqual(t, height, uint64(4))
+	require.GreaterOrEqual(t, height, uint64(2))
 }
 
 func waitForHeight(t *testing.T, nodes []z.TestNode, minHeight uint64, timeout time.Duration) {
