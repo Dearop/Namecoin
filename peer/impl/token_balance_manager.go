@@ -1,9 +1,6 @@
 package impl
 
 import (
-	"encoding/hex"
-	"fmt"
-
 	"go.dedis.ch/cs438/types"
 )
 

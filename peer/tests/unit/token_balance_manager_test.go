@@ -2,6 +2,7 @@ package unit
 
 import (
 	"encoding/hex"
+	"fmt"
 	"testing"
 
 	"go.dedis.ch/cs438/peer/impl"
@@ -80,7 +81,6 @@ func TestTokenBalanceManagerVerifyOwnershipMismatch(t *testing.T) {
 }
 
 func verifyOwnership(from string, publicKey []byte) error {
-	t.Helper()
 	pkHex := hex.EncodeToString(publicKey)
 	if from == pkHex {
 		return nil
