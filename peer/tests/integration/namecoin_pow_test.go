@@ -32,9 +32,10 @@ func Test_Namecoin_Integration_SingleNodeChainGrowth(t *testing.T) {
 	// Very easy target so mining is fast in tests.
 	easyTarget := new(big.Int).Lsh(big.NewInt(1), 252)
 	powCfg := peer.PoWConfig{
-		Target:   easyTarget,
-		MaxNonce: 0,
-		PubKey:   "miner-single",
+		Target:                      easyTarget,
+		MaxNonce:                    0,
+		PubKey:                      "miner-single",
+		DisableDifficultyAdjustment: true,
 	}
 
 	node := z.NewTestNode(t, studentFac, transp, "127.0.0.1:0",
@@ -97,9 +98,10 @@ func Test_Namecoin_Integration_RestartRebuildsState(t *testing.T) {
 
 	easyTarget := new(big.Int).Lsh(big.NewInt(1), 252)
 	powCfg := peer.PoWConfig{
-		Target:   easyTarget,
-		MaxNonce: 0,
-		PubKey:   "miner-restart",
+		Target:                      easyTarget,
+		MaxNonce:                    0,
+		PubKey:                      "miner-restart",
+		DisableDifficultyAdjustment: true,
 	}
 
 	// First node mines a few blocks.
@@ -166,9 +168,10 @@ func Test_Namecoin_Integration_BadPoWBlockRejected(t *testing.T) {
 	// Zero target makes every block invalid under IsBlockComplexityValid.
 	strictTarget := big.NewInt(0)
 	powCfg := peer.PoWConfig{
-		Target:   strictTarget,
-		MaxNonce: 0,
-		PubKey:   "miner-badpow",
+		Target:                      strictTarget,
+		MaxNonce:                    0,
+		PubKey:                      "miner-badpow",
+		DisableDifficultyAdjustment: true,
 	}
 
 	node := z.NewTestNode(t, studentFac, transp, "127.0.0.1:0",
@@ -226,9 +229,10 @@ func Test_Namecoin_Integration_ValidPoWInvalidStructureRejected(t *testing.T) {
 	// Very high target so any hash is considered valid PoW.
 	highTarget := new(big.Int).Lsh(big.NewInt(1), 256)
 	powCfg := peer.PoWConfig{
-		Target:   highTarget,
-		MaxNonce: 0,
-		PubKey:   "miner-struct",
+		Target:                      highTarget,
+		MaxNonce:                    0,
+		PubKey:                      "miner-struct",
+		DisableDifficultyAdjustment: true,
 	}
 
 	node := z.NewTestNode(t, studentFac, transp, "127.0.0.1:0",
@@ -360,7 +364,7 @@ func Test_Namecoin_Integration_NameNewCommitmentPersistsAcrossBlocks(t *testing.
 	miner := "miner-commit"
 	domain := "example.bit"
 	salt := "secret"
-	commitment := impl.HashString(domain + salt)
+	commitment := impl.HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", domain, salt))
 
 	// Block 0 with a single name_new.
 	payloadNew, err := json.Marshal(impl.NameNew{Commitment: commitment})

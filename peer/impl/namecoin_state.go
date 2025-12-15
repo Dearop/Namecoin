@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"go.dedis.ch/cs438/types"
 )
@@ -44,7 +45,8 @@ type NamecoinState struct {
 	// To deduplicate transactions. Subject to discuss, but now suggest as a temp solution
 	txMap map[string]struct{}
 
-	mu sync.RWMutex
+	logger zerolog.Logger
+	mu     sync.RWMutex
 }
 
 func (c *NamecoinChain) State() *NamecoinState {
@@ -65,7 +67,22 @@ func NewState() *NamecoinState {
 		txMap:          make(map[string]struct{}),
 		// Clamp default TTL to the configured max to avoid unbounded domain lifetimes.
 		domainTTL: clampTTL(DefaultDomainTTLBlocks),
+		logger:    log.Logger,
 	}
+}
+
+// SetLogger tags all state debug logs with the provided logger (e.g., per-node address).
+func (st *NamecoinState) SetLogger(l zerolog.Logger) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.logger = l
+}
+
+// CloneLogger returns a copy of the logger for use in cloned/forked states.
+func (st *NamecoinState) CloneLogger() zerolog.Logger {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.logger
 }
 
 func (st *NamecoinState) GetDomainOwner(domain string) string {
@@ -299,6 +316,9 @@ func (st *NamecoinState) pruneExpired(height uint64) {
 		for _, name := range names {
 			if rec, ok := st.Domains[name]; ok && rec.ExpiresAt == expHeight {
 				delete(st.Domains, name)
+				// Once a domain has fully expired, allow it to be
+				// registered again by clearing its claimed marker.
+				delete(st.ClaimedDomains, name)
 			}
 		}
 		delete(st.expires, expHeight)
@@ -315,17 +335,17 @@ func (st *NamecoinState) ApplyTx(txID string, tx *types.Tx) error {
 	}
 
 	if os.Getenv("GLOG") != "no" {
-		log.Debug().Msgf("applying tx type: %s with ID: %s", tx.Type, txID)
+		st.logger.Debug().Msgf("applying tx type: %s with ID: %s", tx.Type, txID)
 	}
 
 	// BurnUTXOs first making sure the user hasn't burned the same UTXOs already
 	// First transaction in Block is always Reward to ensure that miner gets reward even if user transaction is reverted
-	err := st.ProcessCommandTransactionStateUpdate(txID, tx)
+	err := st.ApplyCommandUTXO(txID, tx)
 	if err != nil {
 		return err
 	}
 
-	err = st.ProcessCommandStateUpdate(tx)
+	err = st.ApplyCommandState(tx)
 	if err != nil {
 		return err
 	}
@@ -412,20 +432,20 @@ func (st *NamecoinState) MarkAsApplied(txID string) {
 	st.txMap[txID] = struct{}{}
 }
 
-func (st *NamecoinState) ProcessCommandTransactionStateUpdate(txID string, tx *types.Tx) error {
+func (st *NamecoinState) ApplyCommandUTXO(txID string, tx *types.Tx) error {
 	cmd, err := ResolveCommand(tx.Type, tx.Payload)
 	if err != nil {
 		return err
 	}
-	return cmd.ProcessTxState(st, txID, tx)
+	return cmd.ApplyUTXO(st, txID, tx)
 }
 
-func (st *NamecoinState) ProcessCommandStateUpdate(tx *types.Tx) error {
+func (st *NamecoinState) ApplyCommandState(tx *types.Tx) error {
 	cmd, err := ResolveCommand(tx.Type, tx.Payload)
 	if err != nil {
 		return err
 	}
-	return cmd.ProcessState(st, tx)
+	return cmd.ApplyState(st, tx)
 }
 
 // ValidateCommand verifies the payload of a signed transaction based on its type

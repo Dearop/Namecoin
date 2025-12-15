@@ -2,9 +2,9 @@ package impl
 
 import (
 	"fmt"
-	"reflect"
-
+	"github.com/rs/zerolog/log"
 	"go.dedis.ch/cs438/types"
+	"reflect"
 )
 
 type NameNew struct {
@@ -33,19 +33,24 @@ func (n NameNew) ValidateWithInputs(_ *NamecoinState, tx *types.Tx) error {
 	return nil
 }
 
-func (n NameNew) ProcessState(st *NamecoinState, tx *types.Tx) error {
+func (n NameNew) ApplyState(st *NamecoinState, tx *types.Tx) error {
+	st.SetCommitment(tx.From, n.Commitment)
 	// Store TTL preference keyed by commitment; applied during firstupdate
-	st.SetCommitmentTTL(n.Commitment, n.TTL)
-
+	ttl := n.TTL
+	if ttl == 0 {
+		ttl = DefaultDomainTTLBlocks
+	}
+	st.SetCommitmentTTL(n.Commitment, ttl)
 	return nil
 }
 
-func (n NameNew) ProcessTxState(st *NamecoinState, txID string, tx *types.Tx) error {
-	if err := ProcessTxStateGeneric(st, txID, tx); err != nil {
+func (n NameNew) ApplyUTXO(st *NamecoinState, txID string, tx *types.Tx) error {
+	if err := ApplyUTXOGeneric(st, txID, tx); err != nil {
 		return err
 	}
 
 	key := OutpointKey(txID, 0)
+	log.Info().Msgf("NameNew ApplyUTXO: setting commitment for key %s to %s", key, n.Commitment)
 	st.SetCommitment(key, n.Commitment)
 
 	return nil

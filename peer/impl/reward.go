@@ -20,12 +20,12 @@ func (r Reward) Validate(_ *NamecoinState, _ *SignedTransaction) error {
 	return nil
 }
 
-// ProcessState is a no-op for this transaction type
-func (r Reward) ProcessState(_ *NamecoinState, _ *types.Tx) error {
+// ApplyState is a no-op for this transaction type
+func (r Reward) ApplyState(_ *NamecoinState, _ *types.Tx) error {
 	return nil
 }
 
-func (r Reward) ProcessTxState(st *NamecoinState, txID string, tx *types.Tx) error {
+func (r Reward) ApplyUTXO(st *NamecoinState, txID string, tx *types.Tx) error {
 	// On Reward - always 1 UTXO
 	outputs := tx.Outputs
 	if len(outputs) == 0 {

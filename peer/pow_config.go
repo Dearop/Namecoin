@@ -10,6 +10,9 @@ import (
 type PoWConfig struct {
 	// Target is the difficulty target for the PoW (hash must be < Target).
 	Target *big.Int
+	// DisableDifficultyAdjustment turns off dynamic retargeting; the target stays
+	// fixed at the configured value (useful for tests).
+	DisableDifficultyAdjustment bool
 	// TargetBlockTime controls the expected time between blocks for difficulty
 	// retargeting. If zero, a default of 10s is used.
 	TargetBlockTime time.Duration

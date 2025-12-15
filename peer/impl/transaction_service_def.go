@@ -11,7 +11,7 @@ type SignedTransaction struct {
 	From    string          `json:"from"`    // wallet address (public key hash / base58 / hex)
 	Amount  uint64          `json:"amount"`  // token fee
 	Payload json.RawMessage `json:"payload"` // raw payload, variant by type
-
+	Pk      string          `json:"pk"`      // public key
 	// Non-hash-related properties
 	TxID      string `json:"txId"`      // hash of unsigned transaction data
 	Signature string `json:"signature"` // signature of txHash

@@ -27,6 +27,15 @@ var (
 	NamecoinLastBlockKey = "namecoin:last_block"
 )
 
+func NewNamecoinChain(store storage.Store) *NamecoinChain {
+	return &NamecoinChain{
+		store:      store,
+		state:      NewState(),
+		headHash:   nil,
+		headHeight: 0,
+	}
+}
+
 // NamecoinChain represents the local Namecoin chain for a node
 type NamecoinChain struct {
 	mu         sync.RWMutex
@@ -43,6 +52,7 @@ type powParams struct {
 	targetBlockTime time.Duration
 	maxAdjustUp     float64
 	maxAdjustDown   float64
+	dynamic         bool
 }
 
 func powParamsFromConfig(cfg peer.PoWConfig) powParams {
@@ -50,6 +60,7 @@ func powParamsFromConfig(cfg peer.PoWConfig) powParams {
 		targetBlockTime: cfg.TargetBlockTime,
 		maxAdjustUp:     cfg.MaxAdjustUp,
 		maxAdjustDown:   cfg.MaxAdjustDown,
+		dynamic:         !cfg.DisableDifficultyAdjustment,
 	}
 	if p.targetBlockTime <= 0 {
 		p.targetBlockTime = defaultTargetBlockTime
@@ -64,7 +75,7 @@ func powParamsFromConfig(cfg peer.PoWConfig) powParams {
 }
 
 func loadStoredNamecoinBlocks(store storage.Store) ([]loadedBlock, []byte) {
-	storedHeadHash := cloneBytes(store.Get(NamecoinLastBlockKey))
+	storedHeadHash := CloneBytes(store.Get(NamecoinLastBlockKey))
 	blocks := make([]loadedBlock, 0, store.Len())
 	store.ForEach(func(key string, val []byte) bool {
 		if !strings.HasPrefix(key, NamecoinBlockPrefix) {
@@ -80,7 +91,7 @@ func loadStoredNamecoinBlocks(store storage.Store) ([]loadedBlock, []byte) {
 		blocks = append(blocks, loadedBlock{
 			Height: h,
 			Key:    key,
-			Raw:    cloneBytes(val),
+			Raw:    CloneBytes(val),
 		})
 		return true
 	})
@@ -122,7 +133,7 @@ func rebuildPowState(blocks []loadedBlock, headHeight uint64) (*big.Int, powPara
 			powTarget = cloneBigInt(blkTarget)
 		}
 
-		if havePrev {
+		if havePrev && params.dynamic {
 			spacing := time.Duration(blk.Header.Timestamp-headTS) * time.Second
 			powTarget = AdjustDifficulty(
 				powTarget,
@@ -144,7 +155,7 @@ func rebuildPowState(blocks []loadedBlock, headHeight uint64) (*big.Int, powPara
 func (c *NamecoinChain) HeadHash() []byte {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return cloneBytes(c.headHash)
+	return CloneBytes(c.headHash)
 }
 
 func (c *NamecoinChain) HeadHeight() uint64 {
@@ -201,8 +212,8 @@ type loadedBlock struct {
 	Raw    []byte
 }
 
-// cloneBytes returns a defensive copy of the provided slice.
-func cloneBytes(src []byte) []byte {
+// CloneBytes returns a defensive copy of the provided slice.
+func CloneBytes(src []byte) []byte {
 	if len(src) == 0 {
 		return nil
 	}
@@ -217,8 +228,8 @@ func warnf(format string, args ...interface{}) {
 	log.Printf(format, args...)
 }
 
-// encodeNamecoinBlockKey builds the key for a given height
-func encodeNamecoinBlockKey(height uint64) string {
+// EncodeNamecoinBlockKey builds the key for a given height
+func EncodeNamecoinBlockKey(height uint64) string {
 	return NamecoinBlockPrefix + fmt.Sprintf("%020d", height)
 }
 
@@ -241,9 +252,9 @@ func parseNamecoinBlockHeight(key string) (uint64, error) {
 }
 
 // ---- Helpers ----
-// computeTxRoot recomputes the txRoot from the block's transactions
+// ComputeTxRoot recomputes the txRoot from the block's transactions
 // MVP: SHA-256 over the JSON encoding of each tx in order.
-func computeTxRoot(txs []types.Tx) ([]byte, error) {
+func ComputeTxRoot(txs []types.Tx) ([]byte, error) {
 	h := sha256.New()
 	for i := range txs {
 		b, err := SerializeTransaction(&txs[i])
@@ -279,20 +290,20 @@ func decodeLoadedBlock(lb loadedBlock) (*types.Block, error) {
 func ensureNextBlockFollows(currentHeadHeight uint64, currentHeadHash []byte, blk *types.Block) error {
 	if currentHeadHash == nil {
 		if blk.Header.Height != 0 {
-			return fmt.Errorf("invalid genesis height %d; expected 0", blk.Header.Height)
+			return &ChainFollowError{fmt.Sprintf("invalid genesis height %d; expected 0", blk.Header.Height)}
 		}
 		if len(blk.Header.PrevHash) != 0 {
-			return fmt.Errorf("genesis block must have empty prevHash")
+			return &ChainFollowError{"genesis block must have empty prevHash"}
 		}
 		return nil
 	}
 
 	expectedHeight := currentHeadHeight + 1
 	if blk.Header.Height != expectedHeight {
-		return fmt.Errorf("invalid height %d; expected %d", blk.Header.Height, expectedHeight)
+		return &ChainFollowError{fmt.Sprintf("invalid height %d; expected %d", blk.Header.Height, expectedHeight)}
 	}
 	if !bytes.Equal(blk.Header.PrevHash, currentHeadHash) {
-		return fmt.Errorf("prevHash mismatch")
+		return &ChainFollowError{"prevHash mismatch"}
 	}
 
 	return nil
@@ -306,7 +317,30 @@ func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
 	}
 
 	state := NewState()
-	blocks, storedHeadHash := loadStoredNamecoinBlocks(store)
+
+	// Read stored head hash - can be empty
+	storedHeadHash := CloneBytes(store.Get(NamecoinLastBlockKey))
+
+	// Scan all Namecoin blocks
+	blocks := make([]loadedBlock, 0, store.Len())
+	store.ForEach(func(key string, val []byte) bool {
+		if !strings.HasPrefix(key, NamecoinBlockPrefix) {
+			return true
+		}
+
+		h, err := parseNamecoinBlockHeight(key)
+		if err != nil {
+			warnf("load namecoin chain: skipping malformed block key %q: %v", key, err)
+			return true
+		}
+
+		blocks = append(blocks, loadedBlock{
+			Height: h,
+			Key:    key,
+			Raw:    CloneBytes(val),
+		})
+		return true
+	})
 
 	// Nothing to replay.
 	if len(blocks) == 0 {
@@ -373,11 +407,68 @@ func cloneBigInt(src *big.Int) *big.Int {
 func (c *NamecoinChain) powTargetSnapshot() *big.Int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	t := c.powTarget
-	if t == nil {
-		t = effectiveTarget(nil)
+	return cloneBigInt(c.powTarget)
+}
+
+// blockAtHeight loads a block from storage for the given height.
+func (c *NamecoinChain) blockAtHeight(height uint64) (*types.Block, error) {
+	key := EncodeNamecoinBlockKey(height)
+	raw := c.store.Get(key)
+	if raw == nil {
+		return nil, fmt.Errorf("no block at height %d", height)
 	}
-	return cloneBigInt(t)
+	lb := loadedBlock{
+		Height: height,
+		Key:    key,
+		Raw:    CloneBytes(raw),
+	}
+	return decodeLoadedBlock(lb)
+}
+
+// forkUpToHeight reconstructs a chain whose head is the block at the provided height.
+// If storeOverride is nil, the current chain's store is used.
+func (c *NamecoinChain) forkUpToHeight(height uint64, storeOverride storage.Store) (*NamecoinChain, error) {
+	c.mu.RLock()
+	if height > c.headHeight {
+		c.mu.RUnlock()
+		return nil, fmt.Errorf("cannot fork to height %d above head %d", height, c.headHeight)
+	}
+	powTarget := cloneBigInt(c.powTarget)
+	c.mu.RUnlock()
+
+	forkStore := c.store
+	if storeOverride != nil {
+		forkStore = storeOverride
+	}
+
+	blocks := make([]loadedBlock, 0, height+1)
+	for h := uint64(0); h <= height; h++ {
+		key := EncodeNamecoinBlockKey(h)
+		raw := forkStore.Get(key)
+		if raw == nil {
+			return nil, fmt.Errorf("missing block at height %d", h)
+		}
+		blocks = append(blocks, loadedBlock{
+			Height: h,
+			Key:    key,
+			Raw:    CloneBytes(raw),
+		})
+	}
+
+	state := NewState()
+	state.SetLogger(c.state.CloneLogger())
+	headHash, _, headHeight := ReplayBlocks(state, blocks, nil)
+	if headHeight != height {
+		return nil, fmt.Errorf("replay stopped at height %d (expected %d)", headHeight, height)
+	}
+
+	return &NamecoinChain{
+		store:      forkStore,
+		state:      state,
+		headHash:   headHash,
+		headHeight: headHeight,
+		powTarget:  powTarget,
+	}, nil
 }
 
 func ReplayBlocks(state *NamecoinState, blocks []loadedBlock, storedHeadHash []byte) ([]byte, bool, uint64) {
@@ -409,7 +500,7 @@ func ReplayBlocks(state *NamecoinState, blocks []loadedBlock, storedHeadHash []b
 		}
 
 		// Track head and linkage for the next iteration
-		headHash = cloneBytes(blk.Hash)
+		headHash = CloneBytes(blk.Hash)
 		headHeight = blk.Header.Height
 
 		if storedHeadHash != nil && bytes.Equal(blk.Hash, storedHeadHash) {
@@ -443,7 +534,7 @@ func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
 	target := c.powTargetSnapshot()
 	c.mu.Lock()
 	currentHeadHeight := c.headHeight
-	currentHeadHash := cloneBytes(c.headHash)
+	currentHeadHash := CloneBytes(c.headHash)
 	clonedState := c.state.Clone()
 	prevTS := c.headTS
 	c.mu.Unlock()
@@ -478,23 +569,23 @@ func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
 	c.state.replaceWith(clonedState)
 
 	// Persist block to block store
-	blockKey := encodeNamecoinBlockKey(blk.Header.Height)
+	blockKey := EncodeNamecoinBlockKey(blk.Header.Height)
 	c.store.Set(blockKey, data)
 
 	// Update last-block pointer
 	c.store.Set(NamecoinLastBlockKey, blk.Hash)
 
-	c.headHash = cloneBytes(blk.Hash)
+	c.headHash = CloneBytes(blk.Hash)
 	c.headHeight = blk.Header.Height
 	c.headTS = blk.Header.Timestamp
 	// Prepare target for the next block using observed spacing.
-	if prevTS != 0 {
+	if c.powParams.dynamic && prevTS != 0 {
 		spacing := time.Duration(blk.Header.Timestamp-prevTS) * time.Second
 		c.powTarget = AdjustDifficulty(
-			blockTarget, 
-			spacing, 
-			c.powParams.targetBlockTime, 
-			c.powParams.maxAdjustUp, 
+			blockTarget,
+			spacing,
+			c.powParams.targetBlockTime,
+			c.powParams.maxAdjustUp,
 			c.powParams.maxAdjustDown,
 		)
 	} else {
@@ -517,14 +608,7 @@ func (c *NamecoinChain) ValidateBlock(
 		return err
 	}
 
-	blockTarget := DecodeDifficulty(blk.Header.Difficulty)
-	if blockTarget == nil {
-		return fmt.Errorf("validate namecoin blk: missing difficulty")
-	}
-	// If the caller provided an expected target and it differs, we still allow
-	// the block but rely on the header-encoded target for PoW validation.
-
-	computedRoot, err := computeTxRoot(blk.Transactions)
+	computedRoot, err := ComputeTxRoot(blk.Transactions)
 	if err != nil {
 		return fmt.Errorf("failed to compute tx root: %w", err)
 	}
@@ -532,7 +616,8 @@ func (c *NamecoinChain) ValidateBlock(
 		return fmt.Errorf("txRoot mismatch")
 	}
 
-	if err = validateWorkForTarget(blk, blockTarget); err != nil {
+	validationTarget := selectPowTarget(blk, target)
+	if err = validateWorkForTarget(blk, validationTarget); err != nil {
 		return err
 	}
 
@@ -544,4 +629,13 @@ func validateWorkForTarget(blk *types.Block, target *big.Int) error {
 		return fmt.Errorf("block hash above target")
 	}
 	return nil
+}
+
+// selectPowTarget picks the target to validate work against, preferring the block's
+// encoded difficulty when present, falling back to the chain's target.
+func selectPowTarget(blk *types.Block, chainTarget *big.Int) *big.Int {
+	if blk != nil && len(blk.Header.Difficulty) > 0 {
+		return new(big.Int).SetBytes(blk.Header.Difficulty)
+	}
+	return chainTarget
 }

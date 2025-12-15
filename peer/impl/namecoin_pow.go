@@ -19,7 +19,7 @@ var defaultTarget = new(big.Int).Lsh(big.NewInt(1), 240) // Easy default, overri
 const (
 	defaultTargetBlockTime = 10 * time.Second
 	defaultMaxAdjustUp     = 4.0
-	defaultMaxAdjustDown   = 0.25
+	defaultMaxAdjustDown   = 0.1
 )
 
 // CheckWork returns true if the given header bytes hash below the target.

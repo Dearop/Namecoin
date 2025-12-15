@@ -77,7 +77,11 @@ func (c *NamecoinConsensus) MineAndApply(
 	// Set the TxRoot on the base header before mining so the header bytes used
 	// for PoW match those used during validation.
 	hdrBase := *baseHeader
-	hdrBase.Difficulty = EncodeDifficulty(target)
+	// Embed the difficulty used for mining into the header so validators can
+	// verify using the same target regardless of local config.
+	if c.powCfg.Target != nil {
+		hdrBase.Difficulty = c.powCfg.Target.Bytes()
+	}
 	_ = AssembleBlock(&hdrBase, pending, c.powCfg.PubKey)
 
 	headerBuilder := c.buildHeader(&hdrBase)
@@ -95,7 +99,7 @@ func (c *NamecoinConsensus) MineAndApply(
 	hdr.Timestamp = ts
 
 	block := AssembleBlock(&hdr, pending, c.powCfg.PubKey)
-	isComplexityValid := IsBlockComplexityValid(block, target)
+	isComplexityValid := IsBlockComplexityValid(block, new(big.Int).SetBytes(hdr.Difficulty))
 	if !isComplexityValid {
 		c.txBuffer.Requeue(order, snapshot)
 		return block, xerrors.Errorf("block complexity is not valid")
@@ -138,7 +142,7 @@ func AssembleBlock(h *types.BlockHeader, pending []types.Tx, minersPubKey string
 
 	txs := append([]types.Tx{rewardTx}, pending...)
 
-	root, err := computeTxRoot(txs)
+	root, err := ComputeTxRoot(txs)
 	if err != nil {
 		panic(fmt.Sprintf("failed to compute TxRoot: %v", err))
 	}

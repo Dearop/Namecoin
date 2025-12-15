@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+
+	canonicaljson "github.com/gibson042/canonicaljson-go"
 )
 
 func (t *SignedTransaction) SerializeTransaction() ([]byte, error) {
@@ -21,11 +23,20 @@ func (t *SignedTransaction) SerializeTransaction() ([]byte, error) {
 		Payload: t.Payload,
 	}
 
-	b, err := json.Marshal(data)
-	if err != nil {
-		return nil, err
+	b, err := canonicaljson.Marshal(data)
+	return b, err
+}
+
+func (t *SignedTransaction) SerializeTransactionSignature() []byte {
+	data := map[string]interface{}{
+		"type":    t.Type,
+		"from":    t.From,
+		"amount":  t.Amount,
+		"payload": t.Payload,
 	}
-	return b, nil
+
+	b, _ := canonicaljson.Marshal(data)
+	return b
 }
 
 func Hash(bytes []byte) []byte {

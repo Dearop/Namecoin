@@ -4,6 +4,7 @@ go 1.23
 
 require (
 	github.com/AlecAivazis/survey/v2 v2.3.7
+	github.com/gibson042/canonicaljson-go v1.0.3
 	github.com/rs/xid v1.5.0
 	github.com/rs/zerolog v1.33.0
 	github.com/stretchr/testify v1.9.0
