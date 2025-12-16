@@ -24,6 +24,7 @@ func (t *SignedTransaction) SerializeTransaction() ([]byte, error) {
 }
 
 func (t *SignedTransaction) SerializeTransactionSignature() ([]byte, error) {
+func (t *SignedTransaction) SerializeTransactionSignature() ([]byte, error) {
 	data := map[string]interface{}{
 		"type":    t.Type,
 		"from":    t.From,
