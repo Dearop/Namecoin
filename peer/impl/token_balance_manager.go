@@ -1,6 +1,7 @@
 package impl
 
 import (
+	"encoding/hex"
 	"fmt"
 
 	"go.dedis.ch/cs438/types"
@@ -15,46 +16,22 @@ func NewBalanceManager(state *NamecoinState) *BalanceManager {
 	return &BalanceManager{state: state}
 }
 
-// VerifyOwnership ensures the provided address matches the hash of the public key.
-func (t *BalanceManager) VerifyOwnership(from string, pubKeyBytes []byte) error {
-	if from == "" {
-		return fmt.Errorf("missing from address")
+// VerifyBalance returns the canonical inputs/outputs for spending `amount` from `from`.
+func (t *BalanceManager) VerifyBalance(txID, from string, amount uint64) ([]types.TxInput, []types.TxOutput, error) {
+	inp, out, err := t.state.DeterministicSpendPlan(from, amount)
+	if err != nil {
+		return []types.TxInput{}, []types.TxOutput{}, err
 	}
-	if len(pubKeyBytes) == 0 {
-		return fmt.Errorf("missing public key bytes")
-	}
-	expected := HashHex(pubKeyBytes)
-	if from != expected {
-		return fmt.Errorf("from does not match public key hash")
-	}
-	return nil
+
+	return inp, out, nil
 }
 
-// VerifyBalance returns the balance of the given address
-func (t *BalanceManager) VerifyBalance(txID, from string, amount uint64) ([]types.TxInput, []types.TxOutput, error) {
-	inp, out, err := t.state.GetUTXOsToBurn(txID, from, amount)
-	if err != nil {
-		return make([]types.TxInput, 0), make([]types.TxOutput, 0), err
+// VerifyOwnership verifies that the given public key matches the given address
+func (t *BalanceManager) VerifyOwnership(from string, publicKey []byte) error {
+	derivedAddr := hex.EncodeToString(Hash(publicKey))
+	if derivedAddr != from {
+		return fmt.Errorf("public key does not match sender address")
 	}
 
-	inputs := make([]types.TxInput, 0)
-	for _, value := range inp {
-		inputs = append(inputs, types.TxInput{
-			TxID: value,
-			// Single-output transactions map to index 0 for now.
-			Index: 0,
-		})
-	}
-
-	// Max 1 output UTXO
-	outputs := make([]types.TxOutput, 0, 1)
-	for _, value := range out {
-		output := types.TxOutput{
-			To:     value.To,
-			Amount: value.Amount,
-		}
-		outputs = append(outputs, output)
-	}
-
-	return inputs, outputs, nil
+	return nil
 }
