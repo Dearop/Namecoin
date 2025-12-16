@@ -298,6 +298,8 @@ func (n *node) HandleNamecoinCommand(buf []byte) error {
 		From:      transaction.From,
 		Amount:    transaction.Amount,
 		Payload:   transaction.Payload,
+		Inputs:    transaction.Inputs,
+		Outputs:   transaction.Outputs,
 		Pk:        transaction.Pk,
 		TxID:      transaction.TxID,
 		Signature: transaction.Signature,

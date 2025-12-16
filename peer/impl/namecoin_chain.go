@@ -722,6 +722,8 @@ func validateTxStrict(st *NamecoinState, txID string, tx *types.Tx) error {
 		From:      tx.From,
 		Amount:    tx.Amount,
 		Payload:   tx.Payload,
+		Inputs:    tx.Inputs,
+		Outputs:   tx.Outputs,
 		Pk:        tx.Pk,
 		TxID:      tx.TxID,
 		Signature: tx.Signature,
@@ -742,29 +744,7 @@ func validateTxStrict(st *NamecoinState, txID string, tx *types.Tx) error {
 	}
 
 	// Require signature and ownership binding for all non-reward txs.
-	if tx.Pk == "" || tx.Signature == "" || tx.TxID == "" {
-		return fmt.Errorf("missing on-chain signature metadata")
-	}
-	if tx.TxID != txID {
-		return fmt.Errorf("txid mismatch: expected %s, got %s", txID, tx.TxID)
-	}
-
-	pubKeyBytes, err := decodeHex(tx.Pk)
-	if err != nil {
-		return fmt.Errorf("invalid public key format")
-	}
-	expectedFrom := HashHex(pubKeyBytes)
-	if tx.From != expectedFrom {
-		return fmt.Errorf("from does not match pk hash")
-	}
-
-	sigPreimage := (&SignedTransaction{
-		Type:    tx.Type,
-		From:    tx.From,
-		Amount:  tx.Amount,
-		Payload: tx.Payload,
-	}).SerializeTransactionSignature()
-	if err := VerifySignature(pubKeyBytes, sigPreimage, tx.Signature); err != nil {
+	if err := verifyTxAuth(tx, txID); err != nil {
 		return err
 	}
 
@@ -795,28 +775,34 @@ func validateTxStrict(st *NamecoinState, txID string, tx *types.Tx) error {
 	return st.ValidateCommandWithInputs(tx)
 }
 
-func equalTxInputs(a, b []types.TxInput) bool {
-	if len(a) != len(b) {
-		return false
+func verifyTxAuth(tx *types.Tx, txID string) error {
+	if tx.Pk == "" || tx.Signature == "" || tx.TxID == "" {
+		return fmt.Errorf("missing on-chain signature metadata")
 	}
-	for i := range a {
-		if a[i].TxID != b[i].TxID || a[i].Index != b[i].Index {
-			return false
-		}
+	if tx.TxID != txID {
+		return fmt.Errorf("txid mismatch: expected %s, got %s", txID, tx.TxID)
 	}
-	return true
-}
 
-func equalTxOutputs(a, b []types.TxOutput) bool {
-	if len(a) != len(b) {
-		return false
+	pubKeyBytes, err := decodeHex(tx.Pk)
+	if err != nil {
+		return fmt.Errorf("invalid public key format")
 	}
-	for i := range a {
-		if a[i].To != b[i].To || a[i].Amount != b[i].Amount {
-			return false
-		}
+	if tx.From != HashHex(pubKeyBytes) {
+		return fmt.Errorf("from does not match pk hash")
 	}
-	return true
+
+	sigPreimage, err := (&SignedTransaction{
+		Type:    tx.Type,
+		From:    tx.From,
+		Amount:  tx.Amount,
+		Payload: tx.Payload,
+		Inputs:  tx.Inputs,
+		Outputs: tx.Outputs,
+	}).SerializeTransactionSignature()
+	if err != nil {
+		return fmt.Errorf("failed to serialize signature preimage: %w", err)
+	}
+	return VerifySignature(pubKeyBytes, sigPreimage, tx.Signature)
 }
 
 func validateWorkForTarget(blk *types.Block, target *big.Int) error {

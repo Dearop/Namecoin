@@ -10,12 +10,12 @@ import (
 	"go.dedis.ch/cs438/types"
 )
 
-func onChainTxFromSigned(stx impl.SignedTransaction, inputs []types.TxInput, outputs []types.TxOutput) types.Tx {
+func onChainTxFromSigned(stx impl.SignedTransaction) types.Tx {
 	return types.Tx{
 		From:      stx.From,
 		Type:      stx.Type,
-		Inputs:    inputs,
-		Outputs:   outputs,
+		Inputs:    stx.Inputs,
+		Outputs:   stx.Outputs,
 		Amount:    stx.Amount,
 		Payload:   stx.Payload,
 		Pk:        stx.Pk,
@@ -73,24 +73,19 @@ func Test_Security_RejectsStaleCommitmentReveal(t *testing.T) {
 		Amount: 1,
 	}
 	genesis := applyBlock(t, chain, 0, nil, []types.Tx{genesisReward})
-	fundingUTXO, err := impl.BuildTransactionID(&genesisReward)
-	require.NoError(t, err)
 
 	// Create the commitment.
 	nameNewSigned := buildSignedTransaction(
 		t,
+		chain.State(),
 		from,
 		priv,
 		impl.NameNewCommandName,
-		0,
+		1,
 		impl.NameNew{Commitment: commit, TTL: 10},
 		pub,
 	)
-	nameNewTx := onChainTxFromSigned(
-		nameNewSigned,
-		[]types.TxInput{{TxID: fundingUTXO, Index: 0}},
-		[]types.TxOutput{{To: from, Amount: 1}},
-	)
+	nameNewTx := onChainTxFromSigned(nameNewSigned)
 	commitBlk := applyBlock(t, chain, 1, genesis.Hash, []types.Tx{nameNewTx})
 	commitTxID := nameNewTx.TxID
 
@@ -105,6 +100,7 @@ func Test_Security_RejectsStaleCommitmentReveal(t *testing.T) {
 	// Attempt to reveal long after the commit.
 	revealSigned := buildSignedTransaction(
 		t,
+		chain.State(),
 		from,
 		priv,
 		impl.NameFirstUpdateCommandName,
@@ -118,7 +114,7 @@ func Test_Security_RejectsStaleCommitmentReveal(t *testing.T) {
 		},
 		pub,
 	)
-	revealTx := onChainTxFromSigned(revealSigned, nil, nil)
+	revealTx := onChainTxFromSigned(revealSigned)
 
 	// Desired security property: reveal should be rejected once the commitment is stale.
 	// Today this is accepted because we don't track commit height/max-depth.
@@ -153,15 +149,13 @@ func Test_Security_NoTTLSkewAcrossNameNew(t *testing.T) {
 	)
 	commit := impl.HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", domain, salt))
 
-	// Fund with 1 coin.
+	// Fund with 2 coins (enough for two name_new burns).
 	genesisReward := types.Tx{
 		Type:   impl.RewardCommandName,
 		From:   from,
-		Amount: 1,
+		Amount: 2,
 	}
 	genesis := applyBlock(t, chain, 0, nil, []types.Tx{genesisReward})
-	fundingUTXO, err := impl.BuildTransactionID(&genesisReward)
-	require.NoError(t, err)
 
 	ttl1 := uint64(10)
 	ttl2 := uint64(20)
@@ -169,40 +163,35 @@ func Test_Security_NoTTLSkewAcrossNameNew(t *testing.T) {
 	// First name_new writes TTL preference ttl1.
 	nameNew1Signed := buildSignedTransaction(
 		t,
+		chain.State(),
 		from,
 		priv,
 		impl.NameNewCommandName,
-		0,
+		1,
 		impl.NameNew{Commitment: commit, TTL: ttl1},
 		pub,
 	)
-	nameNew1Tx := onChainTxFromSigned(
-		nameNew1Signed,
-		[]types.TxInput{{TxID: fundingUTXO, Index: 0}},
-		[]types.TxOutput{{To: from, Amount: 1}},
-	)
+	nameNew1Tx := onChainTxFromSigned(nameNew1Signed)
 	blk1 := applyBlock(t, chain, 1, genesis.Hash, []types.Tx{nameNew1Tx})
 
 	// Second name_new reuses the same commitment but overwrites TTL preference to ttl2.
 	nameNew2Signed := buildSignedTransaction(
 		t,
+		chain.State(),
 		from,
 		priv,
 		impl.NameNewCommandName,
-		0,
+		1,
 		impl.NameNew{Commitment: commit, TTL: ttl2},
 		pub,
 	)
-	nameNew2Tx := onChainTxFromSigned(
-		nameNew2Signed,
-		[]types.TxInput{{TxID: nameNew1Tx.TxID, Index: 0}},
-		[]types.TxOutput{{To: from, Amount: 1}},
-	)
+	nameNew2Tx := onChainTxFromSigned(nameNew2Signed)
 	blk2 := applyBlock(t, chain, 2, blk1.Hash, []types.Tx{nameNew2Tx})
 
 	// Reveal using the first name_new outpoint, without specifying TTL in firstupdate.
 	revealSigned := buildSignedTransaction(
 		t,
+		chain.State(),
 		from,
 		priv,
 		impl.NameFirstUpdateCommandName,
@@ -216,7 +205,7 @@ func Test_Security_NoTTLSkewAcrossNameNew(t *testing.T) {
 		},
 		pub,
 	)
-	revealTx := onChainTxFromSigned(revealSigned, nil, nil)
+	revealTx := onChainTxFromSigned(revealSigned)
 	_ = applyBlock(t, chain, 3, blk2.Hash, []types.Tx{revealTx})
 
 	rec, ok := chain.State().NameLookup(domain)

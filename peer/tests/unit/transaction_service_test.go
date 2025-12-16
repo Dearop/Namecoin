@@ -14,11 +14,17 @@ import (
 )
 
 func TestTransactionServiceValidateTransactionSignatureMismatch(t *testing.T) {
-	service := impl.NewTransactionService(impl.NewState())
+	state := impl.NewState()
 	pub, priv := mustMakeKeyPair(t)
-
 	from := hex.EncodeToString(impl.Hash(pub))
-	tx := buildSignedTransaction(t, from, priv, impl.NameNew{}.Name(), 2, impl.NameNew{Commitment: "commitment"}, pub)
+
+	state.UTXOMap = map[string]map[string]types.UTXO{
+		from: {
+			"funds-1": {TxID: "funds-1", To: from, Amount: 2},
+		},
+	}
+	service := impl.NewTransactionService(state)
+	tx := buildSignedTransaction(t, state, from, priv, impl.NameNew{}.Name(), 2, impl.NameNew{Commitment: "commitment"}, pub)
 	tx.Signature = "deadbeef"
 
 	if err := service.ValidateTransaction(&tx); err == nil {
@@ -27,11 +33,17 @@ func TestTransactionServiceValidateTransactionSignatureMismatch(t *testing.T) {
 }
 
 func TestTransactionServiceValidateTransactionSignatureMatch(t *testing.T) {
-	service := impl.NewTransactionService(impl.NewState())
+	state := impl.NewState()
 	pub, priv := mustMakeKeyPair(t)
-
 	from := hex.EncodeToString(impl.Hash(pub))
-	tx := buildSignedTransaction(t, from, priv, impl.NameNew{}.Name(), 2, impl.NameNew{Commitment: "commitment"}, pub)
+
+	state.UTXOMap = map[string]map[string]types.UTXO{
+		from: {
+			"funds-1": {TxID: "funds-1", To: from, Amount: 2},
+		},
+	}
+	service := impl.NewTransactionService(state)
+	tx := buildSignedTransaction(t, state, from, priv, impl.NameNew{}.Name(), 2, impl.NameNew{Commitment: "commitment"}, pub)
 	if err := service.ValidateTransaction(&tx); err != nil {
 		t.Fatalf("expected validation to succeed, got %v", err)
 	}
@@ -49,10 +61,10 @@ func TestTransactionServiceValidateTransactionFirstUpdateCommitmentMismatch(t *t
 		IP:     "10.0.0.1",
 	}
 
-	tx := buildSignedTransaction(t, from, priv, impl.NameFirstUpdate{}.Name(), 3, payload, pub)
-	state.UTXOMap[tx.From] = map[string]types.UTXO{
-		"funds-1": {TxID: "funds-1", To: tx.From, Amount: tx.Amount},
+	state.UTXOMap[from] = map[string]types.UTXO{
+		"funds-1": {TxID: "funds-1", To: from, Amount: 3},
 	}
+	tx := buildSignedTransaction(t, state, from, priv, impl.NameFirstUpdate{}.Name(), 3, payload, pub)
 
 	// Set up the correct commitment for initial validation to pass
 	correctCommit := impl.HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", payload.Domain, payload.Salt))
@@ -91,7 +103,10 @@ func TestTransactionServiceValidateTransactionNameUpdateWrongOwner(t *testing.T)
 	}
 
 	state.Domains[payload.Domain] = types.NameRecord{Owner: "other-owner"}
-	tx := buildSignedTransaction(t, from, priv, impl.NameUpdate{}.Name(), 1, payload, pub)
+	state.UTXOMap[from] = map[string]types.UTXO{
+		"funds-1": {TxID: "funds-1", To: from, Amount: 1},
+	}
+	tx := buildSignedTransaction(t, state, from, priv, impl.NameUpdate{}.Name(), 1, payload, pub)
 
 	if err := service.ValidateTransaction(&tx); err == nil {
 		t.Fatalf("expected validation to fail when sender does not own the domain")
@@ -140,7 +155,7 @@ func mustMakeKeyPair(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey) {
 	return pub, priv
 }
 
-func buildSignedTransaction(t *testing.T, from string, privateKey ed25519.PrivateKey,
+func buildSignedTransaction(t *testing.T, st *impl.NamecoinState, from string, privateKey ed25519.PrivateKey,
 	txType string, amount uint64, payload interface{}, publicKey ed25519.PublicKey) impl.SignedTransaction {
 	t.Helper()
 
@@ -149,11 +164,16 @@ func buildSignedTransaction(t *testing.T, from string, privateKey ed25519.Privat
 		t.Fatalf("failed to marshal payload: %v", err)
 	}
 
+	inputs, outputs, err := st.DeterministicSpendPlan(from, amount)
+	require.NoError(t, err)
+
 	tx := impl.SignedTransaction{
 		Type:    txType,
 		From:    from,
 		Amount:  amount,
 		Payload: json.RawMessage(payloadBytes),
+		Inputs:  inputs,
+		Outputs: outputs,
 		Pk:      hex.EncodeToString(publicKey),
 	}
 

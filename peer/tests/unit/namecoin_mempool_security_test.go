@@ -28,6 +28,7 @@ func Test_HandleNamecoinTransactionMessage_AllowsInvalidTxIntoMempool(t *testing
 	from := hex.EncodeToString(impl.Hash(pub))
 	signed := buildSignedTransaction(
 		t,
+		impl.NewState(),
 		from,
 		priv,
 		impl.NameNew{}.Name(),
@@ -83,6 +84,8 @@ func Test_HandleNamecoinTransactionMessage_AllowsInvalidTxIntoMempool(t *testing
 		From:      signed.From,
 		Amount:    signed.Amount,
 		Payload:   signed.Payload,
+		Inputs:    signed.Inputs,
+		Outputs:   signed.Outputs,
 		Pk:        signed.Pk,
 		TxID:      signed.TxID,
 		Signature: signed.Signature,
@@ -126,8 +129,13 @@ func Test_HandleNamecoinTransactionMessage_AcceptsValidTxIntoMempool(t *testing.
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	from := hex.EncodeToString(impl.Hash(pub))
+	st := impl.NewState()
+	st.UTXOMap[from] = map[string]types.UTXO{
+		"funds-1": {TxID: "funds-1", To: from, Amount: 10},
+	}
 	signed := buildSignedTransaction(
 		t,
+		st,
 		from,
 		priv,
 		impl.NameNew{}.Name(),
@@ -168,6 +176,8 @@ func Test_HandleNamecoinTransactionMessage_AcceptsValidTxIntoMempool(t *testing.
 		From:      signed.From,
 		Amount:    signed.Amount,
 		Payload:   signed.Payload,
+		Inputs:    signed.Inputs,
+		Outputs:   signed.Outputs,
 		Pk:        signed.Pk,
 		TxID:      signed.TxID,
 		Signature: signed.Signature,

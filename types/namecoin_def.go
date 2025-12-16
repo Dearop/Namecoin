@@ -138,6 +138,8 @@ type NamecoinTransactionMessage struct {
 	From      string
 	Amount    uint64
 	Payload   json.RawMessage
+	Inputs    []TxInput
+	Outputs   []TxOutput
 	Pk        string
 	TxID      string
 	Signature string

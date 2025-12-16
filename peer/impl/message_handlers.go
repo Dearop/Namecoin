@@ -82,6 +82,8 @@ func (n *node) handleNamecoinTransactionMessage(message types.Message, packet tr
 		From:      msg.From,
 		Amount:    msg.Amount,
 		Payload:   msg.Payload,
+		Inputs:    msg.Inputs,
+		Outputs:   msg.Outputs,
 		Pk:        msg.Pk,
 		TxID:      msg.TxID,
 		Signature: msg.Signature,

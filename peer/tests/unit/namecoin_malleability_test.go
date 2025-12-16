@@ -27,6 +27,8 @@ func Test_InputSwapSameTxID_IsRejected_OptionB(t *testing.T) {
 	}
 
 	payloadBytes, _ := json.Marshal(impl.NameNew{Commitment: "mal-commit"})
+	intendedInputs, intendedOutputs, err := st.DeterministicSpendPlan(aliceAddr, 5)
+	require.NoError(t, err)
 
 	// Intent-signing: TxID/signature over {type,from,amount,payload}
 	signed := impl.SignedTransaction{
@@ -35,6 +37,8 @@ func Test_InputSwapSameTxID_IsRejected_OptionB(t *testing.T) {
 		Amount:  5,
 		Payload: payloadBytes,
 		Pk:      hex.EncodeToString(pub),
+		Inputs:  intendedInputs,
+		Outputs: intendedOutputs,
 	}
 	unsigned, err := signed.SerializeTransaction()
 	require.NoError(t, err)
