@@ -457,7 +457,9 @@ func ReplayBlocks(state *NamecoinState, blocks []loadedBlock, storedHeadHash []b
 			continue
 		}
 
-		if err := ensureNextBlockFollows(headHeight, headHash, blk); err != nil {
+		// Recompute-and-verify (hash, linkage, txRoot)
+		canonicalHash, err := validateBlockOnReplay(headHeight, headHash, blk)
+		if err != nil {
 			warnf("load namecoin chain: skipping block at height %d: %v", lb.Height, err)
 			continue
 		}
@@ -470,16 +472,51 @@ func ReplayBlocks(state *NamecoinState, blocks []loadedBlock, storedHeadHash []b
 		}
 
 		// Track head and linkage for the next iteration
-		headHash = CloneBytes(blk.Hash)
+		headHash = CloneBytes(canonicalHash)
 		headHeight = blk.Header.Height
 
-		if storedHeadHash != nil && bytes.Equal(blk.Hash, storedHeadHash) {
+		if storedHeadHash != nil && bytes.Equal(canonicalHash, storedHeadHash) {
 			foundHead = true
 			break
 		}
 	}
 
 	return headHash, foundHead, headHeight
+}
+
+func validateBlockOnReplay(
+	currentHeadHeight uint64,
+	currentHeadHash []byte,
+	blk *types.Block,
+) ([]byte, error) {
+	// 1) Canonical hash must be derived from header
+	computedArr := blk.ComputeHash()
+	computed := computedArr[:] // []byte
+
+	// If blk.Hash is present in storage, it must match.
+	// Since stored blocks always include Hash, this catches tampering/corruption.
+	if len(blk.Hash) != 0 && !bytes.Equal(blk.Hash, computed) {
+		return nil, fmt.Errorf("stored blk.Hash != ComputeHash()")
+	}
+
+	// Normalise in-memory to computed canonical value to prevent later misuse.
+	blk.Hash = CloneBytes(computed)
+
+	// 2) Linkage/height check (uses currentHeadHash that we maintain as canonical)
+	if err := ensureNextBlockFollows(currentHeadHeight, currentHeadHash, blk); err != nil {
+		return nil, err
+	}
+
+	// 3) TxRoot check
+	root, err := ComputeTxRoot(blk.Transactions)
+	if err != nil {
+		return nil, fmt.Errorf("compute tx root: %w", err)
+	}
+	if !bytes.Equal(blk.Header.TxRoot, root) {
+		return nil, fmt.Errorf("txRoot mismatch on replay")
+	}
+
+	return computed, nil
 }
 
 // ValidateBlock validates a candidate Namecoin block against the current
@@ -546,10 +583,13 @@ func (c *NamecoinChain) ApplyBlock(blk *types.Block) error {
 	blockKey := EncodeNamecoinBlockKey(blk.Header.Height)
 	c.store.Set(blockKey, data)
 
-	// Update last-block pointer
-	c.store.Set(NamecoinLastBlockKey, blk.Hash)
+	// Recompute blk hash for safety
+	canonical := blk.ComputeHash()
 
-	c.headHash = CloneBytes(blk.Hash)
+	// Update last-block pointer
+	c.store.Set(NamecoinLastBlockKey, canonical)
+
+	c.headHash = CloneBytes(canonical)
 	c.headHeight = blk.Header.Height
 	c.headTS = blk.Header.Timestamp
 	// Prepare target for the next block using observed spacing.
@@ -579,6 +619,14 @@ func (c *NamecoinChain) ValidateBlockHeader(
 	if blk == nil {
 		return fmt.Errorf("validate namecoin blk: nil block")
 	}
+
+	// Canonical block id must be derived from the header.
+	computed := blk.ComputeHash() // must hash exactly the header fields used for PoW
+	if len(blk.Hash) != 0 && !bytes.Equal(blk.Hash, computed) {
+		return fmt.Errorf("block hash mismatch: payload hash != computed header hash")
+	}
+	// Take as memory copy to prevent later misuse.
+	blk.Hash = CloneBytes(computed)
 
 	if err := ensureNextBlockFollows(currentHeadHeight, currentHeadHash, blk); err != nil {
 		return err
@@ -731,66 +779,44 @@ func validateTxStrict(st *NamecoinState, txID string, tx *types.Tx) error {
 	}
 
 	// Enforce input availability and deterministic change output.
-	totalIn, err := sumInputAmounts(st, tx.From, tx.Inputs)
+	// Recompute canonical inputs/outputs and require exact match.
+	expIn, expOut, err := st.DeterministicSpendPlan(tx.From, tx.Amount)
 	if err != nil {
 		return err
 	}
-	if totalIn < tx.Amount {
-		return fmt.Errorf("insufficient funds")
+	if !equalTxInputs(tx.Inputs, expIn) {
+		return fmt.Errorf("inputs not canonical for (from=%s, amount=%d)", tx.From, tx.Amount)
 	}
-
-	leftover := totalIn - tx.Amount
-	if leftover == 0 {
-		if len(tx.Outputs) != 0 {
-			return fmt.Errorf("unexpected change output")
-		}
-	} else {
-		if len(tx.Outputs) != 1 {
-			return fmt.Errorf("missing change output")
-		}
-		out := tx.Outputs[0]
-		if out.To != tx.From {
-			return fmt.Errorf("change output must pay back to sender")
-		}
-		if out.Amount != leftover {
-			return fmt.Errorf("invalid change amount")
-		}
+	if !equalTxOutputs(tx.Outputs, expOut) {
+		return fmt.Errorf("outputs not canonical for (from=%s, amount=%d)", tx.From, tx.Amount)
 	}
 
 	// Validate any command invariants that depend on formed inputs/outputs.
 	return st.ValidateCommandWithInputs(tx)
 }
 
-func sumInputAmounts(st *NamecoinState, from string, inputs []types.TxInput) (uint64, error) {
-	if len(inputs) == 0 {
-		return 0, nil
+func equalTxInputs(a, b []types.TxInput) bool {
+	if len(a) != len(b) {
+		return false
 	}
-
-	seen := make(map[string]struct{}, len(inputs))
-	var total uint64
-
-	st.mu.RLock()
-	defer st.mu.RUnlock()
-
-	userUTXOs := st.UTXOMap[from]
-	if userUTXOs == nil {
-		return 0, fmt.Errorf("no utxos for sender")
-	}
-
-	for _, in := range inputs {
-		if _, ok := seen[in.TxID]; ok {
-			return 0, fmt.Errorf("duplicate input %s", in.TxID)
+	for i := range a {
+		if a[i].TxID != b[i].TxID || a[i].Index != b[i].Index {
+			return false
 		}
-		seen[in.TxID] = struct{}{}
-
-		utxo, ok := userUTXOs[in.TxID]
-		if !ok {
-			return 0, fmt.Errorf("input utxo not found")
-		}
-		total += utxo.Amount
 	}
+	return true
+}
 
-	return total, nil
+func equalTxOutputs(a, b []types.TxOutput) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].To != b[i].To || a[i].Amount != b[i].Amount {
+			return false
+		}
+	}
+	return true
 }
 
 func validateWorkForTarget(blk *types.Block, target *big.Int) error {
