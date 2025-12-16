@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +18,28 @@ import (
 	"go.dedis.ch/cs438/peer/impl"
 	"go.dedis.ch/cs438/types"
 )
+
+var (
+	perfResultsMu sync.Mutex
+	perfResults   []string
+)
+
+func recordPerfResult(name, details string) {
+	perfResultsMu.Lock()
+	defer perfResultsMu.Unlock()
+	perfResults = append(perfResults, fmt.Sprintf("%s: %s", name, details))
+}
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if len(perfResults) > 0 {
+		fmt.Println("\n=== Namecoin Performance Summary ===")
+		for _, line := range perfResults {
+			fmt.Println(line)
+		}
+	}
+	os.Exit(code)
+}
 
 func Test_Mining_Perf(t *testing.T) {
 	runMiningPerf(t)
@@ -76,6 +99,7 @@ func runMiningPerf(t *testing.T) {
 	}
 	avgTime := total / time.Duration(len(blockTimes))
 	t.Logf("Mined %d blocks, Average time per block: %v, Total time: %v", len(blockTimes), avgTime, total)
+	recordPerfResult(t.Name(), fmt.Sprintf("mined %d blocks, avg %v/block, total %v", len(blockTimes), avgTime, total))
 }
 
 func Test_Transaction_Throughput_Perf(t *testing.T) {
@@ -276,9 +300,287 @@ func runTransactionThroughput(t *testing.T, numTxs, numNodes int) {
 	if includedCount > 0 {
 		avgLatency := totalDuration / time.Duration(includedCount)
 		t.Logf("Average latency (submit to include): %v", avgLatency)
+		recordPerfResult(t.Name(), fmt.Sprintf("%d/%d included (%.1f%%), submit %.2f tx/s, include %.2f tx/s, avg latency %v",
+			includedCount, len(submissions), float64(includedCount)*100/float64(len(submissions)),
+			float64(len(submissions))/submissionDuration.Seconds(),
+			float64(includedCount)/totalDuration.Seconds(),
+			avgLatency))
+	} else {
+		recordPerfResult(t.Name(), "no transactions included")
 	}
 
 	// Require at least 80% inclusion
 	require.GreaterOrEqual(t, includedCount, int(float64(len(submissions))*0.8),
 		"Expected at least 80%% of transactions to be included in blocks")
+}
+
+// Measures end-to-end registration latency (commit+reveal) and throughput.
+func Test_Name_Registration_Latency_Throughput_Perf(t *testing.T) {
+	transp := channelFac()
+	easyTarget := new(big.Int).Lsh(big.NewInt(1), 246)
+
+	numDomains := 24
+	numNodes := 3
+
+	nodes := make([]z.TestNode, numNodes)
+	for i := 0; i < numNodes; i++ {
+		node := z.NewTestNode(t, peerFac, transp, "127.0.0.1:0",
+			z.WithPoWConfig(peer.PoWConfig{
+				Target: easyTarget,
+				PubKey: fmt.Sprintf("registrar-%d", i),
+			}),
+			z.WithEnableMiner(true),
+			z.WithAntiEntropy(350*time.Millisecond),
+			z.WithHeartbeat(250*time.Millisecond),
+		)
+		nodes[i] = node
+	}
+	defer func() {
+		for _, node := range nodes {
+			node.Stop()
+		}
+	}()
+
+	// Full mesh
+	for _, n1 := range nodes {
+		for _, n2 := range nodes {
+			n1.AddPeer(n2.GetAddr())
+		}
+	}
+
+	type reg struct {
+		domain          string
+		salt            string
+		nameNewTxID     string
+		firstUpdateSent time.Time
+		includedAt      time.Time
+	}
+	registrations := make([]reg, 0, numDomains)
+
+	// Build and broadcast name_new + name_firstupdate for each domain.
+	for i := 0; i < numDomains; i++ {
+		node := nodes[i%numNodes]
+		domain := fmt.Sprintf("perf-%d.bit", i)
+		salt := fmt.Sprintf("salt-%d", i)
+		commitment := impl.HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", domain, salt))
+
+		nameNew := impl.NameNew{
+			Commitment: commitment,
+			TTL:        48,
+		}
+		payloadNew, err := json.Marshal(nameNew)
+		require.NoError(t, err)
+
+		nameNewTx := types.Tx{
+			From:    node.GetMinerID(),
+			Type:    impl.NameNewCommandName,
+			Amount:  1,
+			Payload: json.RawMessage(payloadNew),
+			Outputs: []types.TxOutput{{To: node.GetMinerID(), Amount: 1}},
+		}
+		nameNewTxID, err := impl.BuildTransactionID(&nameNewTx)
+		require.NoError(t, err)
+
+		msgNew := types.NamecoinTransactionMessage{
+			TxID: nameNewTxID,
+			Tx:   nameNewTx,
+		}
+		wireNew, err := node.GetRegistry().MarshalMessage(msgNew)
+		require.NoError(t, err)
+		require.NoError(t, node.Broadcast(wireNew))
+
+		firstUpdate := impl.NameFirstUpdate{
+			Domain: domain,
+			Salt:   salt,
+			IP:     fmt.Sprintf("10.0.0.%d", i+1),
+			TTL:    48,
+			TxID:   nameNewTxID,
+		}
+		payloadFU, err := json.Marshal(firstUpdate)
+		require.NoError(t, err)
+
+		firstUpdateTx := types.Tx{
+			From:    node.GetMinerID(),
+			Type:    impl.NameFirstUpdateCommandName,
+			Amount:  1,
+			Inputs:  []types.TxInput{{TxID: nameNewTxID, Index: 0}},
+			Outputs: []types.TxOutput{{To: node.GetMinerID(), Amount: 1}},
+			Payload: json.RawMessage(payloadFU),
+		}
+		firstUpdateTxID, err := impl.BuildTransactionID(&firstUpdateTx)
+		require.NoError(t, err)
+
+		msgFU := types.NamecoinTransactionMessage{
+			TxID: firstUpdateTxID,
+			Tx:   firstUpdateTx,
+		}
+		wireFU, err := node.GetRegistry().MarshalMessage(msgFU)
+		require.NoError(t, err)
+		sendTime := time.Now()
+		require.NoError(t, node.Broadcast(wireFU))
+
+		registrations = append(registrations, reg{
+			domain:          domain,
+			salt:            salt,
+			nameNewTxID:     nameNewTxID,
+			firstUpdateSent: sendTime,
+		})
+	}
+
+	deadline := time.Now().Add(180 * time.Second)
+	included := 0
+	for time.Now().Before(deadline) {
+		chain := nodes[0].NamecoinChainState()
+		if chain == nil {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		state := chain.State()
+		if state == nil {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		for idx := range registrations {
+			if !registrations[idx].includedAt.IsZero() {
+				continue
+			}
+			if _, ok := state.NameLookup(registrations[idx].domain); ok {
+				registrations[idx].includedAt = time.Now()
+				included++
+				t.Logf("Registered %s in %v", registrations[idx].domain, registrations[idx].includedAt.Sub(registrations[idx].firstUpdateSent))
+			}
+		}
+
+		if included == len(registrations) {
+			break
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+
+	totalDuration := time.Since(registrations[0].firstUpdateSent)
+	var totalLatency time.Duration
+	for _, r := range registrations {
+		if r.includedAt.IsZero() {
+			continue
+		}
+		totalLatency += r.includedAt.Sub(r.firstUpdateSent)
+	}
+	success := 0
+	for _, r := range registrations {
+		if !r.includedAt.IsZero() {
+			success++
+		}
+	}
+
+	require.GreaterOrEqual(t, success, int(float64(len(registrations))*0.8), "expected at least 80%% of registrations to be mined")
+
+	if success > 0 {
+		avgLatency := totalLatency / time.Duration(success)
+		t.Logf("Name registrations: %d/%d included (%.1f%%)", success, len(registrations), float64(success)*100/float64(len(registrations)))
+		t.Logf("Average registration latency: %v", avgLatency)
+		t.Logf("Registration throughput: %.2f regs/s", float64(success)/totalDuration.Seconds())
+		recordPerfResult(t.Name(), fmt.Sprintf("%d/%d included (%.1f%%), avg latency %v, throughput %.2f regs/s",
+			success, len(registrations), float64(success)*100/float64(len(registrations)),
+			avgLatency, float64(success)/totalDuration.Seconds()))
+	} else {
+		recordPerfResult(t.Name(), "no registrations included")
+	}
+}
+
+// Measures how quickly mined blocks propagate to peers (consensus/mining time vs nodes).
+func Test_Block_Propagation_Perf(t *testing.T) {
+	transp := channelFac()
+	easyTarget := new(big.Int).Lsh(big.NewInt(1), 255)
+
+	nodes := []z.TestNode{
+		z.NewTestNode(t, peerFac, transp, "127.0.0.1:0",
+			z.WithPoWConfig(peer.PoWConfig{Target: easyTarget, PubKey: "miner-root"}),
+			z.WithEnableMiner(true),
+			z.WithAntiEntropy(250*time.Millisecond),
+			z.WithHeartbeat(200*time.Millisecond)),
+		z.NewTestNode(t, peerFac, transp, "127.0.0.1:0",
+			z.WithPoWConfig(peer.PoWConfig{Target: easyTarget, PubKey: "observer-1"}),
+			z.WithEnableMiner(false),
+			z.WithAntiEntropy(250*time.Millisecond),
+			z.WithHeartbeat(200*time.Millisecond)),
+		z.NewTestNode(t, peerFac, transp, "127.0.0.1:0",
+			z.WithPoWConfig(peer.PoWConfig{Target: easyTarget, PubKey: "observer-2"}),
+			z.WithEnableMiner(false),
+			z.WithAntiEntropy(250*time.Millisecond),
+			z.WithHeartbeat(200*time.Millisecond)),
+	}
+	defer func() {
+		for _, n := range nodes {
+			n.Stop()
+		}
+	}()
+
+	for _, n1 := range nodes {
+		for _, n2 := range nodes {
+			n1.AddPeer(n2.GetAddr())
+		}
+	}
+
+	initial := uint64(0)
+	if head := nodes[0].NamecoinChainState(); head != nil {
+		initial = head.HeadHeight()
+	}
+	var targetHeight uint64
+	minedAt := make(map[uint64]time.Time)
+	propagated := make(map[uint64]time.Duration)
+
+	deadline := time.Now().Add(120 * time.Second)
+	for time.Now().Before(deadline) {
+		head := nodes[0].NamecoinChainState()
+		if head == nil {
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		height := head.HeadHeight()
+
+		if height > initial && targetHeight == 0 {
+			targetHeight = height
+			minedAt[height] = time.Now()
+			// Stop mining after the first observed new block to avoid racing past the target height.
+			if stopper, ok := nodes[0].Peer.(interface{ StopMiner() }); ok {
+				stopper.StopMiner()
+			}
+		}
+
+		if targetHeight == 0 {
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+
+		if propagated[targetHeight] == 0 {
+			allHave := true
+			for i := 1; i < len(nodes); i++ {
+				state := nodes[i].NamecoinChainState()
+				if state == nil || state.HeadHeight() < targetHeight {
+					allHave = false
+					break
+				}
+			}
+			if allHave {
+				propagated[targetHeight] = time.Since(minedAt[targetHeight])
+				t.Logf("Block height %d propagated in %v", targetHeight, propagated[targetHeight])
+			}
+		}
+
+		if propagated[targetHeight] != 0 {
+			break
+		}
+		time.Sleep(75 * time.Millisecond)
+	}
+
+	require.NotEmpty(t, propagated, "no propagated blocks observed")
+	var total time.Duration
+	for _, d := range propagated {
+		total += d
+		require.Less(t, d, 60*time.Second, "block propagation too slow")
+	}
+	avg := total / time.Duration(len(propagated))
+	t.Logf("Average block propagation: %v across %d blocks", avg, len(propagated))
+	recordPerfResult(t.Name(), fmt.Sprintf("avg propagation %v across %d blocks", avg, len(propagated)))
 }

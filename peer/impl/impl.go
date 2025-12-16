@@ -732,11 +732,14 @@ func (n *node) buildRumorMessage(nodeAddr string, msg transport.Message) (
 	return wireMsg, rumorsMsg, nil
 }
 
-// isPaxosMessage checks if a message type is a Paxos/TLC message.
+// isPaxosMessage checks if a message type should be reliably flooded (no single-neighbor rumor hop).
 // Returns true for paxosprepare, paxospromise, paxospropose, paxosaccept, tlc, and private messages.
+// We also treat Namecoin blocks as critical to propagate eagerly, mimicking Bitcoin's full-block flood.
 func isPaxosMessage(msgType string) bool {
 	switch msgType {
 	case "paxosprepare", "paxospromise", "paxospropose", "paxosaccept", "tlc", "private":
+		return true
+	case (types.NamecoinBlockMessage{}).Name():
 		return true
 	}
 	return false
@@ -816,6 +819,55 @@ func (n *node) broadcastWithOptions(msg transport.Message, skipLocalProcessing b
 		return xerrors.Errorf("invalid message: empty type")
 	}
 	nodeAddr := n.conf.Socket.GetAddress()
+
+	// Fast-path Namecoin blocks: send to all neighbors/relays with ack tracking, while
+	// still storing the rumor for anti-entropy (reliable flood).
+	if msg.Type == (types.NamecoinBlockMessage{}).Name() {
+		neighbors, relaySet := n.getNeighborsAndRelays(nodeAddr)
+		wireMsg, rumorsMsg, err := n.buildRumorMessage(nodeAddr, msg)
+		if err != nil {
+			return err
+		}
+		
+		targets := make([]string, 0, len(neighbors)+len(relaySet))
+		seen := make(map[string]struct{}, len(neighbors)+len(relaySet))
+		for _, n := range neighbors {
+			if n == "" {
+				continue
+			}
+			if _, ok := seen[n]; ok {
+				continue
+			}
+			seen[n] = struct{}{}
+			targets = append(targets, n)
+		}
+		for r := range relaySet {
+			if r == "" {
+				continue
+			}
+			if _, ok := seen[r]; ok {
+				continue
+			}
+			seen[r] = struct{}{}
+			targets = append(targets, r)
+		}
+
+		n.sendToTargets(nodeAddr, wireMsg, targets, true, rumorsMsg)
+
+		if !skipLocalProcessing {
+			localHeader := transport.NewHeader(nodeAddr, nodeAddr, nodeAddr)
+			_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: &localHeader, Msg: &msg})
+		}
+
+		if n.conf.AntiEntropyInterval > 0 {
+			n.lastStatusMu.Lock()
+			if n.lastStatusAt.IsZero() {
+				n.lastStatusAt = time.Now()
+			}
+			n.lastStatusMu.Unlock()
+		}
+		return nil
+	}
 
 	neighbors, relaySet := n.getNeighborsAndRelays(nodeAddr)
 	wireMsg, rumorsMsg, err := n.buildRumorMessage(nodeAddr, msg)
