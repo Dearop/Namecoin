@@ -67,7 +67,7 @@ func makeBlock(height uint64, prev []byte, txs []types.Tx) *types.Block {
 	return &b
 }
 
-func rewardTx(to string, amount uint64) types.Tx {
+func rewardTxFork(to string, amount uint64) types.Tx {
 	tx := types.Tx{
 		Type:   impl.RewardCommandName,
 		From:   to,
@@ -88,18 +88,18 @@ func Test_NamecoinForkChoice_EquivocationConvergesAndStateFollowsWinner(t *testi
 	svc := impl.NewChainService(chain)
 
 	// Two conflicting height-1 blocks (different miner rewards).
-	blkA1 := makeBlock(1, genesis.Hash, []types.Tx{rewardTx("minerA", 1)})
+	blkA1 := makeBlock(1, genesis.Hash, []types.Tx{rewardTxFork("minerA", 1)})
 	changed, err := svc.AppendBlockToLongestChain(blkA1)
 	require.NoError(t, err)
 	require.True(t, changed)
 
-	blkB1 := makeBlock(1, genesis.Hash, []types.Tx{rewardTx("minerB", 1)})
+	blkB1 := makeBlock(1, genesis.Hash, []types.Tx{rewardTxFork("minerB", 1)})
 	changed, err = svc.AppendBlockToLongestChain(blkB1)
 	require.NoError(t, err)
 	require.False(t, changed, "equal length fork should not immediately promote")
 
 	// Extend chain A to win.
-	blkA2 := makeBlock(2, blkA1.Hash, []types.Tx{rewardTx("minerA", 2)})
+	blkA2 := makeBlock(2, blkA1.Hash, []types.Tx{rewardTxFork("minerA", 2)})
 	changed, err = svc.AppendBlockToLongestChain(blkA2)
 	require.NoError(t, err)
 	require.True(t, changed)
@@ -127,15 +127,15 @@ func Test_NamecoinForkChoice_WithheldBlocksEventuallyConverge(t *testing.T) {
 	svc := impl.NewChainService(chain)
 
 	// Honest chain grows to height 2.
-	main1 := makeBlock(1, genesis.Hash, []types.Tx{rewardTx("main", 1)})
+	main1 := makeBlock(1, genesis.Hash, []types.Tx{rewardTxFork("main", 1)})
 	_, _ = svc.AppendBlockToLongestChain(main1)
-	main2 := makeBlock(2, main1.Hash, []types.Tx{rewardTx("main", 2)})
+	main2 := makeBlock(2, main1.Hash, []types.Tx{rewardTxFork("main", 2)})
 	_, _ = svc.AppendBlockToLongestChain(main2)
 
 	// Withheld fork at height 1 (not delivered yet).
-	withheld1 := makeBlock(1, genesis.Hash, []types.Tx{rewardTx("withheld", 1)})
-	withheld2 := makeBlock(2, withheld1.Hash, []types.Tx{rewardTx("withheld", 2)})
-	withheld3 := makeBlock(3, withheld2.Hash, []types.Tx{rewardTx("withheld", 3)})
+	withheld1 := makeBlock(1, genesis.Hash, []types.Tx{rewardTxFork("withheld", 1)})
+	withheld2 := makeBlock(2, withheld1.Hash, []types.Tx{rewardTxFork("withheld", 2)})
+	withheld3 := makeBlock(3, withheld2.Hash, []types.Tx{rewardTxFork("withheld", 3)})
 
 	// Deliver withheld blocks later; fork should win once longer.
 	_, _ = svc.AppendBlockToLongestChain(withheld1) // still shorter (tie height 2)
@@ -166,7 +166,7 @@ func Test_NamecoinRejectsMalformedBlock_NoStateChange(t *testing.T) {
 	svc := impl.NewChainService(chain)
 
 	// Malformed block: TxRoot incorrect (should not match transactions).
-	badTx := rewardTx("miner", 1)
+	badTx := rewardTxFork("miner", 1)
 	badBlock := &types.Block{
 		Header: types.BlockHeader{
 			Height:   1,
@@ -209,14 +209,14 @@ func Test_Namecoin_Integration_EquivocationAcrossSubsets(t *testing.T) {
 	addAllPeers(nodes)
 
 	// Common genesis to all nodes.
-	genesis := makeBlock(0, nil, []types.Tx{rewardTx("genesis", 1)})
+	genesis := makeBlock(0, nil, []types.Tx{rewardTxFork("genesis", 1)})
 	for _, n := range nodes {
 		deliverBlock(t, n, genesis)
 	}
 
 	// Malicious miner creates two conflicting height-1 blocks.
-	blkA1 := makeBlock(1, genesis.Hash, []types.Tx{rewardTx("evil", 1)})
-	blkB1 := makeBlock(1, genesis.Hash, []types.Tx{rewardTx("evil", 2)})
+	blkA1 := makeBlock(1, genesis.Hash, []types.Tx{rewardTxFork("evil", 1)})
+	blkB1 := makeBlock(1, genesis.Hash, []types.Tx{rewardTxFork("evil", 2)})
 
 	// Send to disjoint subsets.
 	deliverBlock(t, nodes[0], blkA1)
@@ -225,7 +225,7 @@ func Test_Namecoin_Integration_EquivocationAcrossSubsets(t *testing.T) {
 
 	// Deliver blkA1 to node2 (gossip eventually) then a longer extension blkA2.
 	deliverBlock(t, nodes[2], blkA1)
-	blkA2 := makeBlock(2, blkA1.Hash, []types.Tx{rewardTx("evil", 3)})
+	blkA2 := makeBlock(2, blkA1.Hash, []types.Tx{rewardTxFork("evil", 3)})
 	for _, n := range nodes {
 		deliverBlock(t, n, blkA2)
 	}
