@@ -1,7 +1,6 @@
 package integration
 
 import (
-	"crypto/sha256"
 	"math/big"
 	"strings"
 	"testing"
@@ -16,14 +15,9 @@ import (
 
 func txRoot(t *testing.T, txs []types.Tx) []byte {
 	t.Helper()
-	h := sha256.New()
-	for i := range txs {
-		enc, err := impl.SerializeTransaction(&txs[i])
-		require.NoError(t, err)
-		_, err = h.Write(enc)
-		require.NoError(t, err)
-	}
-	return h.Sum(nil)
+	root, err := impl.ComputeTxRoot(txs)
+	require.NoError(t, err)
+	return root
 }
 
 func rewardTx(amount uint64, to string) types.Tx {
@@ -71,17 +65,17 @@ func TestNamecoinBlockValidationRejectsInvalidWork(t *testing.T) {
 	require.NoError(t, err)
 	chain.SetPowTarget(new(big.Int).Lsh(big.NewInt(1), 256))
 
-	txs := []types.Tx{rewardTx(10, "miner")}
-	root := txRoot(t, txs)
+	genesisTxs := []types.Tx{rewardTx(10, "miner")}
+	genesisRoot := txRoot(t, genesisTxs)
 
 	genesis := types.Block{
 		Header: types.BlockHeader{
 			Height:     0,
-			TxRoot:     root,
+			TxRoot:     genesisRoot,
 			Timestamp:  time.Now().Unix(),
 			Difficulty: impl.EncodeDifficulty(chain.NextPowTarget()),
 		},
-		Transactions: txs,
+		Transactions: genesisTxs,
 	}
 	genesis.Hash = genesis.ComputeHash()
 
@@ -89,15 +83,17 @@ func TestNamecoinBlockValidationRejectsInvalidWork(t *testing.T) {
 
 	// Next block with impossible PoW target.
 	chain.SetPowTarget(big.NewInt(1))
+	badWorkTxs := []types.Tx{rewardTx(11, "miner")}
+	badWorkRoot := txRoot(t, badWorkTxs)
 	badWork := types.Block{
 		Header: types.BlockHeader{
 			Height:     1,
 			PrevHash:   genesis.Hash,
-			TxRoot:     root,
+			TxRoot:     badWorkRoot,
 			Timestamp:  time.Now().Unix(),
 			Difficulty: impl.EncodeDifficulty(chain.NextPowTarget()),
 		},
-		Transactions: txs,
+		Transactions: badWorkTxs,
 	}
 	badWork.Hash = badWork.ComputeHash()
 
