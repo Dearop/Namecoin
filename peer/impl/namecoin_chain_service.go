@@ -311,12 +311,23 @@ func (s *ChainService) newEmptyChainFrom(ref *NamecoinChain) *NamecoinChain {
 func (s *ChainService) maybePromoteLongest(candidate *NamecoinChain) {
 	current := s.Chains[s.LongestChainIndex]
 
-	// Strictly greater only; ties must NOT flip-flop.
-	if candidate.HeadHeight() <= current.HeadHeight() {
+	candHeight := candidate.HeadHeight()
+	currHeight := current.HeadHeight()
+
+	// Promote if strictly longer, or if same height but with a lexicographically
+	// smaller hash to deterministically break ties and allow convergence.
+	if candHeight < currHeight {
 		return
 	}
+	if candHeight == currHeight {
+		candHash := candidate.HeadHash()
+		currHash := current.HeadHash()
+		if currHash != nil && candHash != nil && bytes.Compare(candHash, currHash) >= 0 {
+			return
+		}
+		// If either hash is nil, fall through and promote to make progress.
+	}
 
-	// If candidate was using an overlay store, commit it since it becomes canonical.
 	if ov, ok := candidate.store.(*overlayStore); ok {
 		ov.Commit()
 		candidate.store = ov.base
