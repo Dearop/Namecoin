@@ -58,6 +58,9 @@ func (st *NamecoinState) AppendUTXO(utxo types.UTXO) error {
 		return xerrors.New("tx already exists")
 	}
 
+	utxo.Order = st.nextUTXOSeq
+	st.nextUTXOSeq++
+
 	st.UTXOMap[utxo.To][utxo.TxID] = utxo
 	return nil
 
@@ -97,6 +100,7 @@ func (st *NamecoinState) DeterministicSpendPlan(from string, amount uint64) ([]t
 	type utxoEntry struct {
 		txid   string
 		amount uint64
+		order  uint64
 	}
 
 	st.mu.RLock()
@@ -111,13 +115,16 @@ func (st *NamecoinState) DeterministicSpendPlan(from string, amount uint64) ([]t
 	}
 	entries := make([]utxoEntry, 0, len(userUTXOs))
 	for txid, utxo := range userUTXOs {
-		entries = append(entries, utxoEntry{txid: txid, amount: utxo.Amount})
+		entries = append(entries, utxoEntry{txid: txid, amount: utxo.Amount, order: utxo.Order})
 	}
 	st.mu.RUnlock()
 
 	// Sort UTXO keys deterministically.
 	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].txid < entries[j].txid
+		if entries[i].order == entries[j].order {
+			return entries[i].txid < entries[j].txid
+		}
+		return entries[i].order < entries[j].order
 	})
 
 	var (

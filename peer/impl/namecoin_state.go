@@ -42,6 +42,8 @@ type NamecoinState struct {
 	// To deduplicate transactions. Subject to discuss, but now suggest as a temp solution
 	txMap map[string]struct{}
 
+	nextUTXOSeq uint64
+
 	logger zerolog.Logger
 	mu     sync.RWMutex
 }
@@ -62,8 +64,9 @@ func NewState() *NamecoinState {
 		UTXOMap:        make(map[string]map[string]types.UTXO),
 		txMap:          make(map[string]struct{}),
 		// Clamp default TTL to the configured max to avoid unbounded domain lifetimes.
-		domainTTL: clampTTL(DefaultDomainTTLBlocks),
-		logger:    log.Logger,
+		domainTTL:   clampTTL(DefaultDomainTTLBlocks),
+		logger:      log.Logger,
+		nextUTXOSeq: 0,
 	}
 }
 
@@ -194,6 +197,7 @@ func (st *NamecoinState) Clone() *NamecoinState {
 		txMap:          make(map[string]struct{}, len(st.txMap)),
 		currentHeight:  st.currentHeight,
 		domainTTL:      st.domainTTL,
+		nextUTXOSeq:    st.nextUTXOSeq,
 	}
 	for h, names := range st.expires {
 		clone.expires[h] = append([]string(nil), names...)
@@ -393,6 +397,7 @@ func (st *NamecoinState) replaceWith(snapshot *NamecoinState) {
 	st.txMap = snapshot.txMap
 	st.currentHeight = snapshot.currentHeight
 	st.domainTTL = snapshot.domainTTL
+	st.nextUTXOSeq = snapshot.nextUTXOSeq
 }
 
 // IsTxApplied returns true if Tx is already in the state
