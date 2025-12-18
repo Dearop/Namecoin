@@ -73,11 +73,13 @@ export async function hashTransactionData(txData) {
 }
 
 export async function hashTransaction(tx) {
-    const txString = canonicalize({
-        type: tx.type,
-        from: tx.from,
-        amount: tx.amount,
-        payload: tx.payload
-    });
+  const txString = canonicalize({
+    type: tx.type,
+    from: tx.from,
+    amount: tx.amount,
+    payload: tx.payload,
+    inputs: tx.inputs || [],
+    outputs: tx.outputs || []
+  });
   return await sha256(txString);
 }

@@ -14,6 +14,8 @@ export async function sendTransaction(tx, signature) {
       from: tx.from,
       amount: tx.amount,
       payload: tx.payload || {},  // Keep as object - backend will marshal it
+      inputs: tx.inputs || [],
+      outputs: tx.outputs || [],
       pk : tx.pk,                 //public key
       txId: tx.transactionID || "",  // Ensure txId is never undefined
       signature: signature
@@ -71,6 +73,54 @@ export async function getMinerID() {
     return data.minerID;
   } catch (error) {
     console.error('[API] Get miner ID failed:', error);
+    throw error;
+  }
+}
+
+export async function setMinerID(minerID) {
+  try {
+    const baseURL = getBaseURL();
+    const response = await fetch(`${baseURL}/namecoin/minerid`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ minerID }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      const errorMessage = errorData?.message || `HTTP error! status: ${response.status}`;
+      throw new Error(errorMessage);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('[API] Set miner ID failed:', error);
+    throw error;
+  }
+}
+
+export async function getSpendPlan(from, amount) {
+  try {
+    const baseURL = getBaseURL();
+    const response = await fetch(`${baseURL}/namecoin/spendplan`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ from, amount }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      const errorMessage = errorData?.message || `HTTP error! status: ${response.status}`;
+      throw new Error(errorMessage);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('[API] Get spend plan failed:', error);
     throw error;
   }
 }

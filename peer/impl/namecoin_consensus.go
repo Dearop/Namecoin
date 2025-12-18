@@ -111,6 +111,11 @@ func (c *NamecoinConsensus) UpdatePoWConfig(cfg peer.PoWConfig) {
 	c.powCfg = cfg
 }
 
+// SetMinerPubKey updates the miner address used when assembling reward txs.
+func (c *NamecoinConsensus) SetMinerPubKey(pubKey string) {
+	c.powCfg.PubKey = pubKey
+}
+
 // Errors used by the consensus helper.
 var (
 	ErrMiningAborted = xerrors.New("mining aborted")

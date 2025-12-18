@@ -7,7 +7,7 @@ vi.mock('../../services/wallet.service.js', () => ({
     publicKey: 'mock_public_key_123',
     privateKey: 'mock_private_key_456',
   })),
-  deriveWalletID: vi.fn(async (publicKey) => publicKey),
+  deriveWalletID: vi.fn(async (publicKey) => `hash_${publicKey}`),
   saveWallet: vi.fn(() => true),
   loadWallet: vi.fn(() => null),
   exportWalletToFile: vi.fn(),
@@ -39,9 +39,10 @@ describe('useWallet.js', () => {
       wallet.value = {
         publicKey: 'test_key',
         privateKey: 'test_private',
+        id: 'hash_test_key'
       };
 
-      expect(walletID.value).toBe('test_key');
+      expect(walletID.value).toBe('hash_test_key');
     });
 
     it('should return null walletID when no wallet', () => {
@@ -50,6 +51,7 @@ describe('useWallet.js', () => {
       wallet.value = {
         publicKey: null,
         privateKey: null,
+        id: null
       };
 
       expect(walletID.value).toBe(null);
@@ -63,6 +65,7 @@ describe('useWallet.js', () => {
       wallet.value = {
         publicKey: 'test_key',
         privateKey: 'test_private',
+        id: 'hash_test_key'
       };
 
       expect(isWalletLoaded.value).toBe(true);
@@ -85,6 +88,8 @@ describe('useWallet.js', () => {
       
       expect(wallet.value.publicKey).toBe('mock_public_key_123');
       expect(wallet.value.privateKey).toBe('mock_private_key_456');
+      expect(wallet.value.id).toBe('hash_mock_public_key_123');
+      expect(walletID.value).toBe('hash_mock_public_key_123');
       expect(result).toEqual(wallet.value);
     });
 
@@ -101,18 +106,19 @@ describe('useWallet.js', () => {
   describe('importWallet', () => {
     it('should import wallet from file', async () => {
       const walletService = await import('../../services/wallet.service.js');
-      const { importWallet, wallet } = useWallet();
+    const { importWallet, wallet } = useWallet();
 
-      const mockFile = new Blob(['{}'], { type: 'application/json' });
-      await importWallet(mockFile);
+    const mockFile = new Blob(['{}'], { type: 'application/json' });
+    await importWallet(mockFile);
 
-      expect(walletService.importWalletFromFile).toHaveBeenCalledWith(mockFile);
-      expect(wallet.value.publicKey).toBe('imported_public');
-      expect(wallet.value.privateKey).toBe('imported_private');
-      expect(walletService.saveWallet).toHaveBeenCalledWith(
-        'imported_public',
-        'imported_private'
-      );
+    expect(walletService.importWalletFromFile).toHaveBeenCalledWith(mockFile);
+    expect(wallet.value.publicKey).toBe('imported_public');
+    expect(wallet.value.privateKey).toBe('imported_private');
+    expect(wallet.value.id).toBe('hash_imported_public');
+    expect(walletService.saveWallet).toHaveBeenCalledWith(
+      'imported_public',
+      'imported_private'
+    );
     });
 
     it('should handle import errors', async () => {

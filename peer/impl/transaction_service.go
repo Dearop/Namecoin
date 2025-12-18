@@ -66,3 +66,7 @@ func (t *TransactionService) VerifyBalance(
 	// Canonical spend plan
 	return t.TokenManager.VerifyBalance(txID, from, amount)
 }
+
+func (t *TransactionService) GetSpendPlan(from string, amount uint64) ([]types.TxInput, []types.TxOutput, error) {
+	return t.state.DeterministicSpendPlan(from, amount)
+}

@@ -1,6 +1,7 @@
 package impl
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log"
@@ -234,6 +235,33 @@ func (n *node) DNSServerAddr() string {
 
 func (n *node) GetMinerID() string {
 	return n.conf.PoWConfig.PubKey
+}
+
+func (n *node) SetMinerID(minerID string) error {
+	minerID = strings.TrimSpace(minerID)
+	if minerID == "" {
+		return xerrors.Errorf("miner ID cannot be empty")
+	}
+	if _, err := hex.DecodeString(minerID); err != nil {
+		return xerrors.Errorf("invalid miner ID: %w", err)
+	}
+
+	n.minerMu.Lock()
+	n.conf.PoWConfig.PubKey = minerID
+	n.minerMu.Unlock()
+
+	if n.namecoinConsensus != nil {
+		n.namecoinConsensus.SetMinerPubKey(minerID)
+	}
+
+	return nil
+}
+
+func (n *node) GetSpendPlan(from string, amount uint64) ([]types.TxInput, []types.TxOutput, error) {
+	if n.transactionService == nil {
+		return nil, nil, xerrors.Errorf("transaction service unavailable")
+	}
+	return n.transactionService.GetSpendPlan(from, amount)
 }
 
 func (n *node) GetDomains() []types.NameRecord {

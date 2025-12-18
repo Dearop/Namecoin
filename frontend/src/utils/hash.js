@@ -55,13 +55,15 @@ export async function hashTxData(txData) {
 }
 
 export async function generateTxID(params) {
-  const { type, from, amount, payload} = params;
+  const { type, from, amount, payload, inputs = [], outputs = [] } = params;
   // Match backend's serialization format (SerializeTransaction in namecoin_state_helper.go)
   const txData = {
     type: type,
     from: from,
     amount: amount,
     payload: payload,
+    inputs: inputs,
+    outputs: outputs,
   };
   const canonical = canonicalize(txData);
   console.log('[DEBUG] Frontend generateTxID - canonical:', canonical);
