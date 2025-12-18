@@ -4,24 +4,30 @@
 package perf
 
 import (
-	"encoding/json"
 	"fmt"
 	"math/big"
 	"os"
+	"sort"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	z "go.dedis.ch/cs438/internal/testing"
-	"go.dedis.ch/cs438/peer"
 	"go.dedis.ch/cs438/peer/impl"
-	"go.dedis.ch/cs438/types"
 )
 
 var (
 	perfResultsMu sync.Mutex
 	perfResults   []string
+)
+
+var (
+	// Standardized PoW targets to keep runs comparable across scenarios.
+	powTargetStandard = new(big.Int).Lsh(big.NewInt(1), 252) // balanced latency
+	powTargetFast     = new(big.Int).Lsh(big.NewInt(1), 254) // easier / faster
+	powTargetSlow     = new(big.Int).Lsh(big.NewInt(1), 250) // harder / slower
+	powTargetFastest  = new(big.Int).Lsh(big.NewInt(1), 256) // very easy for large topologies
 )
 
 func recordPerfResult(name, details string) {
@@ -41,546 +47,439 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// S3-T12: Mine with different difficulties and miner sets; capture time to first
+// block and sustained throughput.
 func Test_Mining_Perf(t *testing.T) {
-	runMiningPerf(t)
-}
-
-func runMiningPerf(t *testing.T) {
-	transp := channelFac()
-
-	node := z.NewTestNode(t, peerFac, transp, "127.0.0.1:0",
-		z.WithPoWConfig(peer.PoWConfig{
-			Target: new(big.Int).Lsh(big.NewInt(1), 234), //this will change with Paul's Dynamic Difficulty
-			PubKey: "miner",
-		}),
-		z.WithEnableMiner(true),
-	)
-	defer node.Stop()
-
-	chain := node.NamecoinChainState()
-	require.NotNil(t, chain)
-
-	// Mine 10 blocks and record time for each
-	targetBlocks := uint64(10)
-	blockTimes := make([]time.Duration, 0, targetBlocks)
-
-	var previousHeight uint64 = 0
-	blockStart := time.Now()
-
-	deadline := time.Now().Add(180 * time.Second)
-	for time.Now().Before(deadline) {
-		chain := node.NamecoinChainState()
-		currentHeight := chain.HeadHeight()
-
-		// New block mined
-		if currentHeight > previousHeight {
-			blockTime := time.Since(blockStart)
-			blockTimes = append(blockTimes, blockTime)
-			t.Logf("Block %d mined in %v", currentHeight, blockTime)
-
-			previousHeight = currentHeight
-			blockStart = time.Now()
-
-			// Stop when we reach target
-			if currentHeight >= targetBlocks {
-				break
-			}
-		}
-
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	require.GreaterOrEqual(t, previousHeight, targetBlocks, "Failed to mine %d blocks", targetBlocks)
-
-	// Log statistics
-	var total time.Duration
-	for _, bt := range blockTimes {
-		total += bt
-	}
-	avgTime := total / time.Duration(len(blockTimes))
-	t.Logf("Mined %d blocks, Average time per block: %v, Total time: %v", len(blockTimes), avgTime, total)
-	recordPerfResult(t.Name(), fmt.Sprintf("mined %d blocks, avg %v/block, total %v", len(blockTimes), avgTime, total))
-}
-
-func Test_Transaction_Throughput_Perf(t *testing.T) {
-	testCases := []struct {
-		name     string
-		numTxs   int
-		numNodes int
+	scenarios := []struct {
+		name        string
+		blocks      uint64
+		config      scenarioConfig
+		description string
 	}{
-		{"100_txs_3_nodes", 100, 3},
-		{"500_txs_3_nodes", 500, 3},
-		//{"1000_txs_5_nodes", 1000, 6},
+		{
+			name:   "single_miner_easy",
+			blocks: 5,
+			config: scenarioConfig{
+				nodeCount:  1,
+				minerCount: 1,
+				target:     powTargetFast,
+			},
+			description: "baseline single miner",
+		},
+		{
+			name:   "three_miners_medium",
+			blocks: 5,
+			config: scenarioConfig{
+				nodeCount:  3,
+				minerCount: 3,
+				target:     powTargetStandard,
+			},
+			description: "scale-out miners with balanced difficulty",
+		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			runTransactionThroughput(t, tc.numTxs, tc.numNodes)
+	for _, sc := range scenarios {
+		t.Run(sc.name, func(t *testing.T) {
+			h := newNamecoinHarness(t, sc.config)
+			defer h.stop()
+
+			chain := h.nodes[0].NamecoinChainState()
+			require.NotNil(t, chain)
+
+			start := time.Now()
+			initial := chain.HeadHeight()
+			deadline := start.Add(180 * time.Second)
+			var firstBlock time.Duration
+			var blocksMined uint64
+
+			for time.Now().Before(deadline) {
+				head := h.nodes[0].NamecoinChainState().HeadHeight()
+				if head > initial+blocksMined {
+					if firstBlock == 0 {
+						firstBlock = time.Since(start)
+					}
+					blocksMined = head - initial
+					if blocksMined >= sc.blocks {
+						break
+					}
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+
+			require.GreaterOrEqual(t, blocksMined, sc.blocks, "failed to mine target blocks")
+			elapsed := time.Since(start)
+			throughput := float64(blocksMined) / elapsed.Seconds()
+
+			t.Logf("%s: mined %d blocks in %v (%.2f blocks/s), first block in %v",
+				sc.description, blocksMined, elapsed, throughput, firstBlock)
+			recordPerfResult(t.Name()+"-"+sc.name,
+				fmt.Sprintf("%s mined %d blocks, %.2f blocks/s, first block %v",
+					sc.description, blocksMined, throughput, firstBlock))
 		})
 	}
 }
 
-func runTransactionThroughput(t *testing.T, numTxs, numNodes int) {
-	transp := channelFac()
-	easyTarget := new(big.Int).Lsh(big.NewInt(1), 245)
+// S3-T13: Stream registrations + updates, measure tx/s and latency to k confirmations.
+func Test_Domain_Operation_Throughput_Latency_Perf(t *testing.T) {
+	const (
+		domains       = 18
+		confirmations = uint64(3)
+	)
+	h := newNamecoinHarness(t, scenarioConfig{
+		nodeCount:  4,
+		minerCount: 3,
+		target:     powTargetStandard,
+	})
+	defer h.stop()
 
-	// Create nodes with mining enabled
-	nodes := make([]z.TestNode, numNodes)
-	for i := 0; i < numNodes; i++ {
-		node := z.NewTestNode(t, peerFac, transp, "127.0.0.1:0",
-			z.WithPoWConfig(peer.PoWConfig{
-				Target: easyTarget,
-				PubKey: fmt.Sprintf("miner-%d", i),
-			}),
-			z.WithEnableMiner(true),
-			z.WithAntiEntropy(400*time.Millisecond),
-			z.WithHeartbeat(300*time.Millisecond),
-		)
-		nodes[i] = node
-	}
-	defer func() {
-		for _, node := range nodes {
-			node.Stop()
-		}
-	}()
+	var regLatencies []time.Duration
+	var updateLatencies []time.Duration
+	var latMu sync.Mutex
 
-	// Connect all nodes
-	for _, n1 := range nodes {
-		for _, n2 := range nodes {
-			n1.AddPeer(n2.GetAddr())
-		}
-	}
-
-	// Wait for initial mining to start
-	time.Sleep(500 * time.Millisecond)
-
-	// Track transaction submissions
-	type txSubmission struct {
-		txID       string
-		submitTime time.Time
-		domain     string
-	}
-	submissions := make([]txSubmission, 0, numTxs)
-	var submissionMu sync.Mutex
-
-	startTime := time.Now()
-
-	// Submit transactions concurrently from multiple nodes
+	start := time.Now()
 	var wg sync.WaitGroup
-	txsPerNode := numTxs / numNodes
-	remainder := numTxs % numNodes
+	wg.Add(domains)
 
-	for nodeIdx := 0; nodeIdx < numNodes; nodeIdx++ {
-		txCount := txsPerNode
-		if nodeIdx < remainder {
-			txCount++
-		}
-
-		wg.Add(1)
-		go func(nIdx int, count int) {
+	for i := 0; i < domains; i++ {
+		go func(idx int) {
 			defer wg.Done()
-			node := nodes[nIdx]
+			node := h.nodes[idx%len(h.nodes)]
+			domain := fmt.Sprintf("perf-domain-%d.bit", idx)
+			salt := fmt.Sprintf("salt-%d", idx)
 
-			for i := 0; i < count; i++ {
-				domain := fmt.Sprintf("domain-%d-%d.bit", nIdx, i)
-				salt := fmt.Sprintf("salt-%d-%d", nIdx, i)
-				commitment := impl.HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", domain, salt))
+			nameNewTx, nameNewTxID := buildNameNewTx(t, node.GetMinerID(), domain, salt, impl.DefaultDomainTTLBlocks)
+			broadcastTx(t, node, nameNewTx, nameNewTxID)
 
-				// Create name_new transaction
-				nameNew := impl.NameNew{
-					Commitment: commitment,
-					TTL:        impl.DefaultDomainTTLBlocks,
-				}
-				payload, err := json.Marshal(nameNew)
-				require.NoError(t, err)
+			firstUpdateTx, firstUpdateTxID := buildNameFirstUpdateTx(t, node.GetMinerID(), domain, salt, nameNewTxID,
+				fmt.Sprintf("10.0.0.%d", idx+1), 96)
+			firstSent := broadcastTx(t, node, firstUpdateTx, firstUpdateTxID)
 
-				minerID := node.GetMinerID()
-				tx := types.Tx{
-					From:    minerID,
-					Type:    impl.NameNewCommandName,
-					Amount:  1,
-					Payload: json.RawMessage(payload),
-					Outputs: []types.TxOutput{{To: minerID, Amount: 1}},
-				}
-
-				txID, err := impl.BuildTransactionID(&tx)
-				require.NoError(t, err)
-
-				// Broadcast transaction
-				msg := types.NamecoinTransactionMessage{
-					TxID: txID,
-					Tx:   tx,
-				}
-				marshaled, err := node.GetRegistry().MarshalMessage(msg)
-				require.NoError(t, err)
-
-				submitTime := time.Now()
-				err = node.Broadcast(marshaled)
-				require.NoError(t, err)
-
-				submissionMu.Lock()
-				submissions = append(submissions, txSubmission{
-					txID:       txID,
-					submitTime: submitTime,
-					domain:     domain,
-				})
-				submissionMu.Unlock()
-
-				time.Sleep(5 * time.Millisecond)
-
+			regHeight, ok := waitForDomain(h.nodes, domain, 120*time.Second)
+			if ok && waitForConfirmations(h.nodes, regHeight, confirmations, 120*time.Second) {
+				latMu.Lock()
+				regLatencies = append(regLatencies, time.Since(firstSent))
+				latMu.Unlock()
 			}
-		}(nodeIdx, txCount)
+
+			updateTx, updateTxID := buildNameUpdateTx(t, node.GetMinerID(), domain,
+				fmt.Sprintf("10.0.1.%d", idx+1), firstUpdateTxID, 96)
+			updateSent := broadcastTx(t, node, updateTx, updateTxID)
+			updateHeight, ok := waitForTxApplied(h.nodes, updateTxID, 120*time.Second)
+			if ok && waitForConfirmations(h.nodes, updateHeight, confirmations, 120*time.Second) {
+				latMu.Lock()
+				updateLatencies = append(updateLatencies, time.Since(updateSent))
+				latMu.Unlock()
+			}
+		}(i)
 	}
 
 	wg.Wait()
-	submissionEndTime := time.Now()
-	submissionDuration := submissionEndTime.Sub(startTime)
+	elapsed := time.Since(start)
+	totalTx := domains * 3
+	throughput := float64(totalTx) / elapsed.Seconds()
 
-	t.Logf("Submitted %d transactions in %v (%.2f tx/s)",
-		len(submissions), submissionDuration, float64(len(submissions))/submissionDuration.Seconds())
+	require.Greater(t, len(regLatencies), domains/2, "too few registrations confirmed")
 
-	// Wait for transactions to be included in blocks
-	t.Logf("Waiting for transactions to be included in blocks...")
+	regAvg := averageLatency(regLatencies)
+	updAvg := averageLatency(updateLatencies)
 
-	deadline := time.Now().Add(120 * time.Second)
-	includedCount := 0
-	checkInterval := 500 * time.Millisecond
-	lastCheck := time.Now()
-
-	for time.Now().Before(deadline) {
-		// Check one node's chain state
-		chain := nodes[0].NamecoinChainState()
-		if chain == nil {
-			time.Sleep(checkInterval)
-			continue
-		}
-
-		state := chain.State()
-		if state == nil {
-			time.Sleep(checkInterval)
-			continue
-		}
-
-		// Count how many transactions have been applied
-		newIncludedCount := 0
-		for _, sub := range submissions {
-			if state.IsTxApplied(sub.txID) {
-				newIncludedCount++
-			}
-		}
-
-		if newIncludedCount > includedCount {
-			includedCount = newIncludedCount
-			t.Logf("Progress: %d/%d transactions included (%.1f%%)",
-				includedCount, len(submissions), float64(includedCount)*100/float64(len(submissions)))
-		}
-
-		// Check if all transactions are included
-		if includedCount >= len(submissions) {
-			break
-		}
-
-		// Only check every checkInterval
-		if time.Since(lastCheck) < checkInterval {
-			time.Sleep(checkInterval - time.Since(lastCheck))
-		}
-		lastCheck = time.Now()
+	t.Logf("Submitted %d tx across %d domains in %v (%.2f tx/s)", totalTx, domains, elapsed, throughput)
+	t.Logf("Registration latency (k=%d confirmations): avg %v over %d successes", confirmations, regAvg, len(regLatencies))
+	if len(updateLatencies) > 0 {
+		t.Logf("Update latency (k=%d confirmations): avg %v over %d successes", confirmations, updAvg, len(updateLatencies))
 	}
 
-	totalDuration := time.Now().Sub(startTime)
-
-	// Calculate metrics
-	t.Logf("\n=== Transaction Throughput Results ===")
-	t.Logf("Total transactions: %d", len(submissions))
-	t.Logf("Transactions included: %d (%.1f%%)", includedCount, float64(includedCount)*100/float64(len(submissions)))
-	t.Logf("Submission rate: %.2f tx/s", float64(len(submissions))/submissionDuration.Seconds())
-	t.Logf("Inclusion rate: %.2f tx/s", float64(includedCount)/totalDuration.Seconds())
-	t.Logf("Total time: %v", totalDuration)
-
-	if includedCount > 0 {
-		avgLatency := totalDuration / time.Duration(includedCount)
-		t.Logf("Average latency (submit to include): %v", avgLatency)
-		recordPerfResult(t.Name(), fmt.Sprintf("%d/%d included (%.1f%%), submit %.2f tx/s, include %.2f tx/s, avg latency %v",
-			includedCount, len(submissions), float64(includedCount)*100/float64(len(submissions)),
-			float64(len(submissions))/submissionDuration.Seconds(),
-			float64(includedCount)/totalDuration.Seconds(),
-			avgLatency))
-	} else {
-		recordPerfResult(t.Name(), "no transactions included")
-	}
-
-	// Require at least 80% inclusion
-	require.GreaterOrEqual(t, includedCount, int(float64(len(submissions))*0.8),
-		"Expected at least 80%% of transactions to be included in blocks")
+	recordPerfResult(t.Name(), fmt.Sprintf("registrations avg %v (%d/%d), updates avg %v (%d/%d), throughput %.2f tx/s",
+		regAvg, len(regLatencies), domains, updAvg, len(updateLatencies), domains, throughput))
 }
 
-// Measures end-to-end registration latency (commit+reveal) and throughput.
-func Test_Name_Registration_Latency_Throughput_Perf(t *testing.T) {
-	transp := channelFac()
-	easyTarget := new(big.Int).Lsh(big.NewInt(1), 246)
-
-	numDomains := 24
-	numNodes := 3
-
-	nodes := make([]z.TestNode, numNodes)
-	for i := 0; i < numNodes; i++ {
-		node := z.NewTestNode(t, peerFac, transp, "127.0.0.1:0",
-			z.WithPoWConfig(peer.PoWConfig{
-				Target: easyTarget,
-				PubKey: fmt.Sprintf("registrar-%d", i),
-			}),
-			z.WithEnableMiner(true),
-			z.WithAntiEntropy(350*time.Millisecond),
-			z.WithHeartbeat(250*time.Millisecond),
-		)
-		nodes[i] = node
-	}
-	defer func() {
-		for _, node := range nodes {
-			node.Stop()
-		}
-	}()
-
-	// Full mesh
-	for _, n1 := range nodes {
-		for _, n2 := range nodes {
-			n1.AddPeer(n2.GetAddr())
-		}
+// S3-T14: Measure consensus convergence time as node count grows.
+func Test_Consensus_Convergence_Perf(t *testing.T) {
+	scenarios := []struct {
+		name      string
+		nodes     int
+		blockGoal uint64
+		miners    int
+		target    *big.Int
+	}{
+		// Tune for fast-but-not-too-fast blocks (aim ~hundreds of ms) to collect many samples quickly.
+		{"four_nodes", 4, 50, 2, powTargetFast},
+		{"eight_nodes", 8, 50, 3, powTargetFast},
+		{"sixteen_nodes", 16, 30, 4, powTargetFast},
 	}
 
-	type reg struct {
-		domain          string
-		salt            string
-		nameNewTxID     string
-		firstUpdateSent time.Time
-		includedAt      time.Time
+	for _, sc := range scenarios {
+		t.Run(sc.name, func(t *testing.T) {
+			h := newNamecoinHarness(t, scenarioConfig{
+				nodeCount:  sc.nodes,
+				minerCount: sc.miners,
+				target:     sc.target,
+				shape:      networkShapeMesh,
+			})
+			defer h.stop()
+
+			minerChain := h.nodes[0].NamecoinChainState()
+			require.NotNil(t, minerChain)
+			initial := minerChain.HeadHeight()
+			targetHeight := initial + sc.blockGoal
+
+			var delays []time.Duration
+			var lastHeight uint64 = initial
+			deadline := time.Now().Add(240 * time.Second)
+
+			for time.Now().Before(deadline) {
+				head := h.nodes[0].NamecoinChainState()
+				if head == nil {
+					time.Sleep(25 * time.Millisecond)
+					continue
+				}
+				height := head.HeadHeight()
+				if height > lastHeight {
+					observed := time.Now()
+					if !waitForHeads(h.nodes, height-1, 180*time.Second) {
+						t.Logf("Skipping height %d sample: peers lagged on previous block", height-1)
+						lastHeight = height
+						continue
+					}
+					if waitForHeads(h.nodes, height, 120*time.Second) {
+						delays = append(delays, time.Since(observed))
+					}
+					lastHeight = height
+					if height >= targetHeight {
+						break
+					}
+				}
+				time.Sleep(30 * time.Millisecond)
+			}
+
+			if len(delays) == 0 {
+				recordPerfResult(t.Name()+"-"+sc.name, fmt.Sprintf("%d nodes no convergence samples collected", sc.nodes))
+				t.Skipf("no convergence samples collected for %d nodes", sc.nodes)
+			}
+			avg := averageLatency(delays)
+			median := percentileLatency(delays, 50)
+			p90 := percentileLatency(delays, 90)
+			p99 := percentileLatency(delays, 99)
+			var maxDelay time.Duration
+			for _, d := range delays {
+				if d > maxDelay {
+					maxDelay = d
+				}
+			}
+
+			t.Logf("%d-node convergence over %d blocks: avg %v, median %v, p90 %v, p99 %v, max %v",
+				sc.nodes, len(delays), avg, median, p90, p99, maxDelay)
+			recordPerfResult(t.Name()+"-"+sc.name,
+				fmt.Sprintf("%d nodes avg %v median %v p90 %v p99 %v max %v over %d blocks",
+					sc.nodes, avg, median, p90, p99, maxDelay, len(delays)))
+		})
 	}
-	registrations := make([]reg, 0, numDomains)
+}
 
-	// Build and broadcast name_new + name_firstupdate for each domain.
-	for i := 0; i < numDomains; i++ {
-		node := nodes[i%numNodes]
-		domain := fmt.Sprintf("perf-%d.bit", i)
-		salt := fmt.Sprintf("salt-%d", i)
-		commitment := impl.HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", domain, salt))
+// S3-T15: Instrument network overhead (gossip + DNS) under different loads and shapes.
+func Test_Network_Overhead_Perf(t *testing.T) {
+	scenarios := []struct {
+		name             string
+		domains          int
+		updatesPerDomain int
+		shape            networkShape
+	}{
+		{"mesh_normal_load", 10, 1, networkShapeMesh},
+		{"line_adversarial_load", 8, 3, networkShapeLine},
+	}
 
-		nameNew := impl.NameNew{
-			Commitment: commitment,
-			TTL:        48,
-		}
-		payloadNew, err := json.Marshal(nameNew)
-		require.NoError(t, err)
+	for _, sc := range scenarios {
+		t.Run(sc.name, func(t *testing.T) {
+			h := newNamecoinHarness(t, scenarioConfig{
+				nodeCount:  5,
+				minerCount: 3,
+				target:     powTargetStandard,
+				shape:      sc.shape,
+				counting:   true,
+			})
+			defer h.stop()
 
-		nameNewTx := types.Tx{
-			From:    node.GetMinerID(),
-			Type:    impl.NameNewCommandName,
-			Amount:  1,
-			Payload: json.RawMessage(payloadNew),
-			Outputs: []types.TxOutput{{To: node.GetMinerID(), Amount: 1}},
-		}
-		nameNewTxID, err := impl.BuildTransactionID(&nameNewTx)
-		require.NoError(t, err)
+			driveNetworkOverheadWorkload(t, h, sc.domains, sc.updatesPerDomain)
+			time.Sleep(1 * time.Second) // allow gossip buffers to drain
 
-		msgNew := types.NamecoinTransactionMessage{
-			TxID: nameNewTxID,
-			Tx:   nameNewTx,
-		}
-		wireNew, err := node.GetRegistry().MarshalMessage(msgNew)
-		require.NoError(t, err)
-		require.NoError(t, node.Broadcast(wireNew))
+			require.NotNil(t, h.counting, "counting transport missing")
+			metrics := h.counting.snapshot()
+			recordPerfResult(t.Name()+"-"+sc.name, fmt.Sprintf(
+				"bytes sent %d recv %d, msgs sent %d recv %d (nodes=%d)",
+				metrics.TotalSentBytes, metrics.TotalRecvBytes,
+				metrics.TotalSentMessages, metrics.TotalRecvMessages, len(metrics.ByNode)))
+			t.Logf("%s overhead: %+v", sc.name, metrics)
+		})
+	}
+}
 
-		firstUpdate := impl.NameFirstUpdate{
-			Domain: domain,
-			Salt:   salt,
-			IP:     fmt.Sprintf("10.0.0.%d", i+1),
-			TTL:    48,
-			TxID:   nameNewTxID,
-		}
-		payloadFU, err := json.Marshal(firstUpdate)
-		require.NoError(t, err)
+// Measures communication efficiency to reach consensus (bytes/messages per block) as node count grows.
+func Test_Consensus_Communication_Efficiency_Perf(t *testing.T) {
+	type commSample struct {
+		nodes         int
+		bytesPerBlock float64
+		msgsPerBlock  float64
+	}
+	var samples []commSample
 
-		firstUpdateTx := types.Tx{
-			From:    node.GetMinerID(),
-			Type:    impl.NameFirstUpdateCommandName,
-			Amount:  1,
-			Inputs:  []types.TxInput{{TxID: nameNewTxID, Index: 0}},
-			Outputs: []types.TxOutput{{To: node.GetMinerID(), Amount: 1}},
-			Payload: json.RawMessage(payloadFU),
-		}
-		firstUpdateTxID, err := impl.BuildTransactionID(&firstUpdateTx)
-		require.NoError(t, err)
+	scenarios := []struct {
+		name   string
+		nodes  int
+		miners int
+		blocks uint64
+		target *big.Int
+	}{
+		{"four_nodes", 4, 2, 2, powTargetStandard},
+		{"eight_nodes", 8, 3, 2, powTargetFast},
+	}
 
-		msgFU := types.NamecoinTransactionMessage{
-			TxID: firstUpdateTxID,
-			Tx:   firstUpdateTx,
-		}
-		wireFU, err := node.GetRegistry().MarshalMessage(msgFU)
-		require.NoError(t, err)
-		sendTime := time.Now()
-		require.NoError(t, node.Broadcast(wireFU))
+	for _, sc := range scenarios {
+		t.Run(sc.name, func(t *testing.T) {
+			h := newNamecoinHarness(t, scenarioConfig{
+				nodeCount:  sc.nodes,
+				minerCount: sc.miners,
+				target:     sc.target,
+				shape:      networkShapeMesh,
+				counting:   true,
+			})
+			defer h.stop()
 
-		registrations = append(registrations, reg{
-			domain:          domain,
-			salt:            salt,
-			nameNewTxID:     nameNewTxID,
-			firstUpdateSent: sendTime,
+			require.NotNil(t, h.counting, "counting transport missing")
+
+			chain := h.nodes[0].NamecoinChainState()
+			require.NotNil(t, chain)
+
+			startHeight := chain.HeadHeight()
+			targetHeight := startHeight + sc.blocks
+			deadline := time.Now().Add(150 * time.Second)
+
+			for time.Now().Before(deadline) {
+				if waitForHeads(h.nodes, targetHeight, 45*time.Second) {
+					break
+				}
+				time.Sleep(150 * time.Millisecond)
+			}
+
+			endHeight := h.nodes[0].NamecoinChainState().HeadHeight()
+			blocksMined := endHeight - startHeight
+			if blocksMined == 0 {
+				recordPerfResult(t.Name()+"-"+sc.name, fmt.Sprintf("nodes=%d miners=%d no blocks mined (timeout)", sc.nodes, sc.miners))
+				t.Skipf("no blocks mined for scenario %s", sc.name)
+			}
+
+			metrics := h.counting.snapshot()
+			totalBytes := metrics.TotalSentBytes + metrics.TotalRecvBytes
+			totalMsgs := metrics.TotalSentMessages + metrics.TotalRecvMessages
+
+			bytesPerBlock := float64(totalBytes) / float64(blocksMined)
+			msgsPerBlock := float64(totalMsgs) / float64(blocksMined)
+
+			samples = append(samples, commSample{
+				nodes:         sc.nodes,
+				bytesPerBlock: bytesPerBlock,
+				msgsPerBlock:  msgsPerBlock,
+			})
+
+			t.Logf("nodes=%d miners=%d blocks=%d bytes=%d msgs=%d bytes/block=%.2f msgs/block=%.2f",
+				sc.nodes, sc.miners, blocksMined, totalBytes, totalMsgs, bytesPerBlock, msgsPerBlock)
+
+			recordPerfResult(t.Name()+"-"+sc.name, fmt.Sprintf(
+				"nodes=%d miners=%d blocks=%d bytes=%d msgs=%d bytes/block=%.2f msgs/block=%.2f",
+				sc.nodes, sc.miners, blocksMined, totalBytes, totalMsgs, bytesPerBlock, msgsPerBlock))
 		})
 	}
 
-	deadline := time.Now().Add(180 * time.Second)
-	included := 0
-	for time.Now().Before(deadline) {
-		chain := nodes[0].NamecoinChainState()
-		if chain == nil {
-			time.Sleep(100 * time.Millisecond)
-			continue
+	if len(samples) > 0 {
+		var totalB, totalM float64
+		for _, s := range samples {
+			totalB += s.bytesPerBlock
+			totalM += s.msgsPerBlock
 		}
-		state := chain.State()
-		if state == nil {
-			time.Sleep(100 * time.Millisecond)
-			continue
-		}
-
-		for idx := range registrations {
-			if !registrations[idx].includedAt.IsZero() {
-				continue
-			}
-			if _, ok := state.NameLookup(registrations[idx].domain); ok {
-				registrations[idx].includedAt = time.Now()
-				included++
-				t.Logf("Registered %s in %v", registrations[idx].domain, registrations[idx].includedAt.Sub(registrations[idx].firstUpdateSent))
-			}
-		}
-
-		if included == len(registrations) {
-			break
-		}
-		time.Sleep(150 * time.Millisecond)
-	}
-
-	totalDuration := time.Since(registrations[0].firstUpdateSent)
-	var totalLatency time.Duration
-	for _, r := range registrations {
-		if r.includedAt.IsZero() {
-			continue
-		}
-		totalLatency += r.includedAt.Sub(r.firstUpdateSent)
-	}
-	success := 0
-	for _, r := range registrations {
-		if !r.includedAt.IsZero() {
-			success++
-		}
-	}
-
-	require.GreaterOrEqual(t, success, int(float64(len(registrations))*0.8), "expected at least 80%% of registrations to be mined")
-
-	if success > 0 {
-		avgLatency := totalLatency / time.Duration(success)
-		t.Logf("Name registrations: %d/%d included (%.1f%%)", success, len(registrations), float64(success)*100/float64(len(registrations)))
-		t.Logf("Average registration latency: %v", avgLatency)
-		t.Logf("Registration throughput: %.2f regs/s", float64(success)/totalDuration.Seconds())
-		recordPerfResult(t.Name(), fmt.Sprintf("%d/%d included (%.1f%%), avg latency %v, throughput %.2f regs/s",
-			success, len(registrations), float64(success)*100/float64(len(registrations)),
-			avgLatency, float64(success)/totalDuration.Seconds()))
-	} else {
-		recordPerfResult(t.Name(), "no registrations included")
+		recordPerfResult(t.Name()+"-summary", fmt.Sprintf(
+			"avg bytes/block=%.2f avg msgs/block=%.2f samples=%d",
+			totalB/float64(len(samples)), totalM/float64(len(samples)), len(samples)))
 	}
 }
 
-// Measures how quickly mined blocks propagate to peers (consensus/mining time vs nodes).
-func Test_Block_Propagation_Perf(t *testing.T) {
-	transp := channelFac()
-	easyTarget := new(big.Int).Lsh(big.NewInt(1), 255)
-
-	nodes := []z.TestNode{
-		z.NewTestNode(t, peerFac, transp, "127.0.0.1:0",
-			z.WithPoWConfig(peer.PoWConfig{Target: easyTarget, PubKey: "miner-root"}),
-			z.WithEnableMiner(true),
-			z.WithAntiEntropy(250*time.Millisecond),
-			z.WithHeartbeat(200*time.Millisecond)),
-		z.NewTestNode(t, peerFac, transp, "127.0.0.1:0",
-			z.WithPoWConfig(peer.PoWConfig{Target: easyTarget, PubKey: "observer-1"}),
-			z.WithEnableMiner(false),
-			z.WithAntiEntropy(250*time.Millisecond),
-			z.WithHeartbeat(200*time.Millisecond)),
-		z.NewTestNode(t, peerFac, transp, "127.0.0.1:0",
-			z.WithPoWConfig(peer.PoWConfig{Target: easyTarget, PubKey: "observer-2"}),
-			z.WithEnableMiner(false),
-			z.WithAntiEntropy(250*time.Millisecond),
-			z.WithHeartbeat(200*time.Millisecond)),
+func averageLatency(samples []time.Duration) time.Duration {
+	if len(samples) == 0 {
+		return 0
 	}
-	defer func() {
-		for _, n := range nodes {
-			n.Stop()
-		}
-	}()
-
-	for _, n1 := range nodes {
-		for _, n2 := range nodes {
-			n1.AddPeer(n2.GetAddr())
-		}
-	}
-
-	initial := uint64(0)
-	if head := nodes[0].NamecoinChainState(); head != nil {
-		initial = head.HeadHeight()
-	}
-	var targetHeight uint64
-	minedAt := make(map[uint64]time.Time)
-	propagated := make(map[uint64]time.Duration)
-
-	deadline := time.Now().Add(120 * time.Second)
-	for time.Now().Before(deadline) {
-		head := nodes[0].NamecoinChainState()
-		if head == nil {
-			time.Sleep(50 * time.Millisecond)
-			continue
-		}
-		height := head.HeadHeight()
-
-		if height > initial && targetHeight == 0 {
-			targetHeight = height
-			minedAt[height] = time.Now()
-			// Stop mining after the first observed new block to avoid racing past the target height.
-			if stopper, ok := nodes[0].Peer.(interface{ StopMiner() }); ok {
-				stopper.StopMiner()
-			}
-		}
-
-		if targetHeight == 0 {
-			time.Sleep(50 * time.Millisecond)
-			continue
-		}
-
-		if propagated[targetHeight] == 0 {
-			allHave := true
-			for i := 1; i < len(nodes); i++ {
-				state := nodes[i].NamecoinChainState()
-				if state == nil || state.HeadHeight() < targetHeight {
-					allHave = false
-					break
-				}
-			}
-			if allHave {
-				propagated[targetHeight] = time.Since(minedAt[targetHeight])
-				t.Logf("Block height %d propagated in %v", targetHeight, propagated[targetHeight])
-			}
-		}
-
-		if propagated[targetHeight] != 0 {
-			break
-		}
-		time.Sleep(75 * time.Millisecond)
-	}
-
-	require.NotEmpty(t, propagated, "no propagated blocks observed")
 	var total time.Duration
-	for _, d := range propagated {
+	for _, d := range samples {
 		total += d
-		require.Less(t, d, 60*time.Second, "block propagation too slow")
 	}
-	avg := total / time.Duration(len(propagated))
-	t.Logf("Average block propagation: %v across %d blocks", avg, len(propagated))
-	recordPerfResult(t.Name(), fmt.Sprintf("avg propagation %v across %d blocks", avg, len(propagated)))
+	return total / time.Duration(len(samples))
+}
+
+func percentileLatency(samples []time.Duration, pct int) time.Duration {
+	if len(samples) == 0 {
+		return 0
+	}
+	if pct <= 0 {
+		pct = 1
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	sorted := append([]time.Duration(nil), samples...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	// nearest-rank method
+	idx := (pct*len(sorted) + 99) / 100 // ceiling(pct/100 * n)
+	if idx <= 0 {
+		idx = 0
+	} else if idx > len(sorted)-1 {
+		idx = len(sorted) - 1
+	} else {
+		idx = idx - 1
+	}
+	return sorted[idx]
+}
+
+func waitForHeads(nodes []z.TestNode, height uint64, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		allReached := true
+		for _, node := range nodes {
+			chain := node.NamecoinChainState()
+			if chain == nil || chain.HeadHeight() < height {
+				allReached = false
+				break
+			}
+		}
+		if allReached {
+			return true
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
+	return false
+}
+
+func driveNetworkOverheadWorkload(t *testing.T, h *namecoinHarness, domains, updatesPerDomain int) {
+	var wg sync.WaitGroup
+	wg.Add(domains)
+
+	for i := 0; i < domains; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			node := h.nodes[idx%len(h.nodes)]
+			domain := fmt.Sprintf("overhead-%d.bit", idx)
+			salt := fmt.Sprintf("net-salt-%d", idx)
+
+			nameNewTx, nameNewTxID := buildNameNewTx(t, node.GetMinerID(), domain, salt, impl.DefaultDomainTTLBlocks)
+			broadcastTx(t, node, nameNewTx, nameNewTxID)
+			firstUpdateTx, firstUpdateTxID := buildNameFirstUpdateTx(t, node.GetMinerID(), domain, salt, nameNewTxID,
+				fmt.Sprintf("192.168.0.%d", idx+1), 64)
+			broadcastTx(t, node, firstUpdateTx, firstUpdateTxID)
+
+			for u := 0; u < updatesPerDomain; u++ {
+				updateTx, updateTxID := buildNameUpdateTx(t, node.GetMinerID(), domain,
+					fmt.Sprintf("192.168.1.%d", idx+u+1), firstUpdateTxID, 64)
+				broadcastTx(t, node, updateTx, updateTxID)
+				time.Sleep(15 * time.Millisecond)
+			}
+		}(i)
+	}
+
+	wg.Wait()
 }

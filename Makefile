@@ -5,6 +5,8 @@ export GORACE = halt_on_error=1
 export GNODES = 10
 # how many benchmark iterations to average on
 export BENCHTIME = "10x"
+export PERF_RUNS ?= 3
+export PERF_RESULTS_FILE ?= perf_results/namecoin_perf_results.txt
 
 all: lint vet test
 
@@ -87,6 +89,17 @@ test_bench_hw3_consensus:
 
 test_perf_namecoin:
 	@GLOG=no go test -v ${JSONIFY} -timeout 20m -run 'Test_.*_Perf' -count 1 --tags=performance ./peer/tests/perf/ || true
+
+perf_namecoin_runs:
+	@mkdir -p $(dir $(PERF_RESULTS_FILE))
+	@echo "### Namecoin perf runs ($$(date -Iseconds)) runs=$(PERF_RUNS)" | tee -a $(PERF_RESULTS_FILE)
+	@i=1; \
+	while [ $$i -le $(PERF_RUNS) ]; do \
+		echo "--- run $$i ---" | tee -a $(PERF_RESULTS_FILE); \
+		GLOG=no go test -v ${JSONIFY} -timeout 0 -run 'Test_.*_Perf' -count 1 --tags=performance ./peer/tests/perf/ | tee -a $(PERF_RESULTS_FILE); \
+		echo "" >> $(PERF_RESULTS_FILE); \
+		i=$$(( $$i + 1 )); \
+	done
 
 
 lint:

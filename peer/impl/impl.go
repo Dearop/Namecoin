@@ -116,6 +116,7 @@ type node struct {
 	minerStopCh   chan struct{}
 	minerWG       sync.WaitGroup
 	minerDisabled bool
+	minerStopping bool
 
 	// Step completion waiters
 	stepWaitMu  sync.Mutex
@@ -291,7 +292,7 @@ type pendingAck struct {
 
 func (n *node) StartMiner() {
 	n.minerMu.Lock()
-	if n.minerDisabled {
+	if n.minerDisabled || n.minerStopping {
 		n.minerMu.Unlock()
 		return
 	}
@@ -328,13 +329,22 @@ func (n *node) StopMiner() {
 		n.minerMu.Unlock()
 		return
 	}
+	if n.minerStopping {
+		n.minerMu.Unlock()
+		return
+	}
 
 	n.logger.Debug().Msg("StopMiner has been called")
+	n.minerStopping = true
 	close(n.minerStopCh)
 	n.minerStopCh = nil
 	n.minerMu.Unlock()
 
 	n.minerWG.Wait()
+
+	n.minerMu.Lock()
+	n.minerStopping = false
+	n.minerMu.Unlock()
 }
 
 func (n *node) DisableMiner() {
@@ -823,50 +833,7 @@ func (n *node) broadcastWithOptions(msg transport.Message, skipLocalProcessing b
 	// Fast-path Namecoin blocks: send to all neighbors/relays with ack tracking, while
 	// still storing the rumor for anti-entropy (reliable flood).
 	if msg.Type == (types.NamecoinBlockMessage{}).Name() {
-		neighbors, relaySet := n.getNeighborsAndRelays(nodeAddr)
-		wireMsg, rumorsMsg, err := n.buildRumorMessage(nodeAddr, msg)
-		if err != nil {
-			return err
-		}
-		
-		targets := make([]string, 0, len(neighbors)+len(relaySet))
-		seen := make(map[string]struct{}, len(neighbors)+len(relaySet))
-		for _, n := range neighbors {
-			if n == "" {
-				continue
-			}
-			if _, ok := seen[n]; ok {
-				continue
-			}
-			seen[n] = struct{}{}
-			targets = append(targets, n)
-		}
-		for r := range relaySet {
-			if r == "" {
-				continue
-			}
-			if _, ok := seen[r]; ok {
-				continue
-			}
-			seen[r] = struct{}{}
-			targets = append(targets, r)
-		}
-
-		n.sendToTargets(nodeAddr, wireMsg, targets, true, rumorsMsg)
-
-		if !skipLocalProcessing {
-			localHeader := transport.NewHeader(nodeAddr, nodeAddr, nodeAddr)
-			_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: &localHeader, Msg: &msg})
-		}
-
-		if n.conf.AntiEntropyInterval > 0 {
-			n.lastStatusMu.Lock()
-			if n.lastStatusAt.IsZero() {
-				n.lastStatusAt = time.Now()
-			}
-			n.lastStatusMu.Unlock()
-		}
-		return nil
+		return n.broadcastBlockFastPath(nodeAddr, msg, skipLocalProcessing)
 	}
 
 	neighbors, relaySet := n.getNeighborsAndRelays(nodeAddr)
@@ -886,15 +853,62 @@ func (n *node) broadcastWithOptions(msg transport.Message, skipLocalProcessing b
 		_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: &localHeader, Msg: &msg})
 	}
 
-	// prevent immediate status before first anti-entropy tick
-	if n.conf.AntiEntropyInterval > 0 {
-		n.lastStatusMu.Lock()
-		if n.lastStatusAt.IsZero() {
-			n.lastStatusAt = time.Now()
-		}
-		n.lastStatusMu.Unlock()
-	}
+	n.markStatusBaseline()
 	return nil
+}
+
+// broadcastBlockFastPath handles NamecoinBlockMessage propagation with ack tracking and deduped targets.
+func (n *node) broadcastBlockFastPath(nodeAddr string, msg transport.Message, skipLocalProcessing bool) error {
+	neighbors, relaySet := n.getNeighborsAndRelays(nodeAddr)
+	wireMsg, rumorsMsg, err := n.buildRumorMessage(nodeAddr, msg)
+	if err != nil {
+		return err
+	}
+
+	targets := n.uniqueTargets(neighbors, relaySet)
+	n.sendToTargets(nodeAddr, wireMsg, targets, true, rumorsMsg)
+
+	if !skipLocalProcessing {
+		localHeader := transport.NewHeader(nodeAddr, nodeAddr, nodeAddr)
+		_ = n.conf.MessageRegistry.ProcessPacket(transport.Packet{Header: &localHeader, Msg: &msg})
+	}
+
+	n.markStatusBaseline()
+	return nil
+}
+
+func (n *node) uniqueTargets(neighbors []string, relaySet map[string]struct{}) []string {
+	targets := make([]string, 0, len(neighbors)+len(relaySet))
+	seen := make(map[string]struct{}, len(neighbors)+len(relaySet))
+	add := func(addr string) {
+		addr = strings.TrimSpace(addr)
+		if addr == "" {
+			return
+		}
+		if _, ok := seen[addr]; ok {
+			return
+		}
+		seen[addr] = struct{}{}
+		targets = append(targets, addr)
+	}
+	for _, n := range neighbors {
+		add(n)
+	}
+	for r := range relaySet {
+		add(r)
+	}
+	return targets
+}
+
+func (n *node) markStatusBaseline() {
+	if n.conf.AntiEntropyInterval == 0 {
+		return
+	}
+	n.lastStatusMu.Lock()
+	if n.lastStatusAt.IsZero() {
+		n.lastStatusAt = time.Now()
+	}
+	n.lastStatusMu.Unlock()
 }
 
 // AddPeer implements peer.Messaging.
