@@ -1,0 +1,84 @@
+=== Namecoin Performance Summary ===
+Test_Mining_Perf/single_miner_easy-single_miner_easy: baseline single miner mined 254 blocks, 12057.65 blocks/s, first block 21.060625ms
+Test_Mining_Perf/three_miners_medium-three_miners_medium: scale-out miners with balanced difficulty mined 35 blocks, 1661.11 blocks/s, first block 21.055916ms
+Test_Domain_Operation_Throughput_Latency_Perf: registrations avg 35.944413025s (18/18), updates avg 31.017307037s (18/18), throughput 0.67 tx/s
+Test_Consensus_Convergence_Perf/four_nodes-four_nodes: 4 nodes avg 29.742557479s median 29.963169708s p90 30.018164708s p99 30.018164708s max 30.018164708s over 4 blocks
+Test_Consensus_Convergence_Perf/eight_nodes-eight_nodes: 8 nodes avg 47.820543909s median 48.962043709s p90 49.015748s p99 49.015748s max 49.015748s over 6 blocks
+Test_Consensus_Convergence_Perf/sixteen_nodes-sixteen_nodes: 16 nodes no convergence samples collected
+Test_Network_Overhead_Perf/mesh_normal_load-mesh_normal_load: bytes sent 2842500 recv 426313, msgs sent 1298 recv 302 (nodes=5)
+Test_Network_Overhead_Perf/line_adversarial_load-line_adversarial_load: bytes sent 2975776 recv 523912, msgs sent 1155 recv 345 (nodes=5)
+Test_Consensus_Communication_Efficiency_Perf/four_nodes-four_nodes: nodes=4 miners=2 blocks=44 bytes=1586304 msgs=1193 bytes/block=36052.36 msgs/block=27.11
+Test_Consensus_Communication_Efficiency_Perf/eight_nodes-eight_nodes: nodes=8 miners=3 blocks=24 bytes=2275670 msgs=2179 bytes/block=94819.58 msgs/block=90.79
+Test_Consensus_Communication_Efficiency_Perf-summary: avg bytes/block=127780.09 avg msgs/block=125.08 samples=3
+ok  	go.dedis.ch/cs438/peer/tests/perf	1341.720s
+
+=== Namecoin Performance Summary ===
+Test_Mining_Perf/single_miner_easy-single_miner_easy: baseline single miner mined 245 blocks, 11652.45 blocks/s, first block 21.016375ms
+Test_Mining_Perf/three_miners_medium-three_miners_medium: scale-out miners with balanced difficulty mined 39 blocks, 1944.92 blocks/s, first block 20.042083ms
+Test_Domain_Operation_Throughput_Latency_Perf: registrations avg 15.024402192s (18/18), updates avg 22.185902962s (18/18), throughput 1.06 tx/s
+Test_Consensus_Convergence_Perf/four_nodes-four_nodes: 4 nodes avg 31.001743447s median 40.020464042s p90 41.997828666s p99 41.997828666s max 41.997828666s over 4 blocks
+Test_Consensus_Convergence_Perf/eight_nodes-eight_nodes: 8 nodes avg 2m17.029423395s median 2m14.039728916s p90 2m20.019117875s p99 2m20.019117875s max 2m20.019117875s over 2 blocks
+Test_Consensus_Convergence_Perf/sixteen_nodes-sixteen_nodes: 16 nodes avg 1m14.580152042s median 1m15.008431542s p90 1m15.273021667s p99 1m15.273021667s max 1m15.273021667s over 4 blocks
+Test_Network_Overhead_Perf/mesh_normal_load-mesh_normal_load: bytes sent 2952382 recv 389791, msgs sent 1300 recv 308 (nodes=5)
+Test_Network_Overhead_Perf/line_adversarial_load-line_adversarial_load: bytes sent 3191021 recv 651383, msgs sent 1632 recv 364 (nodes=5)
+Test_Consensus_Communication_Efficiency_Perf/four_nodes-four_nodes: nodes=4 miners=2 blocks=65 bytes=1990755 msgs=1428 bytes/block=30627.00 msgs/block=21.97
+Test_Consensus_Communication_Efficiency_Perf/eight_nodes-eight_nodes: nodes=8 miners=3 blocks=30 bytes=2273907 msgs=2131 bytes/block=75796.90 msgs/block=71.03
+Test_Consensus_Communication_Efficiency_Perf-summary: avg bytes/block=53211.95 avg msgs/block=46.50 samples=2
+ok  	go.dedis.ch/cs438/peer/tests/perf	1060.607s
+
+=== Namecoin Performance Summary ===
+Test_Mining_Perf/single_miner_easy-single_miner_easy: baseline single miner mined 344 blocks, 16299.26 blocks/s, first block 21.100708ms
+Test_Mining_Perf/three_miners_medium-three_miners_medium: scale-out miners with balanced difficulty mined 27 blocks, 1343.38 blocks/s, first block 20.088042ms
+Test_Domain_Operation_Throughput_Latency_Perf: registrations avg 17.95776646s (18/18), updates avg 20.319894356s (9/18), throughput 0.37 tx/s
+Test_Consensus_Convergence_Perf/four_nodes-four_nodes: 4 nodes avg 17.643560104s median 17.969140417s p90 17.979837375s p99 17.979837375s max 17.979837375s over 6 blocks
+Test_Consensus_Convergence_Perf/eight_nodes-eight_nodes: 8 nodes avg 21.397734777s median 20.975631417s p90 21.002866416s p99 30.002438792s max 30.002438792s over 12 blocks
+Test_Consensus_Convergence_Perf/sixteen_nodes-sixteen_nodes: 16 nodes no convergence samples collected
+Test_Network_Overhead_Perf/mesh_normal_load-mesh_normal_load: bytes sent 2559921 recv 424780, msgs sent 1241 recv 295 (nodes=5)
+Test_Network_Overhead_Perf/line_adversarial_load-line_adversarial_load: bytes sent 3086742 recv 794247, msgs sent 1175 recv 386 (nodes=5)
+Test_Consensus_Communication_Efficiency_Perf/four_nodes-four_nodes: nodes=4 miners=2 blocks=44 bytes=2086532 msgs=1476 bytes/block=47421.18 msgs/block=33.55
+Test_Consensus_Communication_Efficiency_Perf/eight_nodes-eight_nodes: nodes=8 miners=3 blocks=33 bytes=2129747 msgs=2251 bytes/block=64537.79 msgs/block=68.21
+Test_Consensus_Communication_Efficiency_Perf-summary: avg bytes/block=55979.48 avg msgs/block=50.88 samples=2
+ok  	go.dedis.ch/cs438/peer/tests/perf	1197.008s
+
+=== Namecoin Performance Summary ===
+Test_Mining_Perf/single_miner_easy-single_miner_easy: baseline single miner mined 211 blocks, 10023.91 blocks/s, first block 21.043209ms
+Test_Mining_Perf/three_miners_medium-three_miners_medium: scale-out miners with balanced difficulty mined 37 blocks, 1754.98 blocks/s, first block 21.057208ms
+Test_Domain_Operation_Throughput_Latency_Perf: registrations avg 12.290605696s (18/18), updates avg 21.291250175s (14/18), throughput 0.35 tx/s
+Test_Consensus_Convergence_Perf/four_nodes-four_nodes: 4 nodes avg 50.986198229s median 50.970687708s p90 51.00170875s p99 51.00170875s max 51.00170875s over 2 blocks
+Test_Consensus_Convergence_Perf/eight_nodes-eight_nodes: 8 nodes avg 1m37.021390694s median 1m37.998248167s p90 1m38.046658708s p99 1m38.046658708s max 1m38.046658708s over 3 blocks
+Test_Consensus_Convergence_Perf/sixteen_nodes-sixteen_nodes: 16 nodes avg 1m29.294287063s median 45.010218625s p90 2m30.076398834s p99 2m30.076398834s max 2m30.076398834s over 4 blocks
+Test_Network_Overhead_Perf/mesh_normal_load-mesh_normal_load: bytes sent 3016616 recv 443657, msgs sent 1261 recv 294 (nodes=5)
+Test_Network_Overhead_Perf/line_adversarial_load-line_adversarial_load: bytes sent 3285149 recv 735950, msgs sent 1177 recv 395 (nodes=5)
+Test_Consensus_Communication_Efficiency_Perf/four_nodes-four_nodes: nodes=4 miners=2 blocks=44 bytes=1940571 msgs=1368 bytes/block=44103.89 msgs/block=31.09
+Test_Consensus_Communication_Efficiency_Perf/eight_nodes-eight_nodes: nodes=8 miners=3 blocks=27 bytes=2941277 msgs=2431 bytes/block=108936.19 msgs/block=90.04
+Test_Consensus_Communication_Efficiency_Perf-summary: avg bytes/block=76520.04 avg msgs/block=60.56 samples=2
+ok  	go.dedis.ch/cs438/peer/tests/perf	1248.055s
+
+
+=== Namecoin Performance Summary ===
+Test_Mining_Perf/single_miner_easy-single_miner_easy: baseline single miner mined 224 blocks, 10139.28 blocks/s, first block 22.08575ms
+Test_Mining_Perf/three_miners_medium-three_miners_medium: scale-out miners with balanced difficulty mined 39 blocks, 1860.55 blocks/s, first block 20.952833ms
+Test_Domain_Operation_Throughput_Latency_Perf: registrations avg 9.378284752s (18/18), updates avg 19.947850672s (14/18), throughput 0.40 tx/s
+Test_Consensus_Convergence_Perf/four_nodes-four_nodes: 4 nodes avg 1m10.538799708s median 1m9.044827667s p90 1m12.03277175s p99 1m12.03277175s max 1m12.03277175s over 2 blocks
+Test_Consensus_Convergence_Perf/eight_nodes-eight_nodes: 8 nodes avg 1m35.357068777s median 2m20.009086875s p90 2m23.026434666s p99 2m23.026434666s max 2m23.026434666s over 3 blocks
+Test_Consensus_Convergence_Perf/sixteen_nodes-sixteen_nodes: 16 nodes no convergence samples collected
+Test_Network_Overhead_Perf/mesh_normal_load-mesh_normal_load: bytes sent 3032333 recv 426779, msgs sent 1326 recv 300 (nodes=5)
+Test_Network_Overhead_Perf/line_adversarial_load-line_adversarial_load: bytes sent 2900379 recv 662264, msgs sent 1173 recv 357 (nodes=5)
+Test_Consensus_Communication_Efficiency_Perf/four_nodes-four_nodes: nodes=4 miners=2 blocks=77 bytes=2271051 msgs=1432 bytes/block=29494.17 msgs/block=18.60
+Test_Consensus_Communication_Efficiency_Perf/eight_nodes-eight_nodes: nodes=8 miners=3 blocks=37 bytes=2244854 msgs=2135 bytes/block=60671.73 msgs/block=57.70
+Test_Consensus_Communication_Efficiency_Perf-summary: avg bytes/block=45082.95 avg msgs/block=38.15 samples=2
+ok  	go.dedis.ch/cs438/peer/tests/perf	1261.819s
+
+=== Namecoin Performance Summary ===
+Test_Mining_Perf/single_miner_easy-single_miner_easy: baseline single miner mined 185 blocks, 8784.41 blocks/s, first block 21.053958ms
+Test_Mining_Perf/three_miners_medium-three_miners_medium: scale-out miners with balanced difficulty mined 35 blocks, 1726.55 blocks/s, first block 20.243125ms
+Test_Domain_Operation_Throughput_Latency_Perf: registrations avg 33.393394863s (18/18), updates avg 22.901887937s (18/18), throughput 0.63 tx/s
+Test_Consensus_Convergence_Perf/four_nodes-four_nodes: 4 nodes avg 11.404946494s median 11.956445667s p90 12.002742042s p99 12.002742042s max 12.002742042s over 7 blocks
+Test_Consensus_Convergence_Perf/eight_nodes-eight_nodes: 8 nodes avg 1m33.374184694s median 2m18.002599792s p90 2m20.071662458s p99 2m20.071662458s max 2m20.071662458s over 3 blocks
+Test_Consensus_Convergence_Perf/sixteen_nodes-sixteen_nodes: 16 nodes no convergence samples collected
+Test_Network_Overhead_Perf/mesh_normal_load-mesh_normal_load: bytes sent 2732151 recv 316705, msgs sent 1249 recv 260 (nodes=5)
+Test_Network_Overhead_Perf/line_adversarial_load-line_adversarial_load: bytes sent 2931558 recv 861152, msgs sent 1160 recv 414 (nodes=5)
+Test_Consensus_Communication_Efficiency_Perf/four_nodes-four_nodes: nodes=4 miners=2 blocks=67 bytes=1916494 msgs=1321 bytes/block=28604.39 msgs/block=19.72
+Test_Consensus_Communication_Efficiency_Perf/eight_nodes-eight_nodes: nodes=8 miners=3 blocks=32 bytes=2690746 msgs=2411 bytes/block=84085.81 msgs/block=75.34
+Test_Consensus_Communication_Efficiency_Perf-summary: avg bytes/block=56345.10 avg msgs/block=47.53 samples=2
+ok  	go.dedis.ch/cs438/peer/tests/perf	1156.159s
