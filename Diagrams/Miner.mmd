@@ -1,0 +1,33 @@
+sequenceDiagram
+    autonumber
+    participant FE as Frontend
+    participant PROXY as HTTPProxy
+    participant MINER as MinerNode
+    participant TX as TransactionService
+    participant CHAIN as ChainService
+    participant CONS as Consensus
+    participant PEERS as Peers
+
+    Note over MINER,CONS: Miner starts mining immediately on startup
+    MINER ->> CONS: begin mining loop
+    CONS -->> MINER: new proof of work found
+    MINER ->> CHAIN: apply empty block when no transactions
+    CHAIN -->> MINER: block accepted as head
+    MINER ->> PEERS: broadcast block
+    PEERS -->> MINER: peer acknowledgements
+
+    FE ->> PROXY: send signed transaction
+    PROXY ->> MINER: forward signed transaction
+    MINER ->> TX: validate transaction
+    TX -->> MINER: transaction accepted
+    MINER ->> CHAIN: queue transaction for next block
+    MINER ->> CONS: continue mining with transaction
+    CONS -->> MINER: block with transaction found
+    MINER ->> CHAIN: apply new block
+    CHAIN -->> MINER: block accepted to the longest chain
+    MINER ->> PEERS: broadcast block with transaction
+    PEERS -->> MINER: peer acknowledgements
+    FE ->> PROXY: request transaction status
+    PROXY ->> MINER: check inclusion
+    MINER -->> PROXY: confirmed in chain
+    PROXY -->> FE: show confirmed to user
