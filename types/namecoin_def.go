@@ -10,6 +10,7 @@ type UTXO struct {
 	TxID   string
 	To     string
 	Amount uint64
+	Order  uint64
 }
 
 type TxInput struct {

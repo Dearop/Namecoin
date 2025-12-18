@@ -314,9 +314,9 @@ func (n *node) HandleNamecoinCommand(buf []byte) error {
 		return err
 	}
 
-	// Wait for transaction to be included in a block (1 minute timeout)
-	log.Printf("[DEBUG] Waiting for transaction %s to be included in block (1 minute timeout)", txID)
-	timeout := time.NewTimer(60 * time.Second)
+	// Wait for transaction to be included in a block (5 minute timeout)
+	log.Printf("[DEBUG] Waiting for transaction %s to be included in block (5 minute timeout)", txID)
+	timeout := time.NewTimer(5 * time.Minute)
 	defer timeout.Stop()
 
 	select {
@@ -330,7 +330,7 @@ func (n *node) HandleNamecoinCommand(buf []byte) error {
 	case <-timeout.C:
 		log.Printf("[TIMEOUT] Transaction %s timed out after 5 minutes", txID)
 		n.unregisterTxConfirmation(txID)
-		return xerrors.Errorf("transaction %s confirmation timed out after 1 minutes", txID)
+		return xerrors.Errorf("transaction %s confirmation timed out after 5 minutes", txID)
 	}
 }
 

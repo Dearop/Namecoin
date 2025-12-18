@@ -55,6 +55,9 @@ func (st *NamecoinState) AppendUTXO(utxo types.UTXO) error {
 		return xerrors.New("tx already exists")
 	}
 
+	utxo.Order = st.nextUTXOSeq
+	st.nextUTXOSeq++
+
 	st.UTXOMap[utxo.To][utxo.TxID] = utxo
 	return nil
 
@@ -81,11 +84,59 @@ func (st *NamecoinState) GetUTXOsToBurn(txID, from string, amount uint64) ([]str
 		}
 	}
 
+<<<<<<< Updated upstream
 	if burned < amount {
 		return make([]string, 0), make([]types.UTXO, 0), xerrors.New("insufficient funds")
 	}
 
 	leftOver := burned - amount
+=======
+	// Snapshot
+	type utxoEntry struct {
+		txid   string
+		amount uint64
+		order  uint64
+	}
+
+	st.mu.RLock()
+	if st.UTXOMap == nil {
+		st.mu.RUnlock()
+		return nil, nil, fmt.Errorf("no utxos for sender")
+	}
+	userUTXOs := st.UTXOMap[from]
+	if userUTXOs == nil {
+		st.mu.RUnlock()
+		return nil, nil, fmt.Errorf("no utxos for sender")
+	}
+	entries := make([]utxoEntry, 0, len(userUTXOs))
+	for txid, utxo := range userUTXOs {
+		entries = append(entries, utxoEntry{txid: txid, amount: utxo.Amount, order: utxo.Order})
+	}
+	st.mu.RUnlock()
+
+	// Sort UTXO keys deterministically.
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].order == entries[j].order {
+			return entries[i].txid < entries[j].txid
+		}
+		return entries[i].order < entries[j].order
+	})
+
+	var (
+		inputs []types.TxInput
+		total  uint64
+	)
+	for _, utxoKey := range entries {
+		inputs = append(inputs, types.TxInput{
+			TxID:  utxoKey.txid,
+			Index: 0, // MVP single-output
+		})
+		total += utxoKey.amount
+		if total >= amount {
+			break
+		}
+	}
+>>>>>>> Stashed changes
 
 	if leftOver == 0 {
 		return UTXOsToBurn, make([]types.UTXO, 0), nil
