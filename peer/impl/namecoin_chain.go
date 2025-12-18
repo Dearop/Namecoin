@@ -410,7 +410,11 @@ func (c *NamecoinChain) powParamsSnapshot() powParams {
 	return c.powParams
 }
 
-func rebuildPowStateForFork(blocks []loadedBlock, headHeight uint64, seed *big.Int, params powParams) (*big.Int, int64) {
+func rebuildPowStateForFork(blocks []loadedBlock,
+	headHeight uint64,
+	seed *big.Int,
+	params powParams,
+) (*big.Int, int64) {
 	powTarget := cloneBigInt(effectiveTarget(seed))
 	var prevTS int64
 
@@ -766,7 +770,8 @@ func applyBlockStrict(st *NamecoinState, blk *types.Block) error {
 		}
 
 		if st.IsTxApplied(txID) {
-			return fmt.Errorf("tx already applied: %s", txID)
+			// Already seen on this chain; skip to keep block application idempotent.
+			continue
 		}
 
 		if err := validateTxStrict(st, txID, tx); err != nil {

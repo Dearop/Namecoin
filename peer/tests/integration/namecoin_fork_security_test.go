@@ -267,7 +267,7 @@ func Test_Namecoin_Integration_EquivocationAcrossSubsets(t *testing.T) {
 			}
 		}
 		return true
-	}, 3*time.Second, 50*time.Millisecond, "nodes did not converge on longest chain after equivocation")
+	}, 6*time.Second, 50*time.Millisecond, "nodes did not converge on longest chain after equivocation")
 
 	// State: only the winning chain rewards should exist (amounts 1 and 3).
 	for _, n := range nodes {

@@ -149,7 +149,7 @@ func Test_Namecoin_Integration_LongestChain_FiveNodes(t *testing.T) {
 }
 
 // Five miners start in two disconnected groups, then merge and must converge to a common head.
-func Test_Namecoin_Integration_LongestChain_PartitionMerge(t *testing.T) {
+func Test_Namecoin_Integration_LongestChain_PartitionMerge_StressTest(t *testing.T) {
 	skipIfWIndows(t)
 
 	// Static PoW: slightly harder targets (lower) but still unlimited nonce for reliability.

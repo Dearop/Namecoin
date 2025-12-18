@@ -44,7 +44,7 @@ func (n NameFirstUpdate) ApplyState(st *NamecoinState, tx *types.Tx) error {
 
 	//generate txID of the name_new transaction, i.e. with type name_new and commitment
 
-	_, rec, key, err := n.resolveCommitment(st, tx)
+	rec, key, err := n.resolveCommitment(st, tx)
 	if err != nil {
 		return err
 	}
@@ -85,7 +85,7 @@ func (n NameFirstUpdate) ApplyUTXO(st *NamecoinState, txID string, tx *types.Tx)
 
 // ValidateWithInputs performs commitment checks requiring full tx inputs.
 func (n NameFirstUpdate) ValidateWithInputs(st *NamecoinState, tx *types.Tx) error {
-	_, rec, _, err := n.resolveCommitment(st, tx)
+	rec, _, err := n.resolveCommitment(st, tx)
 	if err != nil {
 		return err
 	}
@@ -101,14 +101,14 @@ func (n NameFirstUpdate) ValidateWithInputs(st *NamecoinState, tx *types.Tx) err
 	return nil
 }
 
-func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (string, CommitmentRecord, string, error) {
+func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (CommitmentRecord, string, error) {
 	commitment := HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", n.Domain, n.Salt))
 
 	commitTxID := n.TxID
 	commitVout := uint32(0)
 	if commitTxID == "" {
 		if len(tx.Inputs) == 0 {
-			return "", CommitmentRecord{}, "", fmt.Errorf("missing name_new reference: no payload txid and no inputs")
+			return CommitmentRecord{}, "", fmt.Errorf("missing name_new reference: no payload txid and no inputs")
 		}
 		// Backwards-compatible fallback: older clients encode the commitment reference
 		// as the first input outpoint.
@@ -122,12 +122,12 @@ func (n NameFirstUpdate) resolveCommitment(st *NamecoinState, tx *types.Tx) (str
 
 	rec, ok := st.GetCommitment(key)
 	if !ok {
-		return "", CommitmentRecord{}, "", fmt.Errorf("no matching name_new commitment with key %s", key)
+		return CommitmentRecord{}, "", fmt.Errorf("no matching name_new commitment with key %s", key)
 	}
 	if commitment != rec.Commit {
-		return "", CommitmentRecord{}, "", fmt.Errorf("commitment mismatch for domain %s", n.Domain)
+		return CommitmentRecord{}, "", fmt.Errorf("commitment mismatch for domain %s", n.Domain)
 	}
-	return rec.Commit, rec, key, nil
+	return rec, key, nil
 }
 
 const MaxFirstUpdateDepth uint64 = 25

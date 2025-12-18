@@ -183,11 +183,15 @@ func (n *node) Start() error {
 		go n.heartbeatLoop(n.conf.HeartbeatInterval)
 	}
 
+	// Miner lifecycle:
+	// - When config.EnableMiner is false, keep the miner disabled even if other
+	//   code paths (e.g., block handlers) call StartMiner().
+	// - When config.EnableMiner is true, start mining immediately.
+	n.minerMu.Lock()
+	n.minerDisabled = !n.conf.EnableMiner
+	n.minerMu.Unlock()
+
 	if n.conf.EnableMiner {
-		// Allow mining when the node starts.
-		n.minerMu.Lock()
-		n.minerDisabled = false
-		n.minerMu.Unlock()
 		n.StartMiner()
 	}
 
