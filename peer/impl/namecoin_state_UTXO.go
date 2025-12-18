@@ -1,6 +1,9 @@
 package impl
 
 import (
+	"fmt"
+	"sort"
+
 	"go.dedis.ch/cs438/types"
 	"golang.org/x/xerrors"
 )
@@ -62,42 +65,89 @@ func (st *NamecoinState) AppendUTXO(utxo types.UTXO) error {
 
 // GetUTXOsToBurn returns utxo IDs to burn and leftover UTXO.
 func (st *NamecoinState) GetUTXOsToBurn(txID, from string, amount uint64) ([]string, []types.UTXO, error) {
-	st.mu.RLock()
-	defer st.mu.RUnlock()
-
-	userUTXOs, ok := st.UTXOMap[from]
-	if !ok || len(userUTXOs) == 0 {
-		return make([]string, 0), make([]types.UTXO, 0), xerrors.New("insufficient funds")
-	}
-	UTXOsToBurn := make([]string, 0)
-
-	var burned uint64
-	for key, utxo := range userUTXOs {
-		burned += utxo.Amount
-		UTXOsToBurn = append(UTXOsToBurn, key)
-
-		if burned >= amount {
-			break
-		}
+	inputs, outputs, err := st.DeterministicSpendPlan(from, amount)
+	if err != nil {
+		return []string{}, []types.UTXO{}, err
 	}
 
-	if burned < amount {
-		return make([]string, 0), make([]types.UTXO, 0), xerrors.New("insufficient funds")
+	burn := make([]string, 0, len(inputs))
+	for _, in := range inputs {
+		burn = append(burn, in.TxID)
 	}
 
-	leftOver := burned - amount
-
-	if leftOver == 0 {
-		return UTXOsToBurn, make([]types.UTXO, 0), nil
+	// outputs is either empty or change-back-to-sender (MVP)
+	if len(outputs) == 0 {
+		return burn, []types.UTXO{}, nil
 	}
 
 	leftOverUTXO := types.UTXO{
 		TxID:   txID,
-		To:     from,
-		Amount: leftOver,
+		To:     outputs[0].To,
+		Amount: outputs[0].Amount,
+	}
+	return burn, []types.UTXO{leftOverUTXO}, nil
+}
+
+func (st *NamecoinState) DeterministicSpendPlan(from string, amount uint64) ([]types.TxInput, []types.TxOutput, error) {
+	if amount == 0 {
+		return []types.TxInput{}, []types.TxOutput{}, nil
 	}
 
-	// safe to return transactionIDS because we create only one UTXO per transaction
-	// example, miner A mined a block; transaction is created - as a result, UTXO with corresponding txID is created.
-	return UTXOsToBurn, append(make([]types.UTXO, 0, 1), leftOverUTXO), nil
+	// Snapshot
+	type utxoEntry struct {
+		txid   string
+		amount uint64
+	}
+
+	st.mu.RLock()
+	if st.UTXOMap == nil {
+		st.mu.RUnlock()
+		return nil, nil, fmt.Errorf("no utxos for sender")
+	}
+	userUTXOs := st.UTXOMap[from]
+	if userUTXOs == nil {
+		st.mu.RUnlock()
+		return nil, nil, fmt.Errorf("no utxos for sender")
+	}
+	entries := make([]utxoEntry, 0, len(userUTXOs))
+	for txid, utxo := range userUTXOs {
+		entries = append(entries, utxoEntry{txid: txid, amount: utxo.Amount})
+	}
+	st.mu.RUnlock()
+
+	// Sort UTXO keys deterministically.
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].txid < entries[j].txid
+	})
+
+	var (
+		inputs []types.TxInput
+		total  uint64
+	)
+	for _, utxoKey := range entries {
+		inputs = append(inputs, types.TxInput{
+			TxID:  utxoKey.txid,
+			Index: 0, // MVP single-output
+		})
+		total += utxoKey.amount
+		if total >= amount {
+			break
+		}
+	}
+
+	if total < amount {
+		return nil, nil, fmt.Errorf("insufficient funds")
+	}
+
+	leftover := total - amount
+	outputs := make([]types.TxOutput, 0, 1)
+	if leftover > 0 {
+		// MVP: deterministic change back to sender only
+		outputs = append(outputs, types.TxOutput{
+			To:     from,
+			Amount: leftover,
+		})
+	}
+
+	return inputs, outputs, nil
 }

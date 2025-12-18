@@ -33,11 +33,8 @@ type NamecoinState struct {
 	// Domains that have been revealed/claimed (used to reject duplicate reveals).
 	ClaimedDomains map[string]struct{}
 
-	// Commitment -> hashed Domain and Salt
-	// Keyed by outpoint string (txid:vout)
-	Commitments map[string]string
-	// Optional TTL preference keyed by commitment hash
-	commitmentTTLs map[string]uint64
+	// Commitment -> metadata keyed by outpoint string (txid:vout)
+	Commitments map[string]CommitmentRecord
 
 	// Simple coin balances per address
 	UTXOMap map[string]map[string]types.UTXO
@@ -61,8 +58,7 @@ func NewState() *NamecoinState {
 		Domains:        make(map[string]types.NameRecord),
 		ClaimedDomains: make(map[string]struct{}),
 		expires:        make(map[uint64][]string),
-		Commitments:    make(map[string]string),
-		commitmentTTLs: make(map[string]uint64),
+		Commitments:    make(map[string]CommitmentRecord),
 		UTXOMap:        make(map[string]map[string]types.UTXO),
 		txMap:          make(map[string]struct{}),
 		// Clamp default TTL to the configured max to avoid unbounded domain lifetimes.
@@ -109,17 +105,18 @@ func (st *NamecoinState) NameLookup(domain string) (types.NameRecord, bool) {
 	return rec, ok
 }
 
-func (st *NamecoinState) GetCommitment(outpointKey string) (string, bool) {
-	st.mu.RLock()
-	defer st.mu.RUnlock()
-	commit, ok := st.Commitments[outpointKey]
-	return commit, ok
+// CommitmentRecord captures metadata about an anchored commitment.
+type CommitmentRecord struct {
+	Commit string
+	TTL    uint64
+	Height uint64
 }
 
-func (st *NamecoinState) GetCommitmentTTL(commitment string) uint64 {
+func (st *NamecoinState) GetCommitment(outpointKey string) (CommitmentRecord, bool) {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
-	return st.commitmentTTLs[commitment]
+	rec, ok := st.Commitments[outpointKey]
+	return rec, ok
 }
 
 // EnsureAccount initialises an empty UTXO map entry for an address to allow zero-input txs in tests.
@@ -158,13 +155,17 @@ func (st *NamecoinState) SetDomain(record types.NameRecord) {
 	}
 }
 
-func (st *NamecoinState) SetCommitment(outpointKey, commitment string) {
+func (st *NamecoinState) SetCommitment(outpointKey, commitment string, ttl uint64, height uint64) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	if st.Commitments == nil {
-		st.Commitments = make(map[string]string)
+		st.Commitments = make(map[string]CommitmentRecord)
 	}
-	st.Commitments[outpointKey] = commitment
+	st.Commitments[outpointKey] = CommitmentRecord{
+		Commit: commitment,
+		TTL:    ttl,
+		Height: height,
+	}
 }
 
 func (st *NamecoinState) IsDomainClaimed(domain string) bool {
@@ -180,15 +181,6 @@ func (st *NamecoinState) DeleteCommitment(outpointKey string) {
 	delete(st.Commitments, outpointKey)
 }
 
-func (st *NamecoinState) SetCommitmentTTL(commitment string, ttl uint64) {
-	if ttl == 0 {
-		return
-	}
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	st.commitmentTTLs[commitment] = ttl
-}
-
 func (st *NamecoinState) Clone() *NamecoinState {
 	if st == nil {
 		return NewState()
@@ -198,7 +190,6 @@ func (st *NamecoinState) Clone() *NamecoinState {
 		ClaimedDomains: maps.Clone(st.ClaimedDomains),
 		expires:        make(map[uint64][]string, len(st.expires)),
 		Commitments:    maps.Clone(st.Commitments),
-		commitmentTTLs: maps.Clone(st.commitmentTTLs),
 		UTXOMap:        make(map[string]map[string]types.UTXO, len(st.UTXOMap)),
 		txMap:          make(map[string]struct{}, len(st.txMap)),
 		currentHeight:  st.currentHeight,
@@ -398,7 +389,6 @@ func (st *NamecoinState) replaceWith(snapshot *NamecoinState) {
 	st.Domains = snapshot.Domains
 	st.expires = snapshot.expires
 	st.Commitments = snapshot.Commitments
-	st.commitmentTTLs = snapshot.commitmentTTLs
 	st.UTXOMap = snapshot.UTXOMap
 	st.txMap = snapshot.txMap
 	st.currentHeight = snapshot.currentHeight

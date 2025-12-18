@@ -1,7 +1,6 @@
 package impl
 
 import (
-	"encoding/json"
 	"fmt"
 
 	canonicaljson "github.com/gibson042/canonicaljson-go"
@@ -21,16 +20,13 @@ func BuildTransactionID(tx *types.Tx) (string, error) {
 
 // SerializeTransaction serializes Tx using canonical JSON (matches frontend)
 func SerializeTransaction(tx *types.Tx) ([]byte, error) {
-	data := struct {
-		Type    string           `json:"type"`
-		From    string           `json:"from"`
-		Amount  uint64           `json:"amount"`
-		Payload json.RawMessage  `json:"payload"`
-	}{
-		Type:    tx.Type,
-		From:    tx.From,
-		Amount:  tx.Amount,
-		Payload: tx.Payload,
+	data := map[string]interface{}{
+		"type":    tx.Type,
+		"from":    tx.From,
+		"amount":  tx.Amount,
+		"payload": tx.Payload,
+		"inputs":  tx.Inputs,
+		"outputs": tx.Outputs,
 	}
 
 	b, err := canonicaljson.Marshal(data)
@@ -39,6 +35,69 @@ func SerializeTransaction(tx *types.Tx) ([]byte, error) {
 	}
 
 	return b, err
+}
+
+// SerializeTransactionForTxRoot serializes the full on-chain transaction data that
+// must be committed to by the block TxRoot (including inputs/outputs and auth fields).
+func SerializeTransactionForTxRoot(tx *types.Tx) ([]byte, error) {
+	inputs := make([]map[string]interface{}, len(tx.Inputs))
+	for i, in := range tx.Inputs {
+		inputs[i] = map[string]interface{}{
+			"txid":  in.TxID,
+			"index": in.Index,
+		}
+	}
+
+	outputs := make([]map[string]interface{}, len(tx.Outputs))
+	for i, out := range tx.Outputs {
+		outputs[i] = map[string]interface{}{
+			"to":     out.To,
+			"amount": out.Amount,
+		}
+	}
+
+	data := map[string]interface{}{
+		"type":      tx.Type,
+		"from":      tx.From,
+		"amount":    tx.Amount,
+		"payload":   tx.Payload,
+		"inputs":    inputs,
+		"outputs":   outputs,
+		"pk":        tx.Pk,
+		"txid":      tx.TxID,
+		"signature": tx.Signature,
+	}
+
+	b, err := canonicaljson.Marshal(data)
+	if err != nil {
+		return make([]byte, 0), err
+	}
+
+	return b, err
+}
+
+func equalTxInputs(a, b []types.TxInput) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].TxID != b[i].TxID || a[i].Index != b[i].Index {
+			return false
+		}
+	}
+	return true
+}
+
+func equalTxOutputs(a, b []types.TxOutput) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].To != b[i].To || a[i].Amount != b[i].Amount {
+			return false
+		}
+	}
+	return true
 }
 
 //--------------------------------------------------

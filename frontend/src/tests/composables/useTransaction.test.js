@@ -5,15 +5,18 @@ import { useTransaction } from '../../composables/useTransaction.js';
 vi.mock('../../services/transaction.service.js', () => ({
   buildTransaction: vi.fn(async (params) => ({
     type: params.type,
-    source: params.walletID,
-    fee: params.fee,
+    from: params.walletID,
+    amount: params.fee,
     payload: params.payload,
+    pk: params.pk,
+    inputs: [],
+    outputs: [],
     transactionID: null,
   })),
   computeTransactionID: vi.fn(async (tx) => ({
     ...tx,
     transactionID: 'computed_tx_id',
-  })),
+  })), 
   validateTransaction: vi.fn((tx) => ({
     valid: true,
     errors: [],
@@ -30,6 +33,10 @@ vi.mock('../../services/api.service.js', () => ({
   sendTransaction: vi.fn(async (tx, signature) => ({
     success: true,
     txID: tx.transactionID,
+  })),
+  getSpendPlan: vi.fn(async () => ({
+    inputs: [{ TxID: 'utxo1', Index: 0 }],
+    outputs: [{ To: 'wallet123', Amount: 1 }],
   })),
 }));
 
@@ -67,13 +74,15 @@ describe('useTransaction.js', () => {
 
       const result = await createTransaction(params);
 
-      expect(result).toEqual({
+      expect(result).toMatchObject({
         type: 'name_new',
-        source: 'wallet123',
-        fee: 1,
+        from: 'wallet123',
+        amount: 1,
         payload: 'commitment_hash',
         transactionID: 'computed_tx_id',
       });
+      expect(result.inputs).toEqual([{ TxID: 'utxo1', Index: 0 }]);
+      expect(result.outputs).toEqual([{ To: 'wallet123', Amount: 1 }]);
 
       expect(currentTransaction.value).toEqual(result);
     });

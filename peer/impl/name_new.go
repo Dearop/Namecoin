@@ -34,13 +34,6 @@ func (n NameNew) ValidateWithInputs(_ *NamecoinState, tx *types.Tx) error {
 }
 
 func (n NameNew) ApplyState(st *NamecoinState, tx *types.Tx) error {
-	st.SetCommitment(tx.From, n.Commitment)
-	// Store TTL preference keyed by commitment; applied during firstupdate
-	ttl := n.TTL
-	if ttl == 0 {
-		ttl = DefaultDomainTTLBlocks
-	}
-	st.SetCommitmentTTL(n.Commitment, ttl)
 	return nil
 }
 
@@ -49,9 +42,14 @@ func (n NameNew) ApplyUTXO(st *NamecoinState, txID string, tx *types.Tx) error {
 		return err
 	}
 
+	ttlToStore := n.TTL
+	if ttlToStore == 0 {
+		ttlToStore = DefaultDomainTTLBlocks
+	}
+
 	key := OutpointKey(txID, 0)
 	log.Info().Msgf("NameNew ApplyUTXO: setting commitment for key %s to %s", key, n.Commitment)
-	st.SetCommitment(key, n.Commitment)
+	st.SetCommitment(key, n.Commitment, ttlToStore, st.CurrentHeight())
 
 	return nil
 }

@@ -295,12 +295,16 @@ func (s *ChainService) ensureChainForParentUnlocked(
 func (s *ChainService) newEmptyChainFrom(ref *NamecoinChain) *NamecoinChain {
 	state := NewState()
 	state.SetLogger(ref.state.CloneLogger())
+	seed := ref.powSeedSnapshot()
+	params := ref.powParamsSnapshot()
 	return &NamecoinChain{
 		store:      newOverlayStore(ref.store),
 		state:      state,
 		headHash:   nil,
 		headHeight: 0,
-		powTarget:  ref.powTargetSnapshot(),
+		powSeed:    seed,
+		powTarget:  cloneBigInt(seed),
+		powParams:  params,
 	}
 }
 

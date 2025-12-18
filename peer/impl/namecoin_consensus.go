@@ -79,9 +79,7 @@ func (c *NamecoinConsensus) MineAndApply(
 	hdrBase := *baseHeader
 	// Embed the difficulty used for mining into the header so validators can
 	// verify using the same target regardless of local config.
-	if c.powCfg.Target != nil {
-		hdrBase.Difficulty = c.powCfg.Target.Bytes()
-	}
+	hdrBase.Difficulty = target.Bytes()
 	_ = AssembleBlock(&hdrBase, pending, c.powCfg.PubKey)
 
 	headerBuilder := c.buildHeader(&hdrBase)
@@ -111,6 +109,11 @@ func (c *NamecoinConsensus) MineAndApply(
 // UpdatePoWConfig replaces the PoW configuration (used for tests).
 func (c *NamecoinConsensus) UpdatePoWConfig(cfg peer.PoWConfig) {
 	c.powCfg = cfg
+}
+
+// SetMinerPubKey updates the miner address used when assembling reward txs.
+func (c *NamecoinConsensus) SetMinerPubKey(pubKey string) {
+	c.powCfg.PubKey = pubKey
 }
 
 // Errors used by the consensus helper.

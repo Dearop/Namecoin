@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -147,6 +148,11 @@ func main() {
 						Usage: "The timeout after which a paxos proposer retries",
 						Value: time.Second * 5,
 					},
+					&urfave.StringFlag{
+						Name:  "mineraddr",
+						Usage: "Hex-encoded reward address for mined coins (defaults to random)",
+						Value: "",
+					},
 				},
 				Action: start,
 			},
@@ -203,15 +209,22 @@ func start(c *urfave.Context) error {
 		return xerrors.Errorf("if total peers is set PaxosID must be set, too")
 	}
 
-	// Generate random miner address (32 bytes = 64 hex characters)
-	minerAddrBytes := make([]byte, 32)
-	_, err = rand.Read(minerAddrBytes)
-	if err != nil {
-		return xerrors.Errorf("failed to generate random miner address: %v", err)
+	minerAddr := strings.TrimSpace(c.String("mineraddr"))
+	if minerAddr == "" {
+		// Generate random miner address (32 bytes = 64 hex characters)
+		minerAddrBytes := make([]byte, 32)
+		_, err = rand.Read(minerAddrBytes)
+		if err != nil {
+			return xerrors.Errorf("failed to generate random miner address: %v", err)
+		}
+		minerAddr = hex.EncodeToString(minerAddrBytes)
+		log.Info().Msgf("Generated miner address: %s", minerAddr)
+	} else {
+		if _, err := hex.DecodeString(minerAddr); err != nil {
+			return xerrors.Errorf("invalid miner address: %v", err)
+		}
+		log.Info().Msgf("Using provided miner address: %s", minerAddr)
 	}
-	minerAddr := hex.EncodeToString(minerAddrBytes)
-
-	log.Info().Msgf("Generated miner address: %s", minerAddr)
 
 	conf := peer.Configuration{
 		Socket:          sock,

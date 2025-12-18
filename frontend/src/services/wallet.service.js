@@ -12,8 +12,12 @@ export async function generateKeyPair() {
 }
 
 export async function deriveWalletID(publicKey) {
-  // Use the public key as wallet ID (or hash it)
-  return publicKey;
+  if (!publicKey) {
+    return null;
+  }
+
+  const publicKeyBytes = hexToBytes(publicKey);
+  return await sha256(publicKeyBytes);
 }
 
 export function saveWallet(publicKey, privateKey) {

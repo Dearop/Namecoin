@@ -4,6 +4,8 @@ import {
   sendTransaction,
   getTransactionStatus,
   getMinerID,
+  setMinerID,
+  getSpendPlan,
   fetchRegisteredDomains,
 } from '../../services/api.service.js';
 
@@ -68,6 +70,8 @@ describe('api.service.js', () => {
             from: tx.from,
             amount: tx.amount,
             payload: tx.payload,
+            inputs: [],
+            outputs: [],
             pk: tx.pk,
             txId: tx.transactionID,
             signature: signature
@@ -139,6 +143,8 @@ describe('api.service.js', () => {
         from: tx.from,
         amount: tx.amount,
         payload: tx.payload,
+        inputs: [],
+        outputs: [],
         pk: tx.pk,
         txId: tx.transactionID,
         signature: signature
@@ -213,6 +219,76 @@ describe('api.service.js', () => {
       fetch.mockRejectedValueOnce(new Error('Network error'));
 
       await expect(getMinerID()).rejects.toThrow('Network error');
+    });
+  });
+
+  describe('setMinerID', () => {
+    it('should set miner ID successfully', async () => {
+      fetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ minerID: 'wallet-123' }),
+      });
+
+      const result = await setMinerID('wallet-123');
+
+      expect(result).toEqual({ minerID: 'wallet-123' });
+      expect(fetch).toHaveBeenCalledWith(
+        'http://localhost:8080/namecoin/minerid',
+        expect.objectContaining({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ minerID: 'wallet-123' }),
+        })
+      );
+    });
+
+    it('should throw error on non-ok response', async () => {
+      fetch.mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        json: async () => ({ message: 'invalid' }),
+      });
+
+      await expect(setMinerID('bad')).rejects.toThrow('invalid');
+    });
+
+    it('should handle network errors', async () => {
+      fetch.mockRejectedValueOnce(new Error('Network error'));
+
+      await expect(setMinerID('wallet-123')).rejects.toThrow('Network error');
+    });
+  });
+
+  describe('getSpendPlan', () => {
+    it('should fetch spend plan successfully', async () => {
+      fetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          inputs: [{ TxID: 'utxo1', Index: 0 }],
+          outputs: [{ To: 'wallet123', Amount: 1 }],
+        }),
+      });
+
+      const result = await getSpendPlan('wallet123', 1);
+
+      expect(result.inputs).toHaveLength(1);
+      expect(fetch).toHaveBeenCalledWith(
+        'http://localhost:8080/namecoin/spendplan',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ from: 'wallet123', amount: 1 }),
+        })
+      );
+    });
+
+    it('should throw error on failure', async () => {
+      fetch.mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        json: async () => ({}),
+      });
+
+      await expect(getSpendPlan('wallet123', 1)).rejects.toThrow('HTTP error! status: 400');
     });
   });
 

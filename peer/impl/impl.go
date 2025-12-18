@@ -1,6 +1,7 @@
 package impl
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log"
@@ -183,11 +184,15 @@ func (n *node) Start() error {
 		go n.heartbeatLoop(n.conf.HeartbeatInterval)
 	}
 
+	// Miner lifecycle:
+	// - When config.EnableMiner is false, keep the miner disabled even if other
+	//   code paths (e.g., block handlers) call StartMiner().
+	// - When config.EnableMiner is true, start mining immediately.
+	n.minerMu.Lock()
+	n.minerDisabled = !n.conf.EnableMiner
+	n.minerMu.Unlock()
+
 	if n.conf.EnableMiner {
-		// Allow mining when the node starts.
-		n.minerMu.Lock()
-		n.minerDisabled = false
-		n.minerMu.Unlock()
 		n.StartMiner()
 	}
 
@@ -232,6 +237,33 @@ func (n *node) GetMinerID() string {
 	return n.conf.PoWConfig.PubKey
 }
 
+func (n *node) SetMinerID(minerID string) error {
+	minerID = strings.TrimSpace(minerID)
+	if minerID == "" {
+		return xerrors.Errorf("miner ID cannot be empty")
+	}
+	if _, err := hex.DecodeString(minerID); err != nil {
+		return xerrors.Errorf("invalid miner ID: %w", err)
+	}
+
+	n.minerMu.Lock()
+	n.conf.PoWConfig.PubKey = minerID
+	n.minerMu.Unlock()
+
+	if n.namecoinConsensus != nil {
+		n.namecoinConsensus.SetMinerPubKey(minerID)
+	}
+
+	return nil
+}
+
+func (n *node) GetSpendPlan(from string, amount uint64) ([]types.TxInput, []types.TxOutput, error) {
+	if n.transactionService == nil {
+		return nil, nil, xerrors.Errorf("transaction service unavailable")
+	}
+	return n.transactionService.GetSpendPlan(from, amount)
+}
+
 func (n *node) GetDomains() []types.NameRecord {
 	chain := n.NamecoinChainService.GetLongestChain()
 	domainsMap, _ := chain.SnapshotDomains()
@@ -262,23 +294,21 @@ func (n *node) HandleNamecoinCommand(buf []byte) error {
 		return err
 	}
 
-	// Use the miner's public key for balance verification instead of transaction.From
-	// The miner receives mining rewards, so UTXOs are stored under the miner's key
-	minerPubKey := n.conf.PoWConfig.PubKey
-	log.Printf("[DEBUG] Using miner's public key for balance: %s", minerPubKey)
-
-	inputs, outputs, err := n.transactionService.VerifyBalance(transaction.TxID, minerPubKey, transaction.Amount)
+	inputs, outputs, err := n.transactionService.VerifyBalance(transaction.TxID, transaction.From, transaction.Amount)
 	if err != nil {
 		return err
 	}
 
 	tx := types.Tx{
-		From:    transaction.From,
-		Type:    transaction.Type,
-		Inputs:  inputs,
-		Outputs: outputs,
-		Amount:  transaction.Amount,
-		Payload: transaction.Payload,
+		From:      transaction.From,
+		Type:      transaction.Type,
+		Inputs:    inputs,
+		Outputs:   outputs,
+		Amount:    transaction.Amount,
+		Payload:   transaction.Payload,
+		Pk:        transaction.Pk,
+		TxID:      transaction.TxID,
+		Signature: transaction.Signature,
 	}
 
 	if err := n.transactionService.ValidateTxCommand(&tx); err != nil {
@@ -296,8 +326,15 @@ func (n *node) HandleNamecoinCommand(buf []byte) error {
 	confirmCh := n.registerTxConfirmation(txID)
 
 	msg := types.NamecoinTransactionMessage{
-		TxID: transaction.TxID,
-		Tx:   tx,
+		Type:      transaction.Type,
+		From:      transaction.From,
+		Amount:    transaction.Amount,
+		Payload:   transaction.Payload,
+		Inputs:    transaction.Inputs,
+		Outputs:   transaction.Outputs,
+		Pk:        transaction.Pk,
+		TxID:      transaction.TxID,
+		Signature: transaction.Signature,
 	}
 
 	marshaled, err := n.conf.MessageRegistry.MarshalMessage(msg)
