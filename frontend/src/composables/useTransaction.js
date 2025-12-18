@@ -21,6 +21,10 @@ export function useTransaction() {
         ...params
       });
 
+      const spendPlan = await apiService.getSpendPlan(tx.from, tx.amount);
+      tx.inputs = spendPlan.inputs || [];
+      tx.outputs = spendPlan.outputs || [];
+
       // Compute transaction ID
       const completeTx = await transactionService.computeTransactionID(tx);
 

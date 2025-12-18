@@ -15,6 +15,8 @@ func (t *SignedTransaction) SerializeTransaction() ([]byte, error) {
 		"from":    t.From,
 		"amount":  t.Amount,
 		"payload": t.Payload,
+		"inputs":  t.Inputs,
+		"outputs": t.Outputs,
 	}
 
 	b, err := canonicaljson.Marshal(data)
@@ -27,12 +29,11 @@ func (t *SignedTransaction) SerializeTransactionSignature() ([]byte, error) {
 		"from":    t.From,
 		"amount":  t.Amount,
 		"payload": t.Payload,
+		"inputs":  t.Inputs,
+		"outputs": t.Outputs,
 	}
 
 	b, err := canonicaljson.Marshal(data)
-	if err != nil {
-		return nil, err
-	}
 	return b, err
 }
 

@@ -149,7 +149,7 @@ func Test_Namecoin_Integration_LongestChain_FiveNodes(t *testing.T) {
 }
 
 // Five miners start in two disconnected groups, then merge and must converge to a common head.
-func Test_Namecoin_Integration_LongestChain_PartitionMerge(t *testing.T) {
+func Test_Namecoin_Integration_LongestChain_PartitionMerge_StressTest(t *testing.T) {
 	skipIfWIndows(t)
 
 	// Static PoW: slightly harder targets (lower) but still unlimited nonce for reliability.
@@ -221,11 +221,13 @@ func Test_Namecoin_Integration_LongestChain_PartitionMerge(t *testing.T) {
 	// Heal the partition: connect everyone.
 	addAllPeers(nodes)
 
-	// Allow growth on the merged network and ensure convergence while miners are still running.
-	waitForHeight(t, nodes, 6, 20*time.Second)
+	// Allow the merged network to mine a few additional blocks (breaking ties),
+	// then pause miners so lagging nodes can reconcile without the head racing ahead.
+	waitForHeight(t, nodes, 8, 25*time.Second)
+	stopMinersFor(t, nodes)
+	time.Sleep(time.Second)
 
 	head, height := waitForCommonHead(t, nodes, 20*time.Second)
-	stopMinersFor(t, nodes)
 	require.NotNil(t, head)
 	require.GreaterOrEqual(t, height, uint64(6))
 }

@@ -170,21 +170,21 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useWallet } from '../composables/useWallet.js';
 import { useTransaction } from '../composables/useTransaction.js';
 import { hashDomainWithSalt, generateTransactionSignature, hashTransaction } from '../services/crypto.service.js';
 import { buildTransaction, computeTransactionID } from '../services/transaction.service.js';
-import { sendTransaction, getMinerID, fetchRegisteredDomains } from '../services/api.service.js';
+import { sendTransaction, getMinerID, setMinerID, fetchRegisteredDomains, getSpendPlan } from '../services/api.service.js';
 import { generateSalt } from '../utils/hash.js';
-import { savePendingDomain, getPendingDomains, updateDomainStatus, removePendingDomain } from '../utils/domainStorage.js';
+import { savePendingDomain, getPendingDomains, updateDomainStatus, removePendingDomain, clearAllPendingDomains } from '../utils/domainStorage.js';
 
 const router = useRouter();
 const isConnected = ref(false);
 const connectionStatus = ref('Connecting...');
 
-const { wallet, isWalletLoaded, loadWallet, createWallet } = useWallet();
+const { wallet, walletID, isWalletLoaded, loadWallet, createWallet } = useWallet();
 const domainName = ref('');
 const ttl = ref(0);
 const isProcessing = ref(false);
@@ -193,6 +193,7 @@ const lastTxId = ref('');
 const domains = ref([]);
 const domainsLoaded = ref(false);
 const myDomains = ref([]);
+const backendMinerID = ref('');
 
 const statusClass = computed(() => {
   if (status.value.includes('success') || status.value.includes('Success')) {
@@ -205,12 +206,36 @@ const statusClass = computed(() => {
 
 const statusMessage = computed(() => status.value);
 
+async function syncMinerID() {
+  const desiredID = wallet.value?.id;
+  if (!desiredID) {
+    return;
+  }
+  if (backendMinerID.value === desiredID) {
+    return;
+  }
+  try {
+    await setMinerID(desiredID);
+    backendMinerID.value = desiredID;
+    console.log('[Wallet] Synced miner ID with wallet ID:', desiredID);
+  } catch (error) {
+    console.error('[Wallet] Failed to sync miner ID:', error);
+    status.value = `Failed to sync miner ID: ${error.message}`;
+  }
+}
+
+async function applySpendPlan(tx) {
+  const plan = await getSpendPlan(tx.from, tx.amount);
+  tx.inputs = plan.inputs || [];
+  tx.outputs = plan.outputs || [];
+}
+
 function loadMyDomains() {
-  const minerID = localStorage.getItem('minerID');
-  if (!minerID) return;
+  const ownerID = wallet.value?.id;
+  if (!ownerID) return;
   
   // Load all domains from localStorage (both pending and revealed)
-  const stored = getPendingDomains(minerID);
+  const stored = getPendingDomains(ownerID);
   
   // Map to add input fields for IP addresses and TTL
   myDomains.value = stored.map(d => ({
@@ -229,22 +254,31 @@ function clearPendingDomains() {
     return;
   }
   
-  const minerID = localStorage.getItem('minerID');
-  if (minerID) {
-    localStorage.removeItem(`pending_domains_${minerID}`);
+  const ownerID = wallet.value?.id;
+  if (ownerID) {
+    clearAllPendingDomains(ownerID);
     myDomains.value = [];
     status.value = 'All domains cleared.';
   }
 }
 
+watch(
+  () => wallet.value?.id,
+  (newID) => {
+    if (newID) {
+      syncMinerID();
+    }
+  }
+);
+
 onMounted(async () => {
   // Auto-connect to backend and fetch miner ID
   try {
     const minerID = await getMinerID();
-    localStorage.setItem('minerID', minerID);
     isConnected.value = true;
     connectionStatus.value = 'Connected';
     console.log('[Wallet] Auto-connected to node with miner ID:', minerID);
+    backendMinerID.value = minerID;
   } catch (error) {
     console.error('[Wallet] Failed to connect to backend:', error);
     isConnected.value = false;
@@ -264,6 +298,8 @@ onMounted(async () => {
       status.value = 'Failed to create wallet. Please refresh the page.';
     }
   }
+
+  await syncMinerID();
   
   // Load user's domains
   await fetchDomains();
@@ -291,14 +327,16 @@ async function handleSubmit() {
     const hashedDomain = await hashDomainWithSalt(domainName.value, salt);
     console.log('[DEBUG] Hashed commitment:', hashedDomain);
     
-    const minerID = localStorage.getItem('minerID');
-    if (!minerID) {
-      throw new Error('Miner ID not found. Please reconnect to the node.');
+    const senderID = wallet.value?.id;
+    if (!senderID) {
+      status.value = 'Wallet ID not found. Please reload the page.';
+      isProcessing.value = false;
+      return;
     }
     
     const transaction = await buildTransaction({
       type: 'NameNew',
-      walletID: minerID,
+      walletID: senderID,
       fee: 1,
       payload: {
         commitment: hashedDomain,
@@ -306,6 +344,8 @@ async function handleSubmit() {
       },
       pk: wallet.value.publicKey
     });
+
+    await applySpendPlan(transaction);
     
     console.log('[DEBUG] Transaction payload:', transaction.payload);
     console.log('[DEBUG] Transaction payload type:', typeof transaction.payload);
@@ -323,7 +363,7 @@ async function handleSubmit() {
       lastTxId.value = completeTx.transactionID;
       
       // Save pending domain with salt and namenew txid for later reveal
-      savePendingDomain(minerID, domainName.value, salt, hashedDomain, completeTx.transactionID);
+      savePendingDomain(senderID, domainName.value, salt, hashedDomain, completeTx.transactionID);
       
       status.value = `Commitment created! Wait for it to be mined in a block before revealing. Check "My Domains" section below.`;
       domainName.value = '';
@@ -352,16 +392,18 @@ async function handleFirstUpdate(pending) {
   status.value = 'Revealing domain...';
   
   try {
-    const minerID = localStorage.getItem('minerID');
-    if (!minerID) {
-      throw new Error('Miner ID not found. Please reconnect to the node.');
+    const senderID = wallet.value?.id;
+    if (!senderID) {
+      status.value = 'Wallet ID not found. Please reload the page.';
+      pending.isRevealing = false;
+      return;
     }
     
     console.log('[DEBUG] First update - Domain:', pending.domain, 'Salt:', pending.salt);
     
     const transaction = await buildTransaction({
       type: 'NameFirstUpdate',
-      walletID: minerID,
+      walletID: senderID,
       fee: 1,
       payload: {
         domain: pending.domain,
@@ -372,6 +414,8 @@ async function handleFirstUpdate(pending) {
       },
       pk: wallet.value.publicKey
     });
+
+    await applySpendPlan(transaction);
     
     console.log('[DEBUG] First update payload:', transaction.payload);
     
@@ -387,7 +431,7 @@ async function handleFirstUpdate(pending) {
       status.value = `Domain "${pending.domain}" revealed successfully!`;
       
       // Update status and save IP to localStorage
-      const key = `pending_domains_${minerID}`;
+      const key = `pending_domains_${senderID}`;
       const stored = JSON.parse(localStorage.getItem(key) || '[]');
       const updated = stored.map(d => 
         d.domain === pending.domain 
@@ -418,10 +462,10 @@ async function handleFirstUpdate(pending) {
       msgLower.includes('expired');
 
     if (shouldRemove) {
-      const minerID = localStorage.getItem('minerID');
-      if (minerID) {
+      const senderID = wallet.value?.id;
+      if (senderID) {
         console.log(`[Wallet] Removing domain "${pending.domain}" from storage due to error`);
-        removePendingDomain(minerID, pending.domain);
+        removePendingDomain(senderID, pending.domain);
         loadMyDomains();
         fetchDomains();
       }
@@ -442,14 +486,16 @@ async function handleUpdate(domain) {
   status.value = `Updating IP for ${domain.domain}...`;
   
   try {
-    const minerID = localStorage.getItem('minerID');
-    if (!minerID) {
-      throw new Error('Miner ID not found. Please reconnect to the node.');
+    const senderID = wallet.value?.id;
+    if (!senderID) {
+      status.value = 'Wallet ID not found. Please reload the page.';
+      domain.isUpdating = false;
+      return;
     }
     
     const transaction = await buildTransaction({
       type: 'NameUpdate',
-      walletID: minerID,
+      walletID: senderID,
       fee: 1,
       payload: {
         domain: domain.domain,
@@ -458,6 +504,8 @@ async function handleUpdate(domain) {
       },
       pk: wallet.value.publicKey
     });
+
+    await applySpendPlan(transaction);
     
     const completeTx = await computeTransactionID(transaction);
     const txHash = await hashTransaction(completeTx);
@@ -471,7 +519,7 @@ async function handleUpdate(domain) {
       status.value = `IP updated for "${domain.domain}"! Wait for it to be mined in a block.`;
       
       // Update the stored IP and clear input
-      const key = `pending_domains_${minerID}`;
+      const key = `pending_domains_${senderID}`;
       const stored = JSON.parse(localStorage.getItem(key) || '[]');
       const updated = stored.map(d => 
         d.domain === domain.domain ? { ...d, ip: domain.newIp.trim() } : d
@@ -501,10 +549,10 @@ async function handleUpdate(domain) {
       msgLower.includes('cannot update domain you do not own');
 
     if (shouldRemove) {
-      const minerID = localStorage.getItem('minerID');
-      if (minerID) {
+      const senderID = wallet.value?.id;
+      if (senderID) {
         console.log(`[Wallet] Removing domain "${domain.domain}" from storage due to error`);
-        removePendingDomain(minerID, domain.domain);
+        removePendingDomain(senderID, domain.domain);
         loadMyDomains();
         fetchDomains();
       }

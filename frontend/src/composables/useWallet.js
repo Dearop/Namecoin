@@ -2,11 +2,11 @@ import { ref, computed } from 'vue';
 import * as walletService from '../services/wallet.service.js';
 import { clear } from '../utils/storage.js';
 
-const wallet = ref({ publicKey: null, privateKey: null });
+const wallet = ref({ publicKey: null, privateKey: null, id: null });
 
 export function useWallet() {
   const walletID = computed(() => {
-    return wallet.value.publicKey || null;
+    return wallet.value.id || null;
   });
 
   const isWalletLoaded = computed(() => {
@@ -33,14 +33,15 @@ export function useWallet() {
     }
   }
 
-  function loadWallet() {
+  async function loadWallet() {
     try {
       const savedWallet = walletService.loadWallet();
       if (savedWallet) {
+        const id = await walletService.deriveWalletID(savedWallet.publicKey);
         wallet.value = {
           publicKey: savedWallet.publicKey,
           privateKey: savedWallet.privateKey,
-          id: savedWallet.publicKey
+          id
         };
         return true;
       }
@@ -58,10 +59,11 @@ export function useWallet() {
   async function importWallet(file) {//do not believe we need this, but keeping just in case
     try {
       const importedWallet = await walletService.importWalletFromFile(file);
+      const id = await walletService.deriveWalletID(importedWallet.publicKey);
       wallet.value = {
         publicKey: importedWallet.publicKey,
         privateKey: importedWallet.privateKey,
-        id: importedWallet.publicKey
+        id
       };
       walletService.saveWallet(importedWallet.publicKey, importedWallet.privateKey);
       return wallet.value;
@@ -72,7 +74,7 @@ export function useWallet() {
   }
 
   function clearWallet() {
-    wallet.value = { publicKey: null, privateKey: null };
+    wallet.value = { publicKey: null, privateKey: null, id: null };
     clear();
   }
 

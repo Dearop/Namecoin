@@ -2,14 +2,16 @@ import { generateTxID } from '../utils/hash.js';
 import canonicalize from 'canonicalize';
 
 export async function buildTransaction(params) {
-  const { type, walletID, fee, payload, pk } = params;
+  const { type, walletID, fee, payload, pk, inputs = [], outputs = [] } = params;
   
   return {
     type,
     from: walletID,
     amount: fee,
     payload: encodePayload(payload),
-    pk : pk,
+    pk: pk,
+    inputs,
+    outputs,
     transactionID: null  // Will be computed later
   };
 }
@@ -21,6 +23,8 @@ export async function computeTransactionID(tx) {
     from: tx.from,
     amount: tx.amount,
     payload: tx.payload,
+    inputs: tx.inputs || [],
+    outputs: tx.outputs || [],
   });
   console.log('[DEBUG] computeTransactionID - computed txID:', txID);
   
@@ -48,10 +52,11 @@ export function validateTransaction(tx) {
   if (!tx.amount || tx.amount < 1) errors.push('Fee must be at least 1');
   if (!tx.payload) errors.push('Payload is required');
   if (!tx.pk) errors.push('Public key is required');
+  if (!Array.isArray(tx.inputs)) errors.push('Inputs must be provided');
+  if (!Array.isArray(tx.outputs)) errors.push('Outputs must be provided');
   
   return {
     valid: errors.length === 0,
     errors
   };
 } 
-

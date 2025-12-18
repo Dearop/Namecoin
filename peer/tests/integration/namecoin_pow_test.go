@@ -1,6 +1,9 @@
 package integration
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -360,22 +363,52 @@ func Test_Namecoin_Integration_NameNewCommitmentPersistsAcrossBlocks(t *testing.
 	require.NotNil(t, chain)
 	chain.SetPowTarget(highTarget)
 
-	owner := "addr-commit-owner"
-	miner := "miner-commit"
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+
+	owner := impl.HashHex(pub)
+	miner := owner
 	domain := "example.bit"
 	salt := "secret"
 	commitment := impl.HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", domain, salt))
 
-	// Block 0 with a single name_new.
+	// Block 0 with a single name_new spending the coinbase output.
 	payloadNew, err := json.Marshal(impl.NameNew{Commitment: commitment})
 	require.NoError(t, err)
+
+	reward0 := types.Tx{
+		From:    miner,
+		Type:    impl.RewardCommandName,
+		Amount:  1,
+		Payload: json.RawMessage(fmt.Sprintf(`{"height":%d}`, 0)),
+		Outputs: []types.TxOutput{{To: miner, Amount: 1}},
+	}
+	reward0ID, err := impl.BuildTransactionID(&reward0)
+	require.NoError(t, err)
+
 	txNew := types.Tx{
 		From:    owner,
 		Type:    impl.NameNew{}.Name(),
+		Amount:  1,
 		Payload: json.RawMessage(payloadNew),
+		Inputs:  []types.TxInput{{TxID: reward0ID, Index: 0}},
+		Outputs: []types.TxOutput{},
+		Pk:      hex.EncodeToString(pub),
 	}
 	txNewID, err := impl.BuildTransactionID(&txNew)
 	require.NoError(t, err)
+	txNew.TxID = txNewID
+
+	preimage, err := (&impl.SignedTransaction{
+		Type:    txNew.Type,
+		From:    txNew.From,
+		Amount:  txNew.Amount,
+		Payload: txNew.Payload,
+		Inputs:  txNew.Inputs,
+		Outputs: txNew.Outputs,
+	}).SerializeTransactionSignature()
+	require.NoError(t, err)
+	txNew.Signature = hex.EncodeToString(ed25519.Sign(priv, impl.Hash(preimage)))
 	header0 := types.BlockHeader{
 		Height:     0,
 		PrevHash:   nil,
@@ -392,7 +425,7 @@ func Test_Namecoin_Integration_NameNewCommitmentPersistsAcrossBlocks(t *testing.
 	key := impl.OutpointKey(txNewID, 0)
 	commit, ok := state.GetCommitment(key)
 	require.True(t, ok)
-	require.Equal(t, commitment, commit, "expected commitment to persist after first block")
+	require.Equal(t, commitment, commit.Commit, "expected commitment to persist after first block")
 
 	// Block 1 (empty pending set) should keep the commitment intact.
 	header1 := types.BlockHeader{
@@ -410,5 +443,5 @@ func Test_Namecoin_Integration_NameNewCommitmentPersistsAcrossBlocks(t *testing.
 	stateFinal := chainFinal.State()
 	commitFinal, ok := stateFinal.GetCommitment(key)
 	require.True(t, ok)
-	require.Equal(t, commitment, commitFinal, "expected commitment to persist across blocks")
+	require.Equal(t, commitment, commitFinal.Commit, "expected commitment to persist across blocks")
 }
