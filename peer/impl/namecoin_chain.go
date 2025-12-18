@@ -28,11 +28,15 @@ var (
 )
 
 func NewNamecoinChain(store storage.Store) *NamecoinChain {
+	seed := effectiveTarget(nil)
 	return &NamecoinChain{
 		store:      store,
 		state:      NewState(),
 		headHash:   nil,
 		headHeight: 0,
+		powSeed:    cloneBigInt(seed),
+		powTarget:  cloneBigInt(seed),
+		powParams:  powParamsFromConfig(peer.PoWConfig{}),
 	}
 }
 
@@ -43,6 +47,7 @@ type NamecoinChain struct {
 	state      *NamecoinState
 	headHash   []byte
 	headHeight uint64
+	powSeed    *big.Int
 	powTarget  *big.Int
 	powParams  powParams
 	headTS     int64
@@ -157,6 +162,7 @@ func (c *NamecoinChain) ConfigurePow(cfg peer.PoWConfig) {
 
 	c.mu.Lock()
 	c.powParams = params
+	c.powSeed = cloneBigInt(seed)
 	if c.powTarget == nil || (c.headHash == nil && c.headHeight == 0) {
 		c.powTarget = cloneBigInt(seed)
 	}
@@ -314,12 +320,14 @@ func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
 
 	// Nothing to replay.
 	if len(blocks) == 0 {
+		seed := effectiveTarget(nil)
 		return &NamecoinChain{
 			store:      store,
 			state:      state,
 			headHash:   nil,
 			headHeight: 0,
-			powTarget:  effectiveTarget(nil),
+			powSeed:    cloneBigInt(seed),
+			powTarget:  cloneBigInt(seed),
 			powParams:  powParamsFromConfig(peer.PoWConfig{}),
 		}, nil
 	}
@@ -345,11 +353,19 @@ func LoadNamecoinChain(store storage.Store) (*NamecoinChain, error) {
 
 	powTarget, params, headTS := rebuildPowState(blocks, headHeight)
 
+	powSeed := effectiveTarget(nil)
+	if genesis, err := decodeLoadedBlock(blocks[0]); err == nil {
+		if seed := DecodeDifficulty(genesis.Header.Difficulty); seed != nil {
+			powSeed = seed
+		}
+	}
+
 	return &NamecoinChain{
 		store:      store,
 		state:      state,
 		headHash:   headHash,
 		headHeight: headHeight,
+		powSeed:    cloneBigInt(powSeed),
 		powTarget:  powTarget,
 		powParams:  params,
 		headTS:     headTS,
@@ -362,9 +378,11 @@ func (c *NamecoinChain) SetPowTarget(target *big.Int) {
 	defer c.mu.Unlock()
 	if target == nil {
 		c.powTarget = nil
+		c.powSeed = nil
 		return
 	}
 	c.powTarget = cloneBigInt(target)
+	c.powSeed = cloneBigInt(target)
 }
 
 func cloneBigInt(src *big.Int) *big.Int {
@@ -378,6 +396,57 @@ func (c *NamecoinChain) powTargetSnapshot() *big.Int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return cloneBigInt(c.powTarget)
+}
+
+func (c *NamecoinChain) powSeedSnapshot() *big.Int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return cloneBigInt(c.powSeed)
+}
+
+func (c *NamecoinChain) powParamsSnapshot() powParams {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.powParams
+}
+
+func rebuildPowStateForFork(blocks []loadedBlock, headHeight uint64, seed *big.Int, params powParams) (*big.Int, int64) {
+	powTarget := cloneBigInt(effectiveTarget(seed))
+	var prevTS int64
+
+	for _, lb := range blocks {
+		if lb.Height > headHeight {
+			break
+		}
+		blk, err := decodeLoadedBlock(lb)
+		if err != nil {
+			warnf("load namecoin chain: skipping block for difficulty rebuild at height %d: %v", lb.Height, err)
+			continue
+		}
+		blkTarget := DecodeDifficulty(blk.Header.Difficulty)
+		if blkTarget == nil {
+			blkTarget = powTarget
+		}
+
+		if params.dynamic && prevTS != 0 {
+			spacing := time.Duration(blk.Header.Timestamp-prevTS) * time.Second
+			powTarget = AdjustDifficulty(
+				blkTarget,
+				spacing,
+				params.targetBlockTime,
+				params.maxAdjustUp,
+				params.maxAdjustDown,
+			)
+		} else {
+			powTarget = cloneBigInt(blkTarget)
+		}
+		prevTS = blk.Header.Timestamp
+	}
+
+	if powTarget == nil {
+		powTarget = cloneBigInt(effectiveTarget(seed))
+	}
+	return powTarget, prevTS
 }
 
 // blockAtHeight loads a block from storage for the given height.
@@ -403,7 +472,8 @@ func (c *NamecoinChain) forkUpToHeight(height uint64, storeOverride storage.Stor
 		c.mu.RUnlock()
 		return nil, fmt.Errorf("cannot fork to height %d above head %d", height, c.headHeight)
 	}
-	powTarget := cloneBigInt(c.powTarget)
+	powSeed := cloneBigInt(c.powSeed)
+	powParams := c.powParams
 	c.mu.RUnlock()
 
 	forkStore := c.store
@@ -432,12 +502,17 @@ func (c *NamecoinChain) forkUpToHeight(height uint64, storeOverride storage.Stor
 		return nil, fmt.Errorf("replay stopped at height %d (expected %d)", headHeight, height)
 	}
 
+	rebuiltTarget, headTS := rebuildPowStateForFork(blocks, height, powSeed, powParams)
+
 	return &NamecoinChain{
 		store:      forkStore,
 		state:      state,
 		headHash:   headHash,
 		headHeight: headHeight,
-		powTarget:  powTarget,
+		powSeed:    powSeed,
+		powTarget:  rebuiltTarget,
+		powParams:  powParams,
+		headTS:     headTS,
 	}, nil
 }
 

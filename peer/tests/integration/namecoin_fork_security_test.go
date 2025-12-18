@@ -56,14 +56,42 @@ func makeBlock(height uint64, prev []byte, txs []types.Tx) *types.Block {
 	}
 	b := types.Block{
 		Header: types.BlockHeader{
-			Height:   height,
-			PrevHash: impl.CloneBytes(prev),
-			TxRoot:   root,
+			Height:     height,
+			PrevHash:   impl.CloneBytes(prev),
+			TxRoot:     root,
 			Difficulty: maxTarget.Bytes(), // ensure PoW passes for synthetic blocks
 		},
 		Transactions: txs,
 	}
 	b.Hash = b.ComputeHash()
+	return &b
+}
+
+func mineBlock(height uint64, prev []byte, txs []types.Tx, target *big.Int, ts int64) *types.Block {
+	root, err := impl.ComputeTxRoot(txs)
+	if err != nil {
+		panic(err)
+	}
+	b := types.Block{
+		Header: types.BlockHeader{
+			Height:     height,
+			PrevHash:   impl.CloneBytes(prev),
+			TxRoot:     root,
+			Timestamp:  ts,
+			Miner:      "malicious",
+			Difficulty: impl.EncodeDifficulty(target),
+		},
+		Transactions: txs,
+	}
+
+	for nonce := uint64(0); ; nonce++ {
+		b.Header.Nonce = nonce
+		h := b.ComputeHash()
+		if new(big.Int).SetBytes(h).Cmp(target) <= 0 {
+			b.Hash = h
+			break
+		}
+	}
 	return &b
 }
 
@@ -196,7 +224,7 @@ func Test_Namecoin_Integration_EquivocationAcrossSubsets(t *testing.T) {
 	easyTarget := new(big.Int).Lsh(big.NewInt(1), 252)
 	opts := []z.Option{
 		z.WithEnableMiner(false),
-		z.WithPoWConfig(peer.PoWConfig{Target: easyTarget, PubKey: "malicious"}),
+		z.WithPoWConfig(peer.PoWConfig{Target: easyTarget, PubKey: "malicious", DisableDifficultyAdjustment: true}),
 	}
 
 	nodes := []z.TestNode{
@@ -209,14 +237,14 @@ func Test_Namecoin_Integration_EquivocationAcrossSubsets(t *testing.T) {
 	addAllPeers(nodes)
 
 	// Common genesis to all nodes.
-	genesis := makeBlock(0, nil, []types.Tx{rewardTxFork("genesis", 1)})
+	genesis := mineBlock(0, nil, []types.Tx{rewardTxFork("genesis", 1)}, easyTarget, 1000)
 	for _, n := range nodes {
 		deliverBlock(t, n, genesis)
 	}
 
 	// Malicious miner creates two conflicting height-1 blocks.
-	blkA1 := makeBlock(1, genesis.Hash, []types.Tx{rewardTxFork("evil", 1)})
-	blkB1 := makeBlock(1, genesis.Hash, []types.Tx{rewardTxFork("evil", 2)})
+	blkA1 := mineBlock(1, genesis.Hash, []types.Tx{rewardTxFork("evil", 1)}, easyTarget, 1010)
+	blkB1 := mineBlock(1, genesis.Hash, []types.Tx{rewardTxFork("evil", 2)}, easyTarget, 1010)
 
 	// Send to disjoint subsets.
 	deliverBlock(t, nodes[0], blkA1)
@@ -225,7 +253,7 @@ func Test_Namecoin_Integration_EquivocationAcrossSubsets(t *testing.T) {
 
 	// Deliver blkA1 to node2 (gossip eventually) then a longer extension blkA2.
 	deliverBlock(t, nodes[2], blkA1)
-	blkA2 := makeBlock(2, blkA1.Hash, []types.Tx{rewardTxFork("evil", 3)})
+	blkA2 := mineBlock(2, blkA1.Hash, []types.Tx{rewardTxFork("evil", 3)}, easyTarget, 1020)
 	for _, n := range nodes {
 		deliverBlock(t, n, blkA2)
 	}
