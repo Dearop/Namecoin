@@ -112,8 +112,8 @@ test_perf_convergence_sweep:
 test_perf_mining_throughput_scaling:
 	@GLOG=no go test -v ${JSONIFY} -timeout 0 -run 'Test_Mining_Throughput_Scaling_Perf' -count 1 --tags=performance ./peer/tests/perf/ || true
 
-test_perf_domain_operation_summary:
-	@GLOG=no go test -v ${JSONIFY} -timeout 0 -run 'Test_Domain_Operation_Throughput_Summary_Perf' -count 1 --tags=performance ./peer/tests/perf/ || true
+test_perf_domain_operation_throughput:
+	@GLOG=no go test -v ${JSONIFY} -timeout 0 -run 'Test_Domain_Operation_Throughput_Perf' -count 1 --tags=performance ./peer/tests/perf/ || true
 
 test_perf_convergence_vs_network_size:
 	@GLOG=no go test -v ${JSONIFY} -timeout 0 -run 'Test_Convergence_vs_Network_Size_Perf' -count 1 --tags=performance ./peer/tests/perf/ || true

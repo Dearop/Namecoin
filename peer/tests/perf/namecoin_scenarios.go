@@ -201,8 +201,16 @@ func buildNameUpdateTx(t *testing.T, minerID, domain, ip, prevTxID string, ttl u
 
 func broadcastTx(t *testing.T, node z.TestNode, tx types.Tx, txID string) time.Time {
 	msg := types.NamecoinTransactionMessage{
-		TxID: txID,
-		Tx:   tx,
+		Type:      tx.Type,
+		From:      tx.From,
+		Amount:    tx.Amount,
+		Payload:   tx.Payload,
+		Inputs:    tx.Inputs,
+		Outputs:   tx.Outputs,
+		Pk:        tx.Pk,
+		TxID:      txID,
+		Signature: tx.Signature,
+		Tx:        tx,
 	}
 	wire, err := node.GetRegistry().MarshalMessage(msg)
 	require.NoError(t, err)

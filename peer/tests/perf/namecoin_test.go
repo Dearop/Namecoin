@@ -4,6 +4,10 @@
 package perf
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"os"
@@ -15,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	z "go.dedis.ch/cs438/internal/testing"
 	"go.dedis.ch/cs438/peer/impl"
+	"go.dedis.ch/cs438/types"
 )
 
 var (
@@ -194,94 +199,249 @@ func Test_Mining_Throughput_Scaling_Perf(t *testing.T) {
 	}
 }
 
-// Domain pipeline throughput: registration + updates latency and tx/s.
-func Test_Domain_Operation_Throughput_Summary_Perf(t *testing.T) {
-	const (
-		domains          = 6
-		updatesPerDomain = 1
-		confirmations    = uint64(1)
-		minSamples       = 1
-	)
+// Domain operation throughput: confirmed registrations per second / per block under PoW.
+func Test_Domain_Operation_Throughput_Perf(t *testing.T) {
+	type scenario struct {
+		name        string
+		nodes       int
+		miners      int
+		target      *big.Int
+		domainCount int
+		runFor      time.Duration
+	}
+	scenarios := []scenario{
+		{"single_fast_small", 1, 1, powTargetFastest, 6, 45 * time.Second},
+		{"single_fast_medium", 1, 1, powTargetFastest, 10, 60 * time.Second},
+		{"fast_miners_2", 2, 2, powTargetFastest, 8, 60 * time.Second},
+		{"fast_miners_4", 4, 4, powTargetFastest, 12, 75 * time.Second},
+		{"fast_miners_8", 8, 8, powTargetFastest, 16, 90 * time.Second},
+	}
 
-	h := newNamecoinHarness(t, scenarioConfig{
-		nodeCount:  3,
-		minerCount: 1,
-		target:     powTargetFast,
-	})
-	defer h.stop()
+	for _, sc := range scenarios {
+		t.Run(sc.name, func(t *testing.T) {
+			h := newNamecoinHarness(t, scenarioConfig{
+				nodeCount:  sc.nodes,
+				minerCount: sc.miners,
+				target:     sc.target,
+			})
+			defer h.stop()
 
-	deadline := time.Now().Add(4 * time.Minute)
-	const opTimeout = 90 * time.Second
+			// Warm up a few blocks so wallets have spendable funds (avoid immature coinbases).
+			waitForHeads(h.nodes, 3, 30*time.Second)
 
-	var regLatencies []time.Duration
-	var updLatencies []time.Duration
-
-	start := time.Now()
-	for i := 0; i < domains; i++ {
-		if time.Now().After(deadline) {
-			break
-		}
-		node := h.nodes[i%len(h.nodes)]
-		domain := fmt.Sprintf("throughput-%d.bit", i)
-		salt := fmt.Sprintf("salt-%d", i)
-
-		nameNewTx, nameNewTxID := buildNameNewTx(t, node.GetMinerID(), domain, salt, impl.DefaultDomainTTLBlocks)
-		broadcastTx(t, node, nameNewTx, nameNewTxID)
-		// Wait for the commitment to be known before revealing.
-		waitForTxApplied(h.nodes, nameNewTxID, opTimeout)
-
-		firstUpdateTx, firstUpdateTxID := buildNameFirstUpdateTx(t, node.GetMinerID(), domain, salt, nameNewTxID,
-			fmt.Sprintf("10.1.0.%d", i+1), 96)
-		regSent := broadcastTx(t, node, firstUpdateTx, firstUpdateTxID)
-
-		regHeight, ok := waitForTxApplied(h.nodes, firstUpdateTxID, opTimeout)
-		if ok && waitForConfirmations(h.nodes, regHeight, confirmations, opTimeout) {
-			regLatencies = append(regLatencies, time.Since(regSent))
-		}
-
-		for u := 0; u < updatesPerDomain; u++ {
-			updateTx, updateTxID := buildNameUpdateTx(t, node.GetMinerID(), domain,
-				fmt.Sprintf("10.2.%d.%d", i, u), firstUpdateTxID, 96)
-			sent := broadcastTx(t, node, updateTx, updateTxID)
-			updHeight, ok := waitForTxApplied(h.nodes, updateTxID, opTimeout)
-			if ok && waitForConfirmations(h.nodes, updHeight, confirmations, opTimeout) {
-				updLatencies = append(updLatencies, time.Since(sent))
+			// Prebuild domain registrations.
+			type regTx struct {
+				domain        string
+				salt          string
+				ownerPub      []byte
+				ownerPriv     []byte
+				ownerAddr     string
+				seedTxID      string
+				nameNewID     string
+				firstUpdateID string
 			}
-		}
+			regs := make([]regTx, sc.domainCount)
+			for i := 0; i < sc.domainCount; i++ {
+				pub, priv, err := ed25519.GenerateKey(rand.Reader)
+				require.NoError(t, err)
+				owner := impl.HashHex(pub)
 
-		if len(regLatencies) >= minSamples {
-			break
-		}
+				// Seed funds for this owner.
+				seedID := fmt.Sprintf("perf-seed-%s-%d", sc.name, i)
+				seed := types.UTXO{
+					TxID:   seedID,
+					To:     owner,
+					Amount: 5,
+				}
+				for _, nd := range h.nodes {
+					if ch := nd.NamecoinChainState(); ch != nil && ch.State() != nil {
+						_ = ch.State().AppendUTXO(seed)
+					}
+				}
+
+				domain := fmt.Sprintf("pow-throughput-%s-%d.bit", sc.name, i)
+				salt := fmt.Sprintf("pow-salt-%s-%d", sc.name, i)
+				regs[i] = regTx{domain: domain, salt: salt, ownerPub: pub, ownerPriv: priv, ownerAddr: owner, seedTxID: seedID}
+			}
+
+			start := time.Now()
+
+			node := h.nodes[0]
+
+			// Pause miners while staging transactions to avoid races with partial data.
+			for _, nd := range h.nodes {
+				if miner, ok := nd.Peer.(interface{ StopMiner() }); ok {
+					miner.StopMiner()
+				}
+			}
+
+			// Build and broadcast all name_new quickly.
+			for i := range regs {
+				reg := &regs[i]
+				state := node.NamecoinChainState().State()
+				inputsNew, outputsNew, err := state.DeterministicSpendPlan(reg.ownerAddr, 1)
+				require.NoError(t, err)
+				commitment := impl.HashString(fmt.Sprintf("DOMAIN_HASH_v1:%s:%s", reg.domain, reg.salt))
+				nameNewTx := types.Tx{
+					From:    reg.ownerAddr,
+					Type:    impl.NameNewCommandName,
+					Amount:  1,
+					Inputs:  inputsNew,
+					Outputs: outputsNew,
+					Pk:      hex.EncodeToString(reg.ownerPub),
+					Payload: json.RawMessage(mustJSONMarshal(t, impl.NameNew{Commitment: commitment, TTL: impl.DefaultDomainTTLBlocks})),
+				}
+				txID, err := impl.BuildTransactionID(&nameNewTx)
+				require.NoError(t, err)
+				nameNewTx.TxID = txID
+				pre, err := (&impl.SignedTransaction{
+					Type:    nameNewTx.Type,
+					From:    nameNewTx.From,
+					Amount:  nameNewTx.Amount,
+					Payload: nameNewTx.Payload,
+					Inputs:  nameNewTx.Inputs,
+					Outputs: nameNewTx.Outputs,
+					Pk:      nameNewTx.Pk,
+					TxID:    nameNewTx.TxID,
+				}).SerializeTransactionSignature()
+				require.NoError(t, err)
+				nameNewTx.Signature = hex.EncodeToString(ed25519.Sign(reg.ownerPriv, impl.Hash(pre)))
+				reg.nameNewID = nameNewTx.TxID
+				broadcastTx(t, node, nameNewTx, nameNewTx.TxID)
+			}
+
+			// Mine just enough so commitments land: resume miners and wait for either height+1 or all name_new applied.
+			for _, nd := range h.nodes {
+				if miner, ok := nd.Peer.(interface{ StartMiner() }); ok {
+					miner.StartMiner()
+				}
+			}
+
+			heightBeforeNew := h.nodes[0].NamecoinChainState().HeadHeight()
+			waitNewDeadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(waitNewDeadline) {
+				chain := node.NamecoinChainState()
+				state := chain.State()
+				all := true
+				for _, reg := range regs {
+					if !state.IsTxApplied(reg.nameNewID) {
+						all = false
+						break
+					}
+				}
+				if all || chain.HeadHeight() >= heightBeforeNew+1 {
+					break
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+
+			// Build and broadcast all first_update quickly using current state.
+			for i := range regs {
+				reg := &regs[i]
+				state := node.NamecoinChainState().State()
+				inputsFU, outputsFU, err := state.DeterministicSpendPlan(reg.ownerAddr, 1)
+				require.NoError(t, err)
+				firstPayload := impl.NameFirstUpdate{
+					Domain: reg.domain,
+					Salt:   reg.salt,
+					IP:     fmt.Sprintf("10.42.%d", i),
+					TTL:    impl.DefaultDomainTTLBlocks,
+					TxID:   reg.nameNewID,
+				}
+				firstUpdateTx := types.Tx{
+					From:    reg.ownerAddr,
+					Type:    impl.NameFirstUpdateCommandName,
+					Amount:  1,
+					Inputs:  inputsFU,
+					Outputs: outputsFU,
+					Pk:      hex.EncodeToString(reg.ownerPub),
+					Payload: json.RawMessage(mustJSONMarshal(t, firstPayload)),
+				}
+				fuID, err := impl.BuildTransactionID(&firstUpdateTx)
+				require.NoError(t, err)
+				firstUpdateTx.TxID = fuID
+				preFU, err := (&impl.SignedTransaction{
+					Type:    firstUpdateTx.Type,
+					From:    firstUpdateTx.From,
+					Amount:  firstUpdateTx.Amount,
+					Payload: firstUpdateTx.Payload,
+					Inputs:  firstUpdateTx.Inputs,
+					Outputs: firstUpdateTx.Outputs,
+					Pk:      firstUpdateTx.Pk,
+					TxID:    firstUpdateTx.TxID,
+				}).SerializeTransactionSignature()
+				require.NoError(t, err)
+				firstUpdateTx.Signature = hex.EncodeToString(ed25519.Sign(reg.ownerPriv, impl.Hash(preFU)))
+				reg.firstUpdateID = firstUpdateTx.TxID
+				broadcastTx(t, node, firstUpdateTx, firstUpdateTx.TxID)
+			}
+
+			// Resume miners for the measurement window.
+			for _, nd := range h.nodes {
+				if miner, ok := nd.Peer.(interface{ StartMiner() }); ok {
+					miner.StartMiner()
+				}
+			}
+
+			headStart := h.nodes[0].NamecoinChainState().HeadHeight()
+			timeout := time.Now().Add(sc.runFor)
+			for time.Now().Before(timeout) {
+				time.Sleep(150 * time.Millisecond)
+			}
+
+			elapsed := time.Since(start)
+			finalChain := h.nodes[0].NamecoinChainState()
+			blocksMined := uint64(0)
+			if finalChain != nil {
+				if finalChain.HeadHeight() >= headStart {
+					blocksMined = finalChain.HeadHeight() - headStart
+				}
+			}
+
+			confirmedSet := make(map[string]struct{})
+			if finalChain != nil {
+				if state := finalChain.State(); state != nil {
+					for _, reg := range regs {
+						if state.IsTxApplied(reg.firstUpdateID) {
+							confirmedSet[reg.firstUpdateID] = struct{}{}
+						}
+					}
+				}
+			}
+			confirmed := len(confirmedSet)
+
+			// Log which txs made it.
+			if finalChain != nil && finalChain.State() != nil {
+				state := finalChain.State()
+				var acceptedNew, missingNew, acceptedFirst, missingFirst []string
+				for _, reg := range regs {
+					if state.IsTxApplied(reg.nameNewID) {
+						acceptedNew = append(acceptedNew, reg.nameNewID)
+					} else {
+						missingNew = append(missingNew, reg.nameNewID)
+					}
+					if state.IsTxApplied(reg.firstUpdateID) {
+						acceptedFirst = append(acceptedFirst, reg.firstUpdateID)
+					} else {
+						missingFirst = append(missingFirst, reg.firstUpdateID)
+					}
+				}
+				t.Logf("%s accepted name_new=%d/%d first_update=%d/%d (missing new=%d missing first=%d)",
+					sc.name, len(acceptedNew), len(regs), len(acceptedFirst), len(regs), len(missingNew), len(missingFirst))
+			}
+			throughput := float64(confirmed) / elapsed.Seconds()
+			txPerBlock := float64(confirmed)
+			if blocksMined > 0 {
+				txPerBlock = float64(confirmed) / float64(blocksMined)
+			}
+
+			t.Logf("nodes=%d miners=%d target=2^%d blocks=%d confirmed=%d duration=%v throughput=%.2f tx/s tx_per_block=%.2f",
+				sc.nodes, sc.miners, powTargetBits(sc.target), blocksMined, confirmed, elapsed, throughput, txPerBlock)
+			recordPerfResult(t.Name()+"-"+sc.name, fmt.Sprintf(
+				"nodes=%d miners=%d blocks=%d confirmed=%d duration=%.2fs throughput=%.2f tx_per_block=%.2f target=2^%d",
+				sc.nodes, sc.miners, blocksMined, confirmed, elapsed.Seconds(), throughput, txPerBlock, powTargetBits(sc.target)))
+		})
 	}
-	elapsed := time.Since(start)
-
-	totalOps := domains * (2 + updatesPerDomain) // name_new + first_update + updates
-	throughput := float64(totalOps) / elapsed.Seconds()
-
-	if len(regLatencies) == 0 {
-		recordPerfResult(t.Name(), fmt.Sprintf(
-			"domains=%d updates/domain=%d throughput=%.2f tx/s no registrations confirmed",
-			domains, updatesPerDomain, throughput))
-		t.Skipf("no registration latencies recorded (deadline %v reached?)", deadline.Sub(start))
-	}
-	regAvg := averageLatency(regLatencies)
-	regMed := percentileLatency(regLatencies, 50)
-	regP90 := percentileLatency(regLatencies, 90)
-	regP99 := percentileLatency(regLatencies, 99)
-
-	var updAvg, updMed, updP90, updP99 time.Duration
-	if len(updLatencies) > 0 {
-		updAvg = averageLatency(updLatencies)
-		updMed = percentileLatency(updLatencies, 50)
-		updP90 = percentileLatency(updLatencies, 90)
-		updP99 = percentileLatency(updLatencies, 99)
-	}
-
-	t.Logf("domains=%d updates/domain=%d ops=%d elapsed=%v throughput=%.2f tx/s reg_avg=%v reg_p50=%v reg_p90=%v reg_p99=%v upd_avg=%v upd_p50=%v upd_p90=%v upd_p99=%v",
-		domains, updatesPerDomain, totalOps, elapsed, throughput, regAvg, regMed, regP90, regP99, updAvg, updMed, updP90, updP99)
-	recordPerfResult(t.Name(), fmt.Sprintf(
-		"domains=%d updates/domain=%d throughput=%.2f tx/s reg_avg=%v p50=%v p90=%v p99=%v upd_avg=%v p50=%v p90=%v p99=%v successes reg=%d upd=%d",
-		domains, updatesPerDomain, throughput, regAvg, regMed, regP90, regP99, updAvg, updMed, updP90, updP99, len(regLatencies), len(updLatencies)))
 }
 
 // S3-T13: Stream registrations + updates, measure tx/s and latency to k confirmations.
