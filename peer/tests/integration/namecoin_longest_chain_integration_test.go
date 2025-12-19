@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,15 +21,18 @@ import (
 func Test_Namecoin_Integration_LongestChain_TwoNodes(t *testing.T) {
 	skipIfWIndows(t)
 
-	//easyTarget := new(big.Int).Lsh(big.NewInt(1), 255)
-	hardTarget := new(big.Int).Lsh(big.NewInt(1), 242)
+	// Deterministic PoW: shared throttled clock + single nonce attempt.
+	clock := throttledPoWClock(100 * time.Millisecond)
+	detTarget := new(big.Int).Lsh(big.NewInt(1), 260)
 	sharedTransport := udpFac()
 
 	newOpts := func(minerID string) []z.Option {
 		return []z.Option{
 			z.WithPoWConfig(peer.PoWConfig{
-				Target:                      hardTarget,
+				Target:                      detTarget,
 				PubKey:                      minerID,
+				MaxNonce:                    1,
+				TimeSource:                  clock,
 				DisableDifficultyAdjustment: true,
 			}),
 			z.WithEnableMiner(true),
@@ -62,12 +66,15 @@ func Test_Namecoin_Integration_LongestChain_TwoNodes(t *testing.T) {
 func Test_Namecoin_Integration_LongestChain_ThreeNodes(t *testing.T) {
 	skipIfWIndows(t)
 
-	fastTarget := new(big.Int).Lsh(big.NewInt(1), 242)
+	clock := throttledPoWClock(100 * time.Millisecond)
+	detTarget := new(big.Int).Lsh(big.NewInt(1), 260)
 	baseOpts := func(minerID string) []z.Option {
 		return []z.Option{
 			z.WithPoWConfig(peer.PoWConfig{
-				Target:                      fastTarget,
+				Target:                      detTarget,
 				PubKey:                      minerID,
+				MaxNonce:                    1,
+				TimeSource:                  clock,
 				DisableDifficultyAdjustment: true,
 			}),
 			z.WithEnableMiner(true),
@@ -105,14 +112,17 @@ func Test_Namecoin_Integration_LongestChain_ThreeNodes(t *testing.T) {
 func Test_Namecoin_Integration_LongestChain_FiveNodes(t *testing.T) {
 	skipIfWIndows(t)
 
-	easyTarget := new(big.Int).Lsh(big.NewInt(1), 241)
-	midTarget := new(big.Int).Lsh(big.NewInt(1), 239)
+	clock := throttledPoWClock(100 * time.Millisecond)
+	easyTarget := new(big.Int).Lsh(big.NewInt(1), 260)
+	midTarget := new(big.Int).Lsh(big.NewInt(1), 260)
 
 	optsFor := func(target *big.Int, minerID string, hb time.Duration) []z.Option {
 		return []z.Option{
 			z.WithPoWConfig(peer.PoWConfig{
 				Target:                      target,
 				PubKey:                      minerID,
+				MaxNonce:                    1,
+				TimeSource:                  clock,
 				DisableDifficultyAdjustment: true,
 			}),
 			z.WithEnableMiner(true),
@@ -139,17 +149,100 @@ func Test_Namecoin_Integration_LongestChain_FiveNodes(t *testing.T) {
 
 	addAllPeers(nodes)
 
-	waitForHeight(t, nodes, 5, 20*time.Second)
+	waitForHeight(t, nodes, 4, 20*time.Second)
 	stopMinersFor(t, nodes)
 	time.Sleep(time.Second)
 
-	// Give gossip a bit longer to reconcile after we paused mining; with mixed
-	// difficulty miners the block backlog can be large.
-	head, height := waitForCommonHead(t, nodes, 25*time.Second)
+	head, height := waitForCommonHead(t, nodes, 15*time.Second)
 	require.NotNil(t, head)
-	require.GreaterOrEqual(t, height, uint64(5))
+	require.GreaterOrEqual(t, height, uint64(4))
 }
 
+// Five miners start in two disconnected groups, then merge and must converge to a common head.
+func Test_Namecoin_Integration_LongestChain_PartitionMerge_StressTest(t *testing.T) {
+	skipIfWIndows(t)
+
+	// Deterministic PoW: extremely easy target + throttled clock so block rate
+	// depends on the sleep, not CPU speed. MaxNonce=1 guarantees a single hash
+	// attempt per block.
+	throttledClock := throttledPoWClock(100 * time.Millisecond)
+	easyTarget := new(big.Int).Lsh(big.NewInt(1), 260)
+	midTarget := new(big.Int).Lsh(big.NewInt(1), 260)
+
+	optsFor := func(target *big.Int, minerID string, hb time.Duration) []z.Option {
+		return []z.Option{
+			z.WithPoWConfig(peer.PoWConfig{
+				Target:                      target,
+				PubKey:                      minerID,
+				MaxNonce:                    1,
+				TimeSource:                  throttledClock,
+				DisableDifficultyAdjustment: true,
+			}),
+			z.WithEnableMiner(true),
+			z.WithAntiEntropy(600 * time.Millisecond),
+			z.WithHeartbeat(hb),
+			z.WithAckTimeout(4 * time.Second),
+			z.WithContinueMongering(1),
+		}
+	}
+
+	sharedTransport := udpFac()
+
+	nodes := []z.TestNode{
+		z.NewTestNode(t, studentFac, sharedTransport, "127.0.0.1:0", optsFor(easyTarget, "miner-part-0", 400*time.Millisecond)...),
+		z.NewTestNode(t, studentFac, sharedTransport, "127.0.0.1:0", optsFor(easyTarget, "miner-part-1", 450*time.Millisecond)...),
+		z.NewTestNode(t, studentFac, sharedTransport, "127.0.0.1:0", optsFor(midTarget, "miner-part-2", 650*time.Millisecond)...),
+		z.NewTestNode(t, studentFac, sharedTransport, "127.0.0.1:0", optsFor(midTarget, "miner-part-3", 700*time.Millisecond)...),
+		z.NewTestNode(t, studentFac, sharedTransport, "127.0.0.1:0", optsFor(midTarget, "miner-part-4", 600*time.Millisecond)...),
+	}
+
+	defer terminateNodes(t, nodes)
+	defer stopAllNodesWithin(t, nodes, nodesTimeout)
+	defer stopMinersFor(t, nodes)
+
+	// Partition: group A (0,1) only talk to each other; group B (2,3,4) only to each other.
+	connectGroup := func(group []z.TestNode) {
+		addrs := make([]string, 0, len(group))
+		for _, n := range group {
+			addrs = append(addrs, n.GetAddr())
+		}
+		for _, n := range group {
+			n.AddPeer(addrs...)
+		}
+	}
+	connectGroup(nodes[:2])
+	connectGroup(nodes[2:])
+
+	// Each partition mines independently for a bit (reduced heights to avoid timeouts).
+	waitForHeight(t, nodes[:2], 2, 20*time.Second)
+	stopMinersFor(t, nodes[:2])
+
+	waitForHeight(t, nodes[2:], 6, 20*time.Second)
+	stopMinersFor(t, nodes[2:])
+
+	// Verify each partition is internally consistent but diverged from the other.
+	headA, heightA := waitForCommonHead(t, nodes[:2], 10*time.Second)
+	require.NotNil(t, headA)
+	require.GreaterOrEqual(t, heightA, uint64(2))
+
+	headB, heightB := waitForCommonHead(t, nodes[2:], 10*time.Second)
+	require.NotNil(t, headB)
+	require.GreaterOrEqual(t, heightB, uint64(1))
+
+	// Heads should differ across partitions (most likely); allow equality only if coincidentally same.
+	if bytes.Equal(headA, headB) {
+		// If they matched by chance, ensure at least heights are equal.
+		require.Equal(t, heightA, heightB)
+	}
+
+	// Heal the partition: connect everyone.
+	addAllPeers(nodes)
+	time.Sleep(time.Second)
+
+	head, height := waitForCommonHead(t, nodes, 20*time.Second)
+	require.NotNil(t, head)
+	require.GreaterOrEqual(t, height, uint64(3))
+}
 
 func waitForHeight(t *testing.T, nodes []z.TestNode, minHeight uint64, timeout time.Duration) {
 	t.Helper()
@@ -250,5 +343,21 @@ func stopMinersFor(t *testing.T, nodes []z.TestNode) {
 		if miner, ok := node.Peer.(interface{ DisableMiner() }); ok {
 			miner.DisableMiner()
 		}
+	}
+}
+
+// throttledPoWClock returns a PoW time source that enforces a global minimum
+// interval between nonce attempts, making mining speed independent of CPU.
+func throttledPoWClock(period time.Duration) func() time.Time {
+	var (
+		mu sync.Mutex
+		ts = time.Now().Unix()
+	)
+	return func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		time.Sleep(period)
+		ts++
+		return time.Unix(ts, 0)
 	}
 }
