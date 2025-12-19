@@ -2,11 +2,14 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"math/big"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -145,6 +148,11 @@ func main() {
 						Usage: "The timeout after which a paxos proposer retries",
 						Value: time.Second * 5,
 					},
+					&urfave.StringFlag{
+						Name:  "mineraddr",
+						Usage: "Hex-encoded reward address for mined coins (defaults to random)",
+						Value: "",
+					},
 				},
 				Action: start,
 			},
@@ -201,6 +209,23 @@ func start(c *urfave.Context) error {
 		return xerrors.Errorf("if total peers is set PaxosID must be set, too")
 	}
 
+	minerAddr := strings.TrimSpace(c.String("mineraddr"))
+	if minerAddr == "" {
+		// Generate random miner address (32 bytes = 64 hex characters)
+		minerAddrBytes := make([]byte, 32)
+		_, err = rand.Read(minerAddrBytes)
+		if err != nil {
+			return xerrors.Errorf("failed to generate random miner address: %v", err)
+		}
+		minerAddr = hex.EncodeToString(minerAddrBytes)
+		log.Info().Msgf("Generated miner address: %s", minerAddr)
+	} else {
+		if _, err := hex.DecodeString(minerAddr); err != nil {
+			return xerrors.Errorf("invalid miner address: %v", err)
+		}
+		log.Info().Msgf("Using provided miner address: %s", minerAddr)
+	}
+
 	conf := peer.Configuration{
 		Socket:          sock,
 		MessageRegistry: standard.NewRegistry(),
@@ -227,10 +252,10 @@ func start(c *urfave.Context) error {
 		EnableMiner:        true,
 
 		PoWConfig: peer.PoWConfig{
-			Target:     new(big.Int).Lsh(big.NewInt(1), 231), //set to 253 for testing purposes to mine block faster
+			Target:     new(big.Int).Lsh(big.NewInt(1), 232), //set to 253 for testing purposes to mine block faster
 			MaxNonce:   0,
 			TimeSource: nil,
-			PubKey:     "27227b017ac2a11885743f6a84e435d44e338bf2082340c73893afa81b4c86dc", // randomly generated
+			PubKey:     minerAddr,
 			// equal PK 38ba78b01c71c3c9cfaf73c2755026bf1c365f66c00ae3f30b012869ff3d8fb527227b017ac2a11885743f6a84e435d44e338bf2082340c73893afa81b4c86dc
 		},
 	}

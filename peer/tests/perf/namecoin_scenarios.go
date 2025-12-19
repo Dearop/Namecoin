@@ -480,3 +480,124 @@ func packetSize(pkt transport.Packet) int {
 	}
 	return size
 }
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func uniqueHeadHashes(nodes []z.TestNode) map[string]struct{} {
+	heads := make(map[string]struct{})
+	for _, node := range nodes {
+		chain := node.NamecoinChainState()
+		if chain == nil {
+			continue
+		}
+		hash := chain.HeadHash()
+		heads[string(hash)] = struct{}{}
+	}
+	return heads
+}
+
+// waitUntilConvergedStable waits for a single head hash shared by all nodes at
+// or above targetHeight and requires it to remain stable for the given window.
+func waitUntilConvergedStable(nodes []z.TestNode, targetHeight uint64, stabilityWindow time.Duration, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	var stableSince time.Time
+
+	for time.Now().Before(deadline) {
+		heads := uniqueHeadHashes(nodes)
+		if len(heads) == 1 {
+			allAtHeight := true
+			for _, node := range nodes {
+				chain := node.NamecoinChainState()
+				if chain == nil || chain.HeadHeight() < targetHeight {
+					allAtHeight = false
+					break
+				}
+			}
+			if allAtHeight {
+				if stableSince.IsZero() {
+					stableSince = time.Now()
+				} else if time.Since(stableSince) >= stabilityWindow {
+					return true
+				}
+			} else {
+				stableSince = time.Time{}
+			}
+		} else {
+			stableSince = time.Time{}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return false
+}
+
+// waitUntilConverged waits until all nodes share a single head hash at or above targetHeight.
+func waitUntilConverged(nodes []z.TestNode, targetHeight uint64, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		heads := uniqueHeadHashes(nodes)
+		if len(heads) == 1 {
+			allAtHeight := true
+			for _, node := range nodes {
+				chain := node.NamecoinChainState()
+				if chain == nil || chain.HeadHeight() < targetHeight {
+					allAtHeight = false
+					break
+				}
+			}
+			if allAtHeight {
+				return true
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return false
+}
+
+// forceCompetingBlocks mines two blocks at the same target height on different nodes to create a fork.
+func forceCompetingBlocks(t *testing.T, nodes []z.TestNode, targetHeight uint64, timeout time.Duration) bool {
+	if len(nodes) < 2 {
+		return false
+	}
+	deadline := time.Now().Add(timeout)
+	miners := []z.TestNode{nodes[0], nodes[1]}
+
+	// Ensure both miners are running.
+	for _, m := range miners {
+		if ctl, ok := m.Peer.(interface {
+			EnableMiner()
+			StartMiner()
+		}); ok {
+			ctl.EnableMiner()
+			ctl.StartMiner()
+		}
+	}
+
+	for time.Now().Before(deadline) {
+		for _, node := range miners {
+			chain := node.NamecoinChainState()
+			if chain == nil {
+				continue
+			}
+			if chain.HeadHeight() >= targetHeight {
+				heads := uniqueHeadHashes(nodes)
+				if len(heads) >= 2 {
+					return true
+				}
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return false
+}

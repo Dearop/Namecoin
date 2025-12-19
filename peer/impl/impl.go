@@ -1,6 +1,7 @@
 package impl
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log"
@@ -50,7 +51,7 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 		namecoinChain.state.SetLogger(logger)
 		node.logger = logger
 	}
-	namecoinChain.SetPowTarget(conf.PoWConfig.Target)
+	namecoinChain.ConfigurePow(conf.PoWConfig)
 
 	transactionService := NewTransactionService(namecoinChain.state)
 
@@ -59,6 +60,7 @@ func NewPeer(conf peer.Configuration) peer.Peer {
 	node.transactionService = transactionService
 	node.namecoinDNS = NewNamecoinDNS()
 	node.namecoinDNS.Start(node)
+	node.pendingTxConfirm = make(map[string]chan error)
 	node.mu.Unlock()
 	return node
 }
@@ -122,6 +124,10 @@ type node struct {
 	stepWaitMu  sync.Mutex
 	stepWaiters map[uint][]chan struct{}
 
+	// Transaction confirmation tracking
+	txConfirmMu      sync.Mutex
+	pendingTxConfirm map[string]chan error
+
 	logger zerolog.Logger
 }
 
@@ -179,11 +185,15 @@ func (n *node) Start() error {
 		go n.heartbeatLoop(n.conf.HeartbeatInterval)
 	}
 
+	// Miner lifecycle:
+	// - When config.EnableMiner is false, keep the miner disabled even if other
+	//   code paths (e.g., block handlers) call StartMiner().
+	// - When config.EnableMiner is true, start mining immediately.
+	n.minerMu.Lock()
+	n.minerDisabled = !n.conf.EnableMiner
+	n.minerMu.Unlock()
+
 	if n.conf.EnableMiner {
-		// Allow mining when the node starts.
-		n.minerMu.Lock()
-		n.minerDisabled = false
-		n.minerMu.Unlock()
 		n.StartMiner()
 	}
 
@@ -219,8 +229,50 @@ func (n *node) GetDNSAddr() string {
 	return n.dnsServer.Addr()
 }
 
+// DNSServerAddr returns the bound DNS server address (alias for tests).
+func (n *node) DNSServerAddr() string {
+	return n.GetDNSAddr()
+}
+
 func (n *node) GetMinerID() string {
 	return n.conf.PoWConfig.PubKey
+}
+
+func (n *node) SetMinerID(minerID string) error {
+	minerID = strings.TrimSpace(minerID)
+	if minerID == "" {
+		return xerrors.Errorf("miner ID cannot be empty")
+	}
+	if _, err := hex.DecodeString(minerID); err != nil {
+		return xerrors.Errorf("invalid miner ID: %w", err)
+	}
+
+	n.minerMu.Lock()
+	n.conf.PoWConfig.PubKey = minerID
+	n.minerMu.Unlock()
+
+	if n.namecoinConsensus != nil {
+		n.namecoinConsensus.SetMinerPubKey(minerID)
+	}
+
+	return nil
+}
+
+func (n *node) GetSpendPlan(from string, amount uint64) ([]types.TxInput, []types.TxOutput, error) {
+	if n.transactionService == nil {
+		return nil, nil, xerrors.Errorf("transaction service unavailable")
+	}
+	return n.transactionService.GetSpendPlan(from, amount)
+}
+
+func (n *node) GetDomains() []types.NameRecord {
+	chain := n.NamecoinChainService.GetLongestChain()
+	domainsMap, _ := chain.SnapshotDomains()
+	domains := make([]types.NameRecord, 0, len(domainsMap))
+	for _, record := range domainsMap {
+		domains = append(domains, record)
+	}
+	return domains
 }
 
 func (n *node) HandleNamecoinCommand(buf []byte) error {
@@ -243,45 +295,81 @@ func (n *node) HandleNamecoinCommand(buf []byte) error {
 		return err
 	}
 
-	// Use the miner's public key for balance verification instead of transaction.From
-	// The miner receives mining rewards, so UTXOs are stored under the miner's key
-	minerPubKey := n.conf.PoWConfig.PubKey
-	log.Printf("[DEBUG] Using miner's public key for balance: %s", minerPubKey)
-
-	inputs, outputs, err := n.transactionService.VerifyBalance(transaction.TxID, minerPubKey, transaction.Amount)
+	inputs, outputs, err := n.transactionService.VerifyBalance(transaction.TxID, transaction.From, transaction.Amount)
 	if err != nil {
 		return err
 	}
 
 	tx := types.Tx{
-		From:    transaction.From,
-		Type:    transaction.Type,
-		Inputs:  inputs,
-		Outputs: outputs,
-		Amount:  transaction.Amount,
-		Payload: transaction.Payload,
+		From:      transaction.From,
+		Type:      transaction.Type,
+		Inputs:    inputs,
+		Outputs:   outputs,
+		Amount:    transaction.Amount,
+		Payload:   transaction.Payload,
+		Pk:        transaction.Pk,
+		TxID:      transaction.TxID,
+		Signature: transaction.Signature,
 	}
 
 	if err := n.transactionService.ValidateTxCommand(&tx); err != nil {
 		return err
 	}
 
+	//build the txID
+	txID, err := BuildTransactionID(&tx)
+	if err != nil {
+		return err
+	}
+
+	// Register for confirmation before broadcasting
+	log.Printf("[DEBUG] Registering transaction %s for confirmation tracking", txID)
+	confirmCh := n.registerTxConfirmation(txID)
+
 	msg := types.NamecoinTransactionMessage{
-		TxID: transaction.TxID,
-		Tx:   tx,
+		Type:      transaction.Type,
+		From:      transaction.From,
+		Amount:    transaction.Amount,
+		Payload:   transaction.Payload,
+		Inputs:    transaction.Inputs,
+		Outputs:   transaction.Outputs,
+		Pk:        transaction.Pk,
+		TxID:      transaction.TxID,
+		Signature: transaction.Signature,
 	}
 
 	marshaled, err := n.conf.MessageRegistry.MarshalMessage(msg)
 	if err != nil {
+		n.unregisterTxConfirmation(txID)
 		return err
 	}
 
+	log.Printf("[DEBUG] Broadcasting transaction %s to network", txID)
 	err = n.Broadcast(marshaled)
 	if err != nil {
+		log.Printf("[ERROR] Failed to broadcast transaction %s: %v", txID, err)
+		n.unregisterTxConfirmation(txID)
 		return err
 	}
 
-	return nil
+	// Wait for transaction to be included in a block (5 minute timeout)
+	log.Printf("[DEBUG] Waiting for transaction %s to be included in block (5 minute timeout)", txID)
+	timeout := time.NewTimer(5 * time.Minute)
+	defer timeout.Stop()
+
+	select {
+	case err = <-confirmCh:
+		if err != nil {
+			log.Printf("[ERROR] Transaction %s failed block inclusion: %v", txID, err)
+			return xerrors.Errorf("transaction failed to be included in block: %w", err)
+		}
+		log.Printf("[SUCCESS] Transaction %s confirmed in block", txID)
+		return nil
+	case <-timeout.C:
+		log.Printf("[TIMEOUT] Transaction %s timed out after 5 minutes", txID)
+		n.unregisterTxConfirmation(txID)
+		return xerrors.Errorf("transaction %s confirmation timed out after 5 minutes", txID)
+	}
 }
 
 type pendingAck struct {
@@ -372,13 +460,25 @@ func (n *node) EnableMiner() {
 }
 
 func (n *node) MinerDoWork(stop <-chan struct{}) error {
+	n.minerMu.Lock()
+	disabled := n.minerDisabled
+	n.minerMu.Unlock()
+	if disabled || stop == nil {
+		return ErrMiningAborted
+	}
+
 	// Bail out quickly if stop was already signaled.
 	if stopped(stop) {
 		return ErrMiningAborted
 	}
-
-	// Build base header from current chain head
 	headHash, headHeight := n.NamecoinChainService.HeadSnapshot()
+	n.mu.RLock()
+	target := n.NamecoinChainService.GetLongestChain().NextPowTarget()
+	n.mu.RUnlock()
+
+	if target == nil {
+		target = effectiveTarget(n.conf.PoWConfig.Target)
+	}
 
 	nextHeight := headHeight + 1
 	if headHash == nil {
@@ -392,44 +492,71 @@ func (n *node) MinerDoWork(stop <-chan struct{}) error {
 	}
 
 	// Mine block
-	block, err := n.namecoinConsensus.MineAndApply(stop, &base)
+	block, err := n.namecoinConsensus.MineAndApply(stop, &base, target)
 	if err != nil {
 		return err
 	}
-
-	// If we were asked to stop while mining, drop the freshly mined block
-	// instead of applying/broadcasting it.
 	if stopped(stop) {
 		return ErrMiningAborted
 	}
-
-	// Apply block locally before gossiping it so height advances even if
-	// networking/logging is slow.
 	changed, err := n.NamecoinChainService.AppendBlockToLongestChain(&block)
 	if err != nil {
+		n.notifyAllBlockTxs(block.Transactions, err)
 		return err
 	}
-
 	if !changed {
-		// Our block lost the race → drop it silently
+		n.notifyBlockRaceLost(block.Transactions)
 		return nil
 	}
-
-	// Broadcast mined block
-	msg := types.NamecoinBlockMessage{
-		Block: block,
-	}
-
+	n.notifyBlockMined(block)
+	msg := types.NamecoinBlockMessage{Block: block}
 	wire, err := n.conf.MessageRegistry.MarshalMessage(msg)
 	if err != nil {
 		return err
 	}
-
 	err = n.broadcastWithOptions(wire, true)
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+// notifyAllBlockTxs notifies all transactions in a block with the given error
+func (n *node) notifyAllBlockTxs(txs []types.Tx, err error) {
+	log.Printf("[DEBUG] Notifying %d transactions in block with error: %v", len(txs), err)
+	for _, val := range txs {
+		txID, txErr := BuildTransactionID(&val)
+		if txErr == nil {
+			n.notifyTxConfirmation(txID, err)
+		}
+	}
+}
+
+// notifyBlockRaceLost notifies all non-reward transactions that block lost the race
+func (n *node) notifyBlockRaceLost(txs []types.Tx) {
+	log.Printf("[DEBUG] Mined block lost race, notifying %d transactions as failed", len(txs))
+	for _, val := range txs {
+		if val.Type != "Reward" {
+			txID, txErr := BuildTransactionID(&val)
+			if txErr == nil {
+				n.notifyTxConfirmation(txID, xerrors.New("block lost race, transaction not in canonical chain"))
+			}
+		}
+	}
+}
+
+// notifyBlockMined notifies all non-reward transactions that block was mined successfully
+func (n *node) notifyBlockMined(block types.Block) {
+	log.Printf("[DEBUG] Successfully applied mined block at height %d, notifying %d transactions",
+		block.Header.Height, len(block.Transactions))
+	for _, val := range block.Transactions {
+		if val.Type != "Reward" {
+			txID, txErr := BuildTransactionID(&val)
+			if txErr == nil {
+				n.notifyTxConfirmation(txID, nil)
+			}
+		}
+	}
 }
 
 func stopped(stop <-chan struct{}) bool {
@@ -975,6 +1102,51 @@ func (n *node) SetRoutingEntry(origin, relayAddr string) {
 		return
 	}
 	n.routingTable[origin] = relayAddr
+}
+
+// registerTxConfirmation registers a transaction to wait for confirmation
+func (n *node) registerTxConfirmation(txID string) chan error {
+	n.txConfirmMu.Lock()
+	defer n.txConfirmMu.Unlock()
+
+	ch := make(chan error, 1)
+	n.pendingTxConfirm[txID] = ch
+	log.Printf("[DEBUG] Registered txID=%s for confirmation (total pending: %d)", txID, len(n.pendingTxConfirm))
+	return ch
+}
+
+// unregisterTxConfirmation removes a transaction from the confirmation wait list
+func (n *node) unregisterTxConfirmation(txID string) {
+	n.txConfirmMu.Lock()
+	defer n.txConfirmMu.Unlock()
+
+	if ch, ok := n.pendingTxConfirm[txID]; ok {
+		log.Printf("[DEBUG] Unregistering txID=%s (cleaning up)", txID)
+		close(ch)
+		delete(n.pendingTxConfirm, txID)
+	} else {
+		log.Printf("[WARN] Attempted to unregister txID=%s but not found in pending map", txID)
+	}
+}
+
+// notifyTxConfirmation notifies waiting handlers that a transaction was included in a block
+func (n *node) notifyTxConfirmation(txID string, err error) {
+	n.txConfirmMu.Lock()
+	defer n.txConfirmMu.Unlock()
+
+	if ch, ok := n.pendingTxConfirm[txID]; ok {
+		if err != nil {
+			log.Printf("[DEBUG] Notifying txID=%s with ERROR: %v", txID, err)
+		} else {
+			log.Printf("[DEBUG] Notifying txID=%s with SUCCESS (block applied)", txID)
+		}
+		ch <- err
+		close(ch)
+		delete(n.pendingTxConfirm, txID)
+	} else {
+		log.Printf("[DEBUG] Attempted to notify txID=%s but not in pending map "+
+			"(may have timed out or already processed)", txID)
+	}
 }
 
 // validateNode checks the receiver and its critical configuration.

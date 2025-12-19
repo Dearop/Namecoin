@@ -1,0 +1,59 @@
+classDiagram
+    direction LR
+
+    class SignedTransaction {
+        +string type        // NameNew | NameFirstUpdate | NameUpdate | Reward
+        +string from        // minerID / public key
+        +json   payload     // type-specific payload (raw JSON)
+        +string pk          // sender public key
+        +string signature   // over canonical tx hash
+        +string txId        // hash of unsigned tx
+        +uint64 amount      // fee
+    }
+
+    class NameNewPayload {
+        +string commitment
+        +uint64 ttl
+    }
+
+    class NameFirstUpdatePayload {
+        +string domain
+        +string salt
+        +string ip
+        +uint64 ttl
+        +string txid        // references NameNew tx
+    }
+
+    class NameUpdatePayload {
+        +string domain
+        +string ip
+        +uint64 ttl
+    }
+
+    class Tx {
+        +string Type        // NameNew | NameFirstUpdate | NameUpdate | Reward
+        +string From        // owner
+        +[]TxInput Inputs
+        +[]TxOutput Outputs
+        +uint64 Amount      // fee
+        +[]byte Payload     // marshaled payload
+    }
+
+    class TxInput {
+        +string PrevTxID
+        +uint32 OutputIndex
+        +string Signature
+    }
+
+    class TxOutput {
+        +string To
+        +uint64 Value
+    }
+
+    SignedTransaction --> NameNewPayload         : payload when type = NameNew
+    SignedTransaction --> NameFirstUpdatePayload : payload when type = NameFirstUpdate
+    SignedTransaction --> NameUpdatePayload      : payload when type = NameUpdate
+
+    SignedTransaction --> Tx : converted after validation (payload marshaled)
+    Tx --> TxInput
+    Tx --> TxOutput

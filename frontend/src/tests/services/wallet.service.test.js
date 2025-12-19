@@ -7,6 +7,7 @@ import {
   exportWalletToFile,
   importWalletFromFile,
 } from '../../services/wallet.service.js';
+import { sha256, hexToBytes } from '../../utils/hash.js';
 
 // Mock dependencies
 vi.mock('../../utils/storage.js', () => ({
@@ -54,18 +55,20 @@ describe('wallet.service.js', () => {
   });
 
   describe('deriveWalletID', () => {
-    it('should return the public key as wallet ID', async () => {
+    it('should hash the public key bytes', async () => {
       const publicKey = 'abc123def456';
+      const expected = await sha256(hexToBytes(publicKey));
       const walletID = await deriveWalletID(publicKey);
 
-      expect(walletID).toBe(publicKey);
+      expect(walletID).toBe(expected);
     });
 
-    it('should work with any public key', async () => {
+    it('should produce deterministic hashes', async () => {
       const publicKey = '0123456789abcdef';
-      const walletID = await deriveWalletID(publicKey);
+      const first = await deriveWalletID(publicKey);
+      const second = await deriveWalletID(publicKey);
 
-      expect(walletID).toBe(publicKey);
+      expect(first).toBe(second);
     });
   });
 

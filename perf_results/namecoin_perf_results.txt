@@ -1,0 +1,13 @@
+### Namecoin perf runs (2025-12-19T10:48:05+01:00) runs=3
+--- run 1 ---
+FAIL	go.dedis.ch/cs438/peer/tests/perf [build failed]
+FAIL
+
+--- run 2 ---
+FAIL	go.dedis.ch/cs438/peer/tests/perf [build failed]
+FAIL
+
+--- run 3 ---
+FAIL	go.dedis.ch/cs438/peer/tests/perf [build failed]
+FAIL
+

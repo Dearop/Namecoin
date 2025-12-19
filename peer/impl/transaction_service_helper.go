@@ -9,28 +9,32 @@ import (
 	canonicaljson "github.com/gibson042/canonicaljson-go"
 )
 
-func (t *SignedTransaction) SerializeTransaction() []byte {
+func (t *SignedTransaction) SerializeTransaction() ([]byte, error) {
 	data := map[string]interface{}{
 		"type":    t.Type,
 		"from":    t.From,
 		"amount":  t.Amount,
 		"payload": t.Payload,
+		"inputs":  t.Inputs,
+		"outputs": t.Outputs,
 	}
 
-	b, _ := canonicaljson.Marshal(data)
-	return b
+	b, err := canonicaljson.Marshal(data)
+	return b, err
 }
 
-func (t *SignedTransaction) SerializeTransactionSignature() []byte {
+func (t *SignedTransaction) SerializeTransactionSignature() ([]byte, error) {
 	data := map[string]interface{}{
 		"type":    t.Type,
 		"from":    t.From,
 		"amount":  t.Amount,
 		"payload": t.Payload,
+		"inputs":  t.Inputs,
+		"outputs": t.Outputs,
 	}
 
-	b, _ := canonicaljson.Marshal(data)
-	return b
+	b, err := canonicaljson.Marshal(data)
+	return b, err
 }
 
 func Hash(bytes []byte) []byte {

@@ -10,6 +10,7 @@ type UTXO struct {
 	TxID   string
 	To     string
 	Amount uint64
+	Order  uint64
 }
 
 type TxInput struct {
@@ -42,6 +43,12 @@ type Tx struct {
 	// primary amount
 	Amount  uint64
 	Payload json.RawMessage
+
+	// On-chain authentication metadata (MVP).
+	// For Reward transactions these may be empty.
+	Pk        string
+	TxID      string
+	Signature string
 }
 
 // BlockHeader captures the PoW header fields that are hashed when
@@ -128,8 +135,16 @@ func (b *Block) Unmarshal(data []byte) error {
 
 // NamecoinTransactionMessage message for broadcasting UTXO across the nodes
 type NamecoinTransactionMessage struct {
-	Tx   Tx
-	TxID string
+	Type      string
+	From      string
+	Amount    uint64
+	Payload   json.RawMessage
+	Inputs    []TxInput
+	Outputs   []TxOutput
+	Tx        Tx
+	Pk        string
+	TxID      string
+	Signature string
 }
 
 type NamecoinBlockMessage struct {
@@ -143,14 +158,22 @@ func (b *Block) ComputeHash() []byte {
 }
 
 func (h *BlockHeader) SerializeHeader() []byte {
-	data := map[string]interface{}{
-		"height":     h.Height,
-		"prevHash":   h.PrevHash,
-		"txRoot":     h.TxRoot,
-		"timestamp":  h.Timestamp,
-		"nonce":      h.Nonce,
-		"miner":      h.Miner,
-		"difficulty": h.Difficulty,
+	data := struct {
+		Height     uint64 `json:"height"`
+		PrevHash   []byte `json:"prevHash"`
+		TxRoot     []byte `json:"txRoot"`
+		Timestamp  int64  `json:"timestamp"`
+		Nonce      uint64 `json:"nonce"`
+		Miner      string `json:"miner"`
+		Difficulty []byte `json:"difficulty"`
+	}{
+		Height:     h.Height,
+		PrevHash:   h.PrevHash,
+		TxRoot:     h.TxRoot,
+		Timestamp:  h.Timestamp,
+		Nonce:      h.Nonce,
+		Miner:      h.Miner,
+		Difficulty: h.Difficulty,
 	}
 
 	b, _ := json.Marshal(data)
@@ -158,12 +181,18 @@ func (h *BlockHeader) SerializeHeader() []byte {
 }
 
 func (h *BlockHeader) SerializeBase() []byte {
-	data := map[string]interface{}{
-		"height":     h.Height,
-		"prevHash":   h.PrevHash,
-		"txRoot":     h.TxRoot,
-		"miner":      h.Miner,
-		"difficulty": h.Difficulty,
+	data := struct {
+		Height     uint64 `json:"height"`
+		PrevHash   []byte `json:"prevHash"`
+		TxRoot     []byte `json:"txRoot"`
+		Miner      string `json:"miner"`
+		Difficulty []byte `json:"difficulty"`
+	}{
+		Height:     h.Height,
+		PrevHash:   h.PrevHash,
+		TxRoot:     h.TxRoot,
+		Miner:      h.Miner,
+		Difficulty: h.Difficulty,
 	}
 
 	b, _ := json.Marshal(data)

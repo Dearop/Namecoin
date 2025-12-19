@@ -30,19 +30,22 @@ test_unit_hw3:
 	go test -timeout 2m -v -race -run Test_HW3 ./peer/tests/unit
 
 test_unit_POW:
-	go test -timeout 2m -v -race -run 'Test(MineNonce|CheckWork)' ./peer/tests/unit
+	go test -timeout 2m -v -race -run 'Test(MineNonce|CheckWork|EncodeDecodeDifficulty|AdjustDifficultyClamps|IsBlockComplexityValid)' ./peer/tests/unit
 
 test_unit_transaction_service:
 	go test -timeout 2m -v -race -run TestTransactionService ./peer/tests/unit
 
 test_unit_wallet_manager:
-	go test -timeout 2m -v -race -run TestTokenWalletManager ./peer/tests/unit
+	go test -timeout 2m -v -race -run 'Test(VerifyBalance|TokenBalanceManager)' ./peer/tests/unit
 
 test_unit_namecoin_chain_service:
 	go test -timeout 2m -v -race -run 'Test_NamecoinChainService' ./peer/tests/unit
 
 test_unit_namecoin_resolver:
 	go test -timeout 2m -v -race -run 'TestNamecoinDNS' ./peer/tests/unit
+
+test_unit_namecoin_state:
+	go test -timeout 2m -v -race -run 'Test_Namecoin' ./peer/tests/unit
 
 test_unit_namecoin_expiry:
 	go test -timeout 2m -v -race -run 'TestNamecoinExpiry' ./peer/tests/unit
@@ -71,6 +74,19 @@ test_int_namecoin_expiry:
 test_int_namecoin_longest_chain:
 	go test -timeout 5m -v -race -run Test_Namecoin_Integration_LongestChain ./peer/tests/integration
 
+test_int_namecoin_pow:
+	go test -timeout 5m -v -race -run 'Test_Namecoin_Integration' ./peer/tests/integration
+
+# Aggregate Namecoin test runner: runs unit + integration suites.
+test_namecoin_unit: test_unit_namecoin_resolver test_unit_namecoin_expiry test_unit_POW test_unit_transaction_service test_unit_wallet_manager test_unit_namecoin_state test_unit_namecoin_chain_service
+
+test_namecoin_integration: test_int_namecoin_dns test_int_node_dns test_int_namecoin_expiry test_int_namecoin_longest_chain test_int_namecoin_pow test_int_namecoin_verification
+
+test_namecoin: test_namecoin_unit test_namecoin_integration
+
+test_int_namecoin_verification:
+	go test -timeout 5m -v -race -run TestNamecoinBlockValidation ./peer/tests/integration
+
 # JSONIFY is set to "-json" in CI to format for GitHub, empty for displaying locally
 # || true allows to ignore error code and allow for smoother output logging
 test_bench_hw1:
@@ -88,7 +104,22 @@ test_bench_hw3_consensus:
 	@GLOG=no go test -v ${JSONIFY} -timeout 12m -run Test_HW3_BenchmarkConsensus -v -count 1 --tags=performance -benchtime=${BENCHTIME} ./peer/tests/perf/ || true
 
 test_perf_namecoin:
-	@GLOG=no go test -v ${JSONIFY} -timeout 20m -run 'Test_.*_Perf' -count 1 --tags=performance ./peer/tests/perf/ || true
+	@GLOG=no go test -v ${JSONIFY} -timeout 0 -run 'Test_.*_Perf' -count 1 --tags=performance ./peer/tests/perf/ || true
+
+test_perf_convergence_sweep:
+	@GLOG=no go test -v ${JSONIFY} -timeout 0 -run 'Test_Consensus_Convergence_Sweep_Perf' -count 1 --tags=performance ./peer/tests/perf/ || true
+
+test_perf_mining_throughput_scaling:
+	@GLOG=no go test -v ${JSONIFY} -timeout 0 -run 'Test_Mining_Throughput_Scaling_Perf' -count 1 --tags=performance ./peer/tests/perf/ || true
+
+test_perf_domain_operation_summary:
+	@GLOG=no go test -v ${JSONIFY} -timeout 0 -run 'Test_Domain_Operation_Throughput_Summary_Perf' -count 1 --tags=performance ./peer/tests/perf/ || true
+
+test_perf_convergence_vs_network_size:
+	@GLOG=no go test -v ${JSONIFY} -timeout 0 -run 'Test_Convergence_vs_Network_Size_Perf' -count 1 --tags=performance ./peer/tests/perf/ || true
+
+test_perf_network_overhead_per_update:
+	@GLOG=no go test -v ${JSONIFY} -timeout 0 -run 'Test_Network_Overhead_Per_Domain_Update_Perf' -count 1 --tags=performance ./peer/tests/perf/ || true
 
 perf_namecoin_runs:
 	@mkdir -p $(dir $(PERF_RESULTS_FILE))
@@ -116,6 +147,7 @@ vet:
 # Default proxy and node addresses for development
 PROXYADDR ?= 127.0.0.1:8080
 NODEADDR ?= 127.0.0.1:9000
+FRONTENDPORT ?= 5173
 
 # Run both backend and frontend together
 run:
@@ -123,13 +155,53 @@ run:
 	@echo "Starting Peerster System"
 	@echo "=========================================="
 	@echo "Backend: http://$(PROXYADDR)"
-	@echo "Frontend: http://localhost:5173"
+	@echo "Frontend: http://localhost:$(FRONTENDPORT)"
 	@echo "=========================================="
 	@echo ""
 	@trap 'kill 0' SIGINT; \
 		(cd gui && echo "\033[34m[BACKEND]\033[0m Starting..." && go run gui.go start --proxyaddr $(PROXYADDR) --nodeaddr $(NODEADDR) 2>&1 | sed 's/^/\x1b[34m[BACKEND]\x1b[0m /') & \
-		(cd frontend && npm install --silent && echo "\033[32m[FRONTEND]\033[0m Starting on http://localhost:5173..." && VITE_BACKEND_URL=http://$(PROXYADDR) npm run dev 2>&1 | sed 's/^/\x1b[32m[FRONTEND]\x1b[0m /') & \
+		(cd frontend && npm install --silent && echo "\033[32m[FRONTEND]\033[0m Starting on http://localhost:$(FRONTENDPORT)..." && VITE_BACKEND_URL=http://$(PROXYADDR) npm run dev -- --port $(FRONTENDPORT) 2>&1 | sed 's/^/\x1b[32m[FRONTEND]\x1b[0m /') & \
 		wait
+
+# Run two nodes with frontends for NameCoin testing
+run_two_nodes:
+	@echo "=========================================="
+	@echo "Starting Two NameCoin Nodes"
+	@echo "=========================================="
+	@echo "Node 1 - Backend: http://127.0.0.1:8080"
+	@echo "Node 1 - Frontend: http://localhost:5173"
+	@echo ""
+	@echo "Node 2 - Backend: http://127.0.0.1:8081"
+	@echo "Node 2 - Frontend: http://localhost:5174"
+	@echo "=========================================="
+	@echo "Press Ctrl+C to stop all nodes"
+	@echo "=========================================="
+	@echo ""
+	@echo "\033[36m[SETUP]\033[0m Cleaning up old blockchain data..."
+	@rm -rf /tmp/node1 /tmp/node2
+	@echo "\033[36m[SETUP]\033[0m Fresh start - both nodes will share the same blockchain"
+	@echo ""
+	@cleanup() { \
+		echo ""; \
+		echo "\033[31m[SHUTDOWN]\033[0m Stopping all processes..."; \
+		pkill -P $$$$ 2>/dev/null || true; \
+		kill 0 2>/dev/null || true; \
+		sleep 1; \
+		echo "\033[31m[SHUTDOWN]\033[0m All nodes stopped"; \
+		exit 0; \
+	}; \
+	trap cleanup SIGINT SIGTERM; \
+	(cd gui && echo "\033[34m[NODE1-BACKEND]\033[0m Starting..." && go run gui.go start --proxyaddr 127.0.0.1:8080 --nodeaddr 127.0.0.1:9000 --storagefolder /tmp/node1 --antientropy 10s --heartbeat 5s 2>&1 | sed 's/^/\x1b[34m[NODE1-BACKEND]\x1b[0m /') & \
+	(cd frontend && npm install --silent && echo "\033[32m[NODE1-FRONTEND]\033[0m Starting on http://localhost:5173..." && VITE_BACKEND_URL=http://127.0.0.1:8080 npm run dev -- --port 5173 2>&1 | sed 's/^/\x1b[32m[NODE1-FRONTEND]\x1b[0m /') & \
+	(cd gui && sleep 2 && echo "\033[35m[NODE2-BACKEND]\033[0m Starting..." && go run gui.go start --proxyaddr 127.0.0.1:8081 --nodeaddr 127.0.0.1:9001 --storagefolder /tmp/node2 --antientropy 10s --heartbeat 5s 2>&1 | sed 's/^/\x1b[35m[NODE2-BACKEND]\x1b[0m /') & \
+	(cd frontend && sleep 3 && echo "\033[33m[NODE2-FRONTEND]\033[0m Starting on http://localhost:5174..." && VITE_BACKEND_URL=http://127.0.0.1:8081 npm run dev -- --port 5174 2>&1 | sed 's/^/\x1b[33m[NODE2-FRONTEND]\x1b[0m /') & \
+	(sleep 8 && echo "\033[36m[CONNECTOR]\033[0m Connecting nodes..." && \
+		curl -s -X POST http://127.0.0.1:8080/messaging/peers -H "Content-Type: application/json" -d '["127.0.0.1:9001"]' > /dev/null && \
+		echo "\033[36m[CONNECTOR]\033[0m Node 1 added Node 2 as peer" && \
+		curl -s -X POST http://127.0.0.1:8081/messaging/peers -H "Content-Type: application/json" -d '["127.0.0.1:9000"]' > /dev/null && \
+		echo "\033[36m[CONNECTOR]\033[0m Node 2 added Node 1 as peer" && \
+		echo "\033[36m[CONNECTOR]\033[0m ✓ Nodes are now connected on the same blockchain!") & \
+	wait
 
 frontend:
 	cd frontend && npm install && npm run dev

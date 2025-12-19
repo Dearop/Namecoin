@@ -12,10 +12,11 @@ vi.mock('vue-router', () => ({
 let mockIsWalletLoaded = false;
 const mockCreateWallet = vi.fn();
 const mockLoadWallet = vi.fn();
+const walletState = { value: { privateKey: 'test-key', publicKey: 'test-pub', id: 'test-wallet-id' } };
 
 vi.mock('../../composables/useWallet.js', () => ({
   useWallet: () => ({
-    wallet: { value: { privateKey: 'test-key', publicKey: 'test-pub' } },
+    wallet: walletState,
     get isWalletLoaded() { return { value: mockIsWalletLoaded }; },
     loadWallet: mockLoadWallet,
     createWallet: mockCreateWallet
@@ -39,30 +40,50 @@ vi.mock('../../services/crypto.service.js', () => ({
 }));
 
 vi.mock('../../services/transaction.service.js', () => ({
-  buildTransaction: vi.fn(() => ({ type: 'DOMAIN_CREATION' })),
-  computeTransactionID: vi.fn(() => 'tx-id')
+  buildTransaction: vi.fn(() => ({
+    type: 'DOMAIN_CREATION',
+    from: 'wallet123',
+    amount: 1,
+    payload: {},
+    pk: 'test-pub',
+    inputs: [],
+    outputs: [],
+  })),
+  computeTransactionID: vi.fn((tx) => ({ ...tx, transactionID: 'tx-id' }))
 }));
 
 vi.mock('../../services/api.service.js', () => ({
   sendTransaction: vi.fn(() => Promise.resolve({ success: true })),
-
-  getMinerID: vi.fn(() => Promise.resolve('test-miner-id'))
+  getMinerID: vi.fn(() => Promise.resolve('test-miner-id')),
+  setMinerID: vi.fn(() => Promise.resolve({ minerID: 'wallet123' })),
+  getSpendPlan: vi.fn(() => Promise.resolve({
+    inputs: [{ TxID: 'utxo1', Index: 0 }],
+    outputs: [{ To: 'wallet123', Amount: 1 }],
+  })),
+  fetchRegisteredDomains: vi.fn(() => Promise.resolve([]))
 }));
 
 vi.mock('../../utils/hash.js', () => ({
   generateSalt: vi.fn(() => 'test-salt')
 }));
 
-vi.mock('../../utils/storage.js', () => ({
-  incrementNonce: vi.fn(() => 1)
+vi.mock('../../utils/domainStorage.js', () => ({
+  savePendingDomain: vi.fn(),
+  getPendingDomains: vi.fn(() => []),
+  updateDomainStatus: vi.fn(),
+  removePendingDomain: vi.fn(),
+  clearAllPendingDomains: vi.fn()
 }));
 
 describe('Wallet.vue', () => {
   let wrapper;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     mockIsWalletLoaded = false;
+    // Reset fetchRegisteredDomains to return empty array by default
+    const { fetchRegisteredDomains } = await import('../../services/api.service.js');
+    fetchRegisteredDomains.mockResolvedValue([]);
     wrapper = mount(Wallet);
   });
 
@@ -183,12 +204,14 @@ describe('Wallet.vue', () => {
       wrapper = mount(Wallet);
       await flushPromises();
       
+      walletState.value.id = null;
       localStorage.clear();
       wrapper.vm.domainName = 'test.domain';
       
       await wrapper.vm.handleSubmit();
       
-      expect(wrapper.vm.status).toContain('Miner ID not found');
+      expect(wrapper.vm.status).toContain('Wallet ID not found');
+      walletState.value.id = 'test-wallet-id';
     });
   });
 
@@ -259,11 +282,13 @@ describe('Wallet.vue', () => {
       wrapper = mount(Wallet);
       await flushPromises();
       
+      walletState.value.id = null;
       localStorage.clear();
       
       await wrapper.vm.handleUpdate({ domain: 'test.domain', newIp: '1.2.3.5' });
       
-      expect(wrapper.vm.status).toContain('Miner ID not found');
+      expect(wrapper.vm.status).toContain('Wallet ID not found');
+      walletState.value.id = 'test-wallet-id';
     });
   });
 
@@ -276,6 +301,191 @@ describe('Wallet.vue', () => {
       
       expect(wrapper.vm.domainsLoaded).toBe(true);
       expect(wrapper.vm.domains).toBeDefined();
+    });
+
+    it('should fetch domains from API and map correctly', async () => {
+      const { fetchRegisteredDomains } = await import('../../services/api.service.js');
+      const mockDomains = [
+        { Domain: 'test.com', Owner: 'owner1', IP: '1.2.3.4', ExpiresAt: 100 },
+        { Domain: 'example.com', Owner: 'owner2', IP: '5.6.7.8', ExpiresAt: 200 }
+      ];
+      // Use mockResolvedValue (not Once) so it works for multiple calls
+      fetchRegisteredDomains.mockResolvedValue(mockDomains);
+      
+      wrapper = mount(Wallet);
+      await flushPromises();
+      
+      // Clear any calls from onMounted
+      fetchRegisteredDomains.mockClear();
+      
+      await wrapper.vm.fetchDomains();
+      
+      expect(fetchRegisteredDomains).toHaveBeenCalled();
+      expect(wrapper.vm.domains).toHaveLength(2);
+      expect(wrapper.vm.domains[0].name).toBe('test.com');
+      expect(wrapper.vm.domains[0].owner).toBe('owner1');
+    });
+
+    it('should handle fetch error gracefully', async () => {
+      const { fetchRegisteredDomains } = await import('../../services/api.service.js');
+      fetchRegisteredDomains.mockRejectedValue(new Error('Network error'));
+      
+      wrapper = mount(Wallet);
+      await flushPromises();
+      
+      await wrapper.vm.fetchDomains();
+      
+      expect(wrapper.vm.status).toContain('Error fetching domains');
+      expect(wrapper.vm.domainsLoaded).toBe(true);
+    });
+  });
+
+  describe('Error handling - domain removal', () => {
+    beforeEach(() => {
+      mockIsWalletLoaded = true;
+      localStorage.setItem('minerID', 'test-miner-id');
+    });
+
+    it('should remove domain when "domain already exists" error occurs in handleFirstUpdate', async () => {
+      const { sendTransaction } = await import('../../services/api.service.js');
+      const { removePendingDomain } = await import('../../utils/domainStorage.js');
+      sendTransaction.mockRejectedValueOnce(new Error('domain already exists'));
+      
+      wrapper = mount(Wallet);
+      await flushPromises();
+      
+      const domain = { 
+        domain: 'test.com', 
+        salt: 'salt123', 
+        revealIp: '1.2.3.4',
+        revealTtl: 0,
+        txid: 'tx123',
+        isRevealing: false 
+      };
+      
+      await wrapper.vm.handleFirstUpdate(domain);
+      
+      expect(removePendingDomain).toHaveBeenCalledWith('test-wallet-id', 'test.com');
+      expect(wrapper.vm.status).toContain('Error');
+    });
+
+    it('should remove domain when "commitment mismatch" error occurs', async () => {
+      const { sendTransaction } = await import('../../services/api.service.js');
+      const { removePendingDomain } = await import('../../utils/domainStorage.js');
+      sendTransaction.mockRejectedValueOnce(new Error('commitment mismatch'));
+      
+      wrapper = mount(Wallet);
+      await flushPromises();
+      
+      const domain = { 
+        domain: 'test.com', 
+        salt: 'salt123', 
+        revealIp: '1.2.3.4',
+        revealTtl: 0,
+        txid: 'tx123',
+        isRevealing: false 
+      };
+      
+      await wrapper.vm.handleFirstUpdate(domain);
+      
+      expect(removePendingDomain).toHaveBeenCalledWith('test-wallet-id', 'test.com');
+    });
+
+    it('should remove domain when "expired" error occurs in handleUpdate', async () => {
+      const { sendTransaction } = await import('../../services/api.service.js');
+      const { removePendingDomain } = await import('../../utils/domainStorage.js');
+      sendTransaction.mockRejectedValueOnce(new Error('cannot update non-existent or expired domain'));
+      
+      wrapper = mount(Wallet);
+      await flushPromises();
+      
+      const domain = { 
+        domain: 'test.com', 
+        newIp: '5.6.7.8',
+        updateTtl: 0,
+        isUpdating: false 
+      };
+      
+      await wrapper.vm.handleUpdate(domain);
+      
+      expect(removePendingDomain).toHaveBeenCalledWith('test-wallet-id', 'test.com');
+      expect(wrapper.vm.status).toContain('Error');
+    });
+
+    it('should remove domain when "cannot update domain you do not own" error occurs', async () => {
+      const { sendTransaction } = await import('../../services/api.service.js');
+      const { removePendingDomain } = await import('../../utils/domainStorage.js');
+      sendTransaction.mockRejectedValueOnce(new Error('cannot update domain you do not own'));
+      
+      wrapper = mount(Wallet);
+      await flushPromises();
+      
+      const domain = { 
+        domain: 'test.com', 
+        newIp: '5.6.7.8',
+        updateTtl: 0,
+        isUpdating: false 
+      };
+      
+      await wrapper.vm.handleUpdate(domain);
+      
+      expect(removePendingDomain).toHaveBeenCalledWith('test-wallet-id', 'test.com');
+    });
+
+    it('should call fetchDomains after removing domain on error', async () => {
+      const { sendTransaction } = await import('../../services/api.service.js');
+      const { fetchRegisteredDomains } = await import('../../services/api.service.js');
+      sendTransaction.mockRejectedValueOnce(new Error('domain already exists'));
+      fetchRegisteredDomains.mockResolvedValueOnce([]);
+      
+      wrapper = mount(Wallet);
+      await flushPromises();
+      
+      const domain = { 
+        domain: 'test.com', 
+        salt: 'salt123', 
+        revealIp: '1.2.3.4',
+        revealTtl: 0,
+        txid: 'tx123',
+        isRevealing: false 
+      };
+      
+      await wrapper.vm.handleFirstUpdate(domain);
+      
+      expect(fetchRegisteredDomains).toHaveBeenCalled();
+    });
+  });
+
+  describe('TTL validation', () => {
+    beforeEach(() => {
+      mockIsWalletLoaded = true;
+    });
+
+    it('should initialize TTL as 0', () => {
+      wrapper = mount(Wallet);
+      expect(wrapper.vm.ttl).toBe(0);
+    });
+
+    it('should initialize domain revealTtl as 0', async () => {
+      const { getPendingDomains } = await import('../../utils/domainStorage.js');
+      getPendingDomains.mockReturnValue([
+        { domain: 'test.com', salt: 'salt', commitment: 'hash', txid: 'tx1', status: 'pending' }
+      ]);
+      
+      wrapper = mount(Wallet);
+      wrapper.vm.loadMyDomains();
+      
+      expect(wrapper.vm.myDomains[0].revealTtl).toBe(0);
+      expect(wrapper.vm.myDomains[0].updateTtl).toBe(0);
+    });
+
+    it('should have TTL input with min="0" and step="1"', () => {
+      wrapper = mount(Wallet);
+      const ttlInput = wrapper.find('input#ttl');
+      
+      expect(ttlInput.attributes('min')).toBe('0');
+      expect(ttlInput.attributes('step')).toBe('1');
+      expect(ttlInput.attributes('type')).toBe('number');
     });
   });
 });

@@ -33,6 +33,8 @@ describe('transaction.service.js', () => {
         amount: 1,
         payload: 'commitment_hash',
         pk: 'pubkey123',
+        inputs: [],
+        outputs: [],
         transactionID: null,
       });
     });
@@ -67,9 +69,11 @@ describe('transaction.service.js', () => {
     it('should add transaction ID to transaction', async () => {
       const tx = {
         type: 'name_new',
-        source: 'abc123',
-        fee: 1,
+        from: 'abc123',
+        amount: 1,
         payload: 'commitment',
+        inputs: [],
+        outputs: [],
         transactionID: null,
       };
 
@@ -77,15 +81,17 @@ describe('transaction.service.js', () => {
 
       expect(result.transactionID).toBe('txid_name_new');
       expect(result.type).toBe('name_new');
-      expect(result.source).toBe('abc123');
+      expect(result.from).toBe('abc123');
     });
 
     it('should not mutate original transaction', async () => {
       const tx = {
         type: 'name_new',
-        source: 'abc123',
-        fee: 1,
+        from: 'abc123',
+        amount: 1,
         payload: 'commitment',
+        inputs: [],
+        outputs: [],
         transactionID: null,
       };
 
@@ -148,6 +154,8 @@ describe('transaction.service.js', () => {
         amount: 1,
         payload: 'commitment',
         pk: 'pubkey123',
+        inputs: [],
+        outputs: [],
       };
 
       const result = validateTransaction(tx);
@@ -187,6 +195,8 @@ describe('transaction.service.js', () => {
         amount: 0,
         payload: 'commitment',
         pk: 'pubkey123',
+        inputs: [],
+        outputs: [],
       };
 
       const result = validateTransaction(tx);
@@ -200,6 +210,8 @@ describe('transaction.service.js', () => {
         from: 'abc123',
         amount: 1,
         pk: 'pubkey123',
+        inputs: [],
+        outputs: [],
       };
 
       const result = validateTransaction(tx);
@@ -222,6 +234,8 @@ describe('transaction.service.js', () => {
         amount: 10,
         payload: 'commitment',
         pk: 'pubkey123',
+        inputs: [],
+        outputs: [],
       };
 
       const result = validateTransaction(tx);

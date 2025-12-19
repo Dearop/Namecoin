@@ -76,7 +76,52 @@ func (n *node) handleNamecoinTransactionMessage(message types.Message, packet tr
 		return xerrors.Errorf("unexpected message type")
 	}
 
-	n.namecoinConsensus.txBuffer.Add(msg.Tx, msg.TxID)
+	// Validate signed transaction and derive UTXO inputs/outputs before accepting into mempool.
+	signed := SignedTransaction{
+		Type:      msg.Type,
+		From:      msg.From,
+		Amount:    msg.Amount,
+		Payload:   msg.Payload,
+		Inputs:    msg.Inputs,
+		Outputs:   msg.Outputs,
+		Pk:        msg.Pk,
+		TxID:      msg.TxID,
+		Signature: msg.Signature,
+	}
+	if err := n.transactionService.ValidateTransaction(&signed); err != nil {
+		return err
+	}
+
+	inputs, outputs, err := n.transactionService.VerifyBalance(signed.TxID, signed.From, signed.Amount)
+	if err != nil {
+		return err
+	}
+
+	tx := types.Tx{
+		From:      signed.From,
+		Type:      signed.Type,
+		Inputs:    inputs,
+		Outputs:   outputs,
+		Amount:    signed.Amount,
+		Payload:   signed.Payload,
+		Pk:        signed.Pk,
+		TxID:      signed.TxID,
+		Signature: signed.Signature,
+	}
+	if err := n.transactionService.ValidateTxCommand(&tx); err != nil {
+		return err
+	}
+
+	// Ensure the TxID provided over the network matches the one computed by the backend.
+	txID, err := BuildTransactionID(&tx)
+	if err != nil {
+		return err
+	}
+	if txID != signed.TxID {
+		return xerrors.Errorf("txId mismatch: expected %s, got %s", txID, signed.TxID)
+	}
+
+	n.namecoinConsensus.txBuffer.Add(tx, txID)
 	return nil
 }
 
@@ -87,8 +132,20 @@ func (n *node) handleNamecoinBlockMessage(message types.Message, packet transpor
 		return xerrors.Errorf("unexpected message type")
 	}
 
+	log.Printf("[DEBUG] Received block at height %d with %d transactions",
+		msg.Block.Header.Height, len(msg.Block.Transactions))
+
 	changed, err := n.NamecoinChainService.AppendBlockToLongestChain(&msg.Block)
 	if err != nil {
+		log.Printf("[ERROR] Failed to append block at height %d: %v", msg.Block.Header.Height, err)
+		// Notify all transactions in this block that they failed
+		log.Printf("[DEBUG] Notifying %d transactions in FAILED received block", len(msg.Block.Transactions))
+		for _, val := range msg.Block.Transactions {
+			txID, txErr := BuildTransactionID(&val)
+			if txErr == nil {
+				n.notifyTxConfirmation(txID, err)
+			}
+		}
 		return err
 	}
 
@@ -98,6 +155,7 @@ func (n *node) handleNamecoinBlockMessage(message types.Message, packet transpor
 		return nil
 	}
 
+	// Remove tx from txBuffer
 	for _, val := range msg.Block.Transactions {
 		txID, err := BuildTransactionID(&val)
 		if err != nil {
@@ -107,7 +165,22 @@ func (n *node) handleNamecoinBlockMessage(message types.Message, packet transpor
 	}
 
 	n.StopMiner()
-	n.StartMiner()
+	n.minerMu.Lock()
+	disabled := n.minerDisabled
+	n.minerMu.Unlock()
+	if !disabled {
+		n.StartMiner()
+	}
+
+	log.Printf("[DEBUG] Successfully applied received block at height %d, notifying %d transactions",
+		msg.Block.Header.Height, len(msg.Block.Transactions))
+	// Notify all transactions in this block that they succeeded
+	for _, val := range msg.Block.Transactions {
+		txID, txErr := BuildTransactionID(&val)
+		if txErr == nil {
+			n.notifyTxConfirmation(txID, nil)
+		}
+	}
 
 	return nil
 }

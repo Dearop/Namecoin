@@ -32,7 +32,7 @@ func NewNamecoinConsensus(
 	powCfg peer.PoWConfig,
 	txBuffer *TxBuffer,
 ) (*NamecoinConsensus, error) {
-	if err := validateConsensusDeps(powCfg, txBuffer); err != nil {
+	if err := validateConsensusDeps(txBuffer); err != nil {
 		return nil, err
 	}
 	return &NamecoinConsensus{
@@ -57,10 +57,17 @@ func HeaderBuilderFactory() PoWHeaderBuilderFactory {
 
 // MineAndApply mines a block using the provided stop channel, validates it, and
 // applies it. It returns the mined block and any error from validation/apply.
-func (c *NamecoinConsensus) MineAndApply(stop <-chan struct{}, baseHeader *types.BlockHeader) (types.Block, error) {
+func (c *NamecoinConsensus) MineAndApply(
+	stop <-chan struct{},
+	baseHeader *types.BlockHeader,
+	target *big.Int,
+) (types.Block, error) {
 	// Build the header builder for PoW hashing using the current base header.
 	if baseHeader == nil {
 		return types.Block{}, xerrors.Errorf("invalid base header for namecoin miner")
+	}
+	if target == nil {
+		return types.Block{}, xerrors.Errorf("invalid difficulty target for namecoin miner")
 	}
 
 	// we need to ensure that the order of the transaction is not changed in case of block complexity is less than expected
@@ -72,13 +79,13 @@ func (c *NamecoinConsensus) MineAndApply(stop <-chan struct{}, baseHeader *types
 	hdrBase := *baseHeader
 	// Embed the difficulty used for mining into the header so validators can
 	// verify using the same target regardless of local config.
-	if c.powCfg.Target != nil {
-		hdrBase.Difficulty = c.powCfg.Target.Bytes()
-	}
+	hdrBase.Difficulty = target.Bytes()
 	_ = AssembleBlock(&hdrBase, pending, c.powCfg.PubKey)
 
 	headerBuilder := c.buildHeader(&hdrBase)
-	nonce, ts, ok := MineNonce(headerBuilder, c.powCfg, stop)
+	cfg := c.powCfg
+	cfg.Target = target
+	nonce, ts, ok := MineNonce(headerBuilder, cfg, stop)
 	if !ok {
 		// mining aborted, requeue drained transactions
 		c.txBuffer.Requeue(order, snapshot)
@@ -104,14 +111,19 @@ func (c *NamecoinConsensus) UpdatePoWConfig(cfg peer.PoWConfig) {
 	c.powCfg = cfg
 }
 
+// SetMinerPubKey updates the miner address used when assembling reward txs.
+func (c *NamecoinConsensus) SetMinerPubKey(pubKey string) {
+	c.powCfg.PubKey = pubKey
+}
+
 // Errors used by the consensus helper.
 var (
 	ErrMiningAborted = xerrors.New("mining aborted")
 	ErrInvalidConfig = xerrors.New("namecoin consensus invalid configuration")
 )
 
-func validateConsensusDeps(cfg peer.PoWConfig, buffer *TxBuffer) error {
-	if cfg.Target == nil || buffer == nil {
+func validateConsensusDeps(buffer *TxBuffer) error {
+	if buffer == nil {
 		return ErrInvalidConfig
 	}
 	return nil

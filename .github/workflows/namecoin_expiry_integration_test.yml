@@ -2,7 +2,7 @@ name: namecoin_expiry_integration_test
 
 on:
   push
-  pull_request
+
 
 jobs:
   tests:

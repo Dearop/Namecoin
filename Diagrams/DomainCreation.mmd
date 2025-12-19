@@ -1,0 +1,38 @@
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant FE as Frontend Wallet
+    participant LS as Browser localStorage
+    participant BE as HTTP Proxy
+    participant TX as Tx Service
+    participant BC as Blockchain
+
+    Note over FE,BE: Startup and wallet
+    FE ->> BE: request miner id
+    BE -->> FE: miner id public key
+    FE ->> LS: load wallet
+    alt wallet missing
+        FE ->> LS: generate ed25519 keypair and store keys
+    end
+
+    Note over U,FE: Phase 1 Commit
+    U ->> FE: input domain and ttl
+    FE ->> FE: generate random salt
+    FE ->> FE: compute commitment hash from domain and salt
+    FE ->> FE: build NameNew transaction
+    FE ->> FE: hash transaction and sign with private key
+    FE ->> BE: submit transaction and signature
+    BE ->> TX: validate transaction
+    TX ->> BC: broadcast transaction
+    BE -->> FE: commit accepted
+    FE ->> LS: store pending domain with salt and tx id
+
+    Note over U,FE: Phase 2 Reveal
+    U ->> FE: input ip and ttl
+    FE ->> FE: build NameFirstUpdate transaction
+    FE ->> FE: hash transaction and sign with private key
+    FE ->> BE: submit transaction and signature
+    BE ->> TX: verify commitment and domain availability
+    TX ->> BC: broadcast and confirm
+    FE ->> BE: refresh dns state
+    FE -->> U: domain registered and active

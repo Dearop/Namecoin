@@ -98,6 +98,8 @@ func NewHTTPNode(node peer.Peer, conf peer.Configuration) Proxy {
 
 	mux.Handle("/namecoin/handle", http.HandlerFunc(namecoin.NewHandler()))
 	mux.Handle("/namecoin/minerid", http.HandlerFunc(namecoin.MinerIDHandler()))
+	mux.Handle("/namecoin/dns", http.HandlerFunc(namecoin.DomainsHandler()))
+	mux.Handle("/namecoin/spendplan", http.HandlerFunc(namecoin.SpendPlanHandler()))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not authorized", http.StatusBadGateway)

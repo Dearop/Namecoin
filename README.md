@@ -24,6 +24,9 @@ address provided by the peer's log: `proxy server is ready to handle requests at
 '127.0.0.1:xxxx'`. You can run as many peers as wanted and connect them together
 using the "routing table" > "add peer" section in the WEB GUI.
 
+When running `make run`, the frontend automatically syncs the node's miner
+address with the loaded wallet so mined rewards are immediately spendable.
+
 ## Screenshots
 
 1. Connect to a peer's proxy
