@@ -210,7 +210,6 @@ func broadcastTx(t *testing.T, node z.TestNode, tx types.Tx, txID string) time.T
 		Pk:        tx.Pk,
 		TxID:      txID,
 		Signature: tx.Signature,
-		Tx:        tx,
 	}
 	wire, err := node.GetRegistry().MarshalMessage(msg)
 	require.NoError(t, err)

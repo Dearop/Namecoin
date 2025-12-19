@@ -6,7 +6,6 @@ export GNODES = 10
 # how many benchmark iterations to average on
 export BENCHTIME = "10x"
 export PERF_RUNS ?= 3
-export PERF_RESULTS_FILE ?= perf_results/namecoin_perf_results.txt
 
 all: lint vet test
 
@@ -122,13 +121,12 @@ test_perf_network_overhead_per_update:
 	@GLOG=no go test -v ${JSONIFY} -timeout 0 -run 'Test_Network_Overhead_Per_Domain_Update_Perf' -count 1 --tags=performance ./peer/tests/perf/ || true
 
 perf_namecoin_runs:
-	@mkdir -p $(dir $(PERF_RESULTS_FILE))
-	@echo "### Namecoin perf runs ($$(date -Iseconds)) runs=$(PERF_RUNS)" | tee -a $(PERF_RESULTS_FILE)
+	@echo "### Namecoin perf runs ($$(date -Iseconds)) runs=$(PERF_RUNS)"
 	@i=1; \
 	while [ $$i -le $(PERF_RUNS) ]; do \
-		echo "--- run $$i ---" | tee -a $(PERF_RESULTS_FILE); \
-		GLOG=no go test -v ${JSONIFY} -timeout 0 -run 'Test_.*_Perf' -count 1 --tags=performance ./peer/tests/perf/ | tee -a $(PERF_RESULTS_FILE); \
-		echo "" >> $(PERF_RESULTS_FILE); \
+		echo "--- run $$i ---"; \
+		GLOG=no go test -v ${JSONIFY} -timeout 0 -run 'Test_.*_Perf' -count 1 --tags=performance ./peer/tests/perf/ || true; \
+		echo ""; \
 		i=$$(( $$i + 1 )); \
 	done
 
